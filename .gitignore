@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.claude
+
+# Pretrained & trained weights
+weights/
+runs/
+
+# Datasets
+data/raw/
+data/merged/
+
+# Jupyter
+.ipynb_checkpoints/
