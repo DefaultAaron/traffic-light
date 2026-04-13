@@ -1,0 +1,9 @@
+# YOLO26-n training config
+model: weights/yolo26n.pt
+data: data/traffic_light.yaml
+epochs: 100
+imgsz: 640
+batch: -1  # auto batch size
+flipud: 0.0  # disable vertical flip — traffic lights have fixed orientation
+name: yolo26n
+patience: 20  # early stopping patience

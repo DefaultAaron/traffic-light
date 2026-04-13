@@ -1,0 +1,9 @@
+# YOLO11-m training config
+model: weights/yolo11m.pt
+data: data/traffic_light.yaml
+epochs: 100
+imgsz: 640
+batch: -1
+flipud: 0.0
+name: yolo11m
+patience: 20

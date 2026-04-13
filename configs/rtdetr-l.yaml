@@ -1,0 +1,9 @@
+# RT-DETR-L training config (accuracy ceiling benchmark, not deployment candidate)
+model: weights/rtdetr-l.pt
+data: data/traffic_light.yaml
+epochs: 100
+imgsz: 640
+batch: -1
+flipud: 0.0
+name: rtdetr-l
+patience: 20
