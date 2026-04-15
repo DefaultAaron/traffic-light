@@ -21,3 +21,6 @@ data/merged/
 # Jupyter
 .ipynb_checkpoints/
 *.zip
+
+# macOS
+.DS_Store
