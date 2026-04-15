@@ -1,4 +1,7 @@
-"""S2TLD annotation helper \u2014 view and edit Pascal VOC XML annotations.
+"""BSTLD test set annotation helper \u2014 Phase 2 directional re-annotation.
+
+On first run, reads test.yaml and generates per-image Pascal VOC XML files
+in data/raw/BSTLD/annotations_fix/. Subsequent runs work directly with XMLs.
 
 Layout: Image (left) | Annotation panel (right)
 
@@ -22,11 +25,32 @@ import tkinter as tk
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import yaml
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGES_DIR = ROOT / "data" / "raw" / "S2TLD" / "JPEGImages"
-ANNOT_DIR = ROOT / "data" / "raw" / "S2TLD" / "Annotations-fix"
+RAW_DIR = ROOT / "data" / "raw" / "BSTLD"
+TEST_DIR = RAW_DIR / "test"
+YAML_PATH = TEST_DIR / "test.yaml"
+IMAGES_DIR = TEST_DIR / "rgb" / "test"
+ANNOT_DIR = RAW_DIR / "annotations_fix"
+
+IMG_W, IMG_H = 1280, 720
+
+# BSTLD original label -> our standard names
+BSTLD_LABEL_MAP = {
+    "Red": "red",
+    "Green": "green",
+    "Yellow": "yellow",
+    "off": "off",
+    # Train-only directional (shouldn't appear in test set)
+    "RedLeft": "redLeft",
+    "RedRight": "redRight",
+    "RedStraight": "redForward",
+    "GreenLeft": "greenLeft",
+    "GreenRight": "greenRight",
+    "GreenStraight": "greenForward",
+}
 
 # Phase 2: 9 classes \u2014 R/Y/G round + R/G left/forward/right (RGB tuples for PIL)
 CLASS_COLORS = {
@@ -40,18 +64,89 @@ CLASS_COLORS = {
     "redRight": (255, 0, 128),
     "greenRight": (0, 255, 128),
     "off": (128, 128, 128),
-    "wait_on": (200, 200, 200),
 }
 
-# Classes available for annotation
 ANNOTATABLE_CLASSES = [
     "red", "yellow", "green",
     "redLeft", "greenLeft",
     "redForward", "greenForward",
     "redRight", "greenRight",
-    "off", "wait_on",
+    "off",
 ]
 
+
+# ------------------------------------------------------------------
+# YAML -> XML initialization
+# ------------------------------------------------------------------
+
+def _generate_xml(filename: str, boxes: list[dict]) -> str:
+    """Generate Pascal VOC XML for one BSTLD image."""
+    root = ET.Element("annotation")
+    ET.SubElement(root, "folder").text = "BSTLD"
+    ET.SubElement(root, "filename").text = filename
+    size = ET.SubElement(root, "size")
+    ET.SubElement(size, "width").text = str(IMG_W)
+    ET.SubElement(size, "height").text = str(IMG_H)
+    ET.SubElement(size, "depth").text = "3"
+
+    for box in boxes:
+        label = box.get("label", "")
+        name = BSTLD_LABEL_MAP.get(label)
+        if name is None:
+            continue
+
+        obj = ET.SubElement(root, "object")
+        ET.SubElement(obj, "name").text = name
+        ET.SubElement(obj, "pose").text = "Unspecified"
+        ET.SubElement(obj, "truncated").text = "0"
+        ET.SubElement(obj, "difficult").text = "0"
+        if box.get("occluded", False):
+            obj.find("difficult").text = "1"
+        bndbox = ET.SubElement(obj, "bndbox")
+        ET.SubElement(bndbox, "xmin").text = str(int(box["x_min"]))
+        ET.SubElement(bndbox, "ymin").text = str(int(box["y_min"]))
+        ET.SubElement(bndbox, "xmax").text = str(int(box["x_max"]))
+        ET.SubElement(bndbox, "ymax").text = str(int(box["y_max"]))
+
+    ET.indent(root, space="\t")
+    return ET.tostring(root, encoding="unicode") + "\n"
+
+
+def init_annotations() -> int:
+    """Read test.yaml and generate XML files for images that don't have one yet.
+
+    Returns the number of newly generated XMLs.
+    """
+    ANNOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f"Loading {YAML_PATH} ...")
+    with open(YAML_PATH) as f:
+        data = yaml.safe_load(f)
+
+    generated = 0
+    for entry in data:
+        entry_path = Path(entry["path"])
+        filename = entry_path.name
+        stem = entry_path.stem
+        xml_path = ANNOT_DIR / f"{stem}.xml"
+
+        if xml_path.exists():
+            continue
+
+        img_path = IMAGES_DIR / filename
+        if not img_path.exists():
+            continue
+
+        xml_text = _generate_xml(filename, entry.get("boxes", []))
+        xml_path.write_text(xml_text, encoding="utf-8")
+        generated += 1
+
+    return generated
+
+
+# ------------------------------------------------------------------
+# Pascal VOC XML helpers (shared logic with annotate_s2tld.py)
+# ------------------------------------------------------------------
 
 def parse_annotation(xml_text: str) -> list[dict]:
     """Parse Pascal VOC XML string.
@@ -112,8 +207,7 @@ def draw_annotations(
 def objects_to_xml(xml_text: str, objects: list[dict]) -> str:
     """Replace all <object> elements in the XML with the given list.
 
-    Preserves pose/truncated/difficult from each object dict to avoid
-    silently overwriting original values.
+    Preserves pose/truncated/difficult from each object dict.
     """
     try:
         root = ET.fromstring(xml_text)
@@ -143,6 +237,10 @@ def _color_hex(rgb: tuple[int, int, int]) -> str:
     return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 
+# ------------------------------------------------------------------
+# Annotation UI
+# ------------------------------------------------------------------
+
 class AnnotationApp:
     def __init__(self, root: tk.Tk, pairs: list[tuple[Path, Path]]):
         self.root = root
@@ -152,10 +250,8 @@ class AnnotationApp:
         self.dirty = False
         self._current_img = None
         self._current_objects: list[dict] = []
-        self._current_xml_text = ""  # full XML text (source of truth for disk)
+        self._current_xml_text = ""
 
-        # Per-annotation visibility (no master flag \u2014 avoids the bug where
-        # individual toggles are silently ignored after "Hide All")
         self._visible: list[bool] = []
 
         # Zoom state
@@ -164,12 +260,12 @@ class AnnotationApp:
         self._pan_y = 0.0
         self._drag_start = None
 
-        # Drawing state for new bounding box
+        # Drawing state
         self._drawing = False
         self._draw_start = None
         self._draw_rect_id = None
 
-        self.root.title("S2TLD Annotation Helper")
+        self.root.title("BSTLD Test Annotation Helper")
         self.root.configure(bg="#2b2b2b")
 
         # --- Top bar ---
@@ -214,7 +310,7 @@ class AnnotationApp:
                                    font=("Menlo", 10))
         self.focus_hint.pack(side=tk.RIGHT, padx=10)
 
-        # --- Main content: image left, annotation panel right ---
+        # --- Main content ---
         content = tk.PanedWindow(root, orient=tk.HORIZONTAL, bg="#2b2b2b",
                                  sashwidth=4, sashrelief=tk.RAISED)
         content.pack(fill=tk.BOTH, expand=True)
@@ -230,12 +326,10 @@ class AnnotationApp:
         self.img_canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.img_canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
 
-        # Zoom: scroll wheel
         self.img_canvas.bind("<MouseWheel>", self._on_scroll_zoom)
         self.img_canvas.bind("<Button-4>", lambda e: self._zoom(1.1, e.x, e.y))
         self.img_canvas.bind("<Button-5>", lambda e: self._zoom(0.9, e.x, e.y))
 
-        # Zoom: keyboard +/-
         self.img_canvas.bind("<plus>", lambda e: self._zoom(1.2))
         self.img_canvas.bind("<minus>", lambda e: self._zoom(0.8))
         self.img_canvas.bind("<equal>", lambda e: self._zoom(1.2))
@@ -246,13 +340,12 @@ class AnnotationApp:
         self.img_canvas.bind("<Button-3>", self._on_pan_start)
         self.img_canvas.bind("<B3-Motion>", self._on_pan_drag)
 
-        # Toggle annotations: A key
         self.img_canvas.bind("<a>", lambda e: self._toggle_all_annotations())
 
         # Right: annotation panel
         self._build_annotation_panel(content)
 
-        # Global key bindings
+        # Global bindings
         self.root.bind("<Control-Up>", lambda e: self.prev_image())
         self.root.bind("<Control-Down>", lambda e: self.next_image())
         self.root.bind("<Control-q>", lambda e: self._quit())
@@ -266,14 +359,13 @@ class AnnotationApp:
         self.load_current()
 
     # ------------------------------------------------------------------
-    # Annotation panel (right side)
+    # Annotation panel
     # ------------------------------------------------------------------
 
     def _build_annotation_panel(self, parent: tk.PanedWindow):
         panel = tk.Frame(parent, bg="#2b2b2b")
         parent.add(panel, width=420, stretch="never")
 
-        # Header
         hdr = tk.Frame(panel, bg="#2b2b2b")
         hdr.pack(fill=tk.X, padx=4, pady=(6, 2))
 
@@ -284,7 +376,6 @@ class AnnotationApp:
                                     font=("Menlo", 11))
         self.count_label.pack(side=tk.LEFT, padx=6)
 
-        # Scrollable annotation list
         list_container = tk.Frame(panel, bg="#2b2b2b")
         list_container.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
 
@@ -305,11 +396,9 @@ class AnnotationApp:
                                   scrollregion=self._list_canvas.bbox("all")))
         self._list_canvas.bind("<Configure>", self._on_list_canvas_resize)
 
-        # Enable scroll wheel on annotation list
         self._list_canvas.bind("<MouseWheel>", self._on_list_scroll)
         self._list_inner.bind("<MouseWheel>", self._on_list_scroll)
 
-        # Row widgets cache
         self._row_widgets: list[dict] = []
 
     def _on_list_canvas_resize(self, event):
@@ -319,7 +408,6 @@ class AnnotationApp:
         self._list_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
 
     def _rebuild_annotation_list(self):
-        """Rebuild the annotation list panel from self._current_objects."""
         for w in self._row_widgets:
             w["frame"].destroy()
         self._row_widgets.clear()
@@ -340,22 +428,18 @@ class AnnotationApp:
         row.pack(fill=tk.X, padx=2, pady=1)
         row.bind("<MouseWheel>", self._on_list_scroll)
 
-        # Top line: checkbox + index + class label + delete
         top = tk.Frame(row, bg=bg_hex)
         top.pack(fill=tk.X)
         top.bind("<MouseWheel>", self._on_list_scroll)
 
-        # Visibility checkbox
         vis_var = tk.BooleanVar(value=self._visible[idx] if idx < len(self._visible) else True)
         chk = tk.Checkbutton(top, variable=vis_var, bg=bg_hex, activebackground=bg_hex,
                              command=lambda i=idx, v=vis_var: self._on_toggle_visible(i, v))
         chk.pack(side=tk.LEFT)
 
-        # Index label
         tk.Label(top, text=f"[{idx}]", bg=bg_hex, fg="#888888",
                  font=("Menlo", 11)).pack(side=tk.LEFT, padx=(0, 4))
 
-        # Class label (clickable to change)
         cls_btn = tk.Button(top, text=obj["name"], bg=bg_hex, fg=color_hex,
                             font=("Menlo", 12, "bold"), relief=tk.FLAT,
                             activebackground=bg_hex, activeforeground="white",
@@ -363,7 +447,6 @@ class AnnotationApp:
                             command=lambda i=idx: self._change_class(i))
         cls_btn.pack(side=tk.LEFT, padx=2)
 
-        # Delete button
         del_btn = tk.Button(top, text="\u2715", bg=bg_hex, fg="#ef5350",
                             font=("Menlo", 11), relief=tk.FLAT,
                             activebackground="#ef5350", activeforeground="white",
@@ -371,7 +454,6 @@ class AnnotationApp:
                             command=lambda i=idx: self._delete_annotation(i))
         del_btn.pack(side=tk.RIGHT, padx=2)
 
-        # Bottom line: bbox coords (clickable to edit)
         coords = f"({obj['xmin']}, {obj['ymin']}) \u2192 ({obj['xmax']}, {obj['ymax']})  " \
                  f"[{obj['xmax'] - obj['xmin']}\u00d7{obj['ymax'] - obj['ymin']}]"
         coord_lbl = tk.Label(row, text=coords, bg=bg_hex, fg="#999999",
@@ -394,7 +476,6 @@ class AnnotationApp:
         self._render_image()
 
     def _toggle_all_annotations(self):
-        """Toggle all: if any visible \u2192 hide all, else \u2192 show all."""
         any_visible = any(self._visible)
         new_val = not any_visible
         for i in range(len(self._visible)):
@@ -405,7 +486,6 @@ class AnnotationApp:
         self._render_image()
 
     def _update_toggle_btn(self):
-        """Update the toggle-all button label based on current visibility."""
         if any(self._visible):
             self.annot_toggle_btn.config(text="[A] Hide All", fg="#66bb6a")
         else:
@@ -690,7 +770,6 @@ class AnnotationApp:
     # ------------------------------------------------------------------
 
     def _sync_and_mark_dirty(self):
-        """Rewrite XML text from current objects and schedule a save."""
         self._current_xml_text = objects_to_xml(self._current_xml_text, self._current_objects)
         self._schedule_save()
 
@@ -709,7 +788,6 @@ class AnnotationApp:
         self._do_save()
 
     def _do_save(self):
-        """Write current XML to disk. Only writes if dirty."""
         if not self.dirty:
             return
         _, xml_path = self.pairs[self.idx]
@@ -723,7 +801,6 @@ class AnnotationApp:
             self.status_label.config(text=f"Save error: {e}", fg="#ef5350")
 
     def _flush_save(self):
-        """Cancel any pending auto-save timer and write immediately if dirty."""
         if self.save_job:
             self.root.after_cancel(self.save_job)
             self.save_job = None
@@ -772,13 +849,11 @@ class AnnotationApp:
     def load_current(self):
         img_path, xml_path = self.pairs[self.idx]
 
-        # Reset zoom/pan
         self._zoom_level = 1.0
         self._pan_x = 0.0
         self._pan_y = 0.0
         self._update_zoom_label()
 
-        # Nav label
         self.nav_label.config(
             text=f"[{self.idx + 1}/{len(self.pairs)}]  {img_path.name}")
 
@@ -855,14 +930,24 @@ class AnnotationApp:
 
 
 def main():
+    if not YAML_PATH.exists():
+        print(f"ERROR: {YAML_PATH} not found")
+        sys.exit(1)
+
+    # Generate XMLs from YAML on first run (idempotent)
+    generated = init_annotations()
+    if generated:
+        print(f"Generated {generated} new XML annotation files.")
+
     xml_files = sorted(ANNOT_DIR.glob("*.xml"))
     if not xml_files:
         print(f"No XML files found in {ANNOT_DIR}")
         sys.exit(1)
 
+    # Build (image, xml) pairs — image is PNG in test/rgb/test/
     pairs = []
     for xml_path in xml_files:
-        img_path = IMAGES_DIR / (xml_path.stem + ".jpg")
+        img_path = IMAGES_DIR / f"{xml_path.stem}.png"
         if img_path.exists():
             pairs.append((img_path, xml_path))
 

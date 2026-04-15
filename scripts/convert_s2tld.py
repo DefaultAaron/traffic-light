@@ -36,6 +36,8 @@ CLASS_MAP = {
     "yellow": 1,
     "green": 2,
     # Phase 2 directional labels → collapse to base color for Phase 1
+    # Phase 2 (9-class): redLeft→3, greenLeft→4, redForward→5, greenForward→6, redRight→7, greenRight→8
+    # Yellow directional → yellow round (data too sparse)
     "redLeft": 0,
     "yellowLeft": 1,
     "greenLeft": 2,

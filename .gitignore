@@ -20,3 +20,4 @@ data/merged/
 
 # Jupyter
 .ipynb_checkpoints/
+runs/

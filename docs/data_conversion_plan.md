@@ -44,10 +44,11 @@
 
 | 原始类别 | → 类别 ID |
 |----------|-----------|
-| `Red`, `RedLeft`, `RedRight`, `RedStraight`, `RedStraightLeft` | 0 |
+| `Red`, `RedLeft`, `RedRight`, `RedStraight` | 0 |
 | `Yellow` | 1 |
-| `Green`, `GreenLeft`, `GreenRight`, `GreenStraight`, `GreenStraightLeft`, `GreenStraightRight` | 2 |
+| `Green`, `GreenLeft`, `GreenRight`, `GreenStraight` | 2 |
 | `off` | 跳过 |
+| `RedStraightLeft`, `GreenStraightLeft`, `GreenStraightRight` | 跳过（组合多方向标签，合计仅5条，中国路况罕见） |
 
 **注意事项**：
 - 训练集 YAML 中的路径为相对路径：`./rgb/train/.../*.png`
@@ -114,7 +115,7 @@ Filename;Annotation tag;Upper left corner X;Upper left corner Y;Lower right corn
 data/merged/
 ├── images/{train,val}/          # 图片（两阶段共用，只存一份）
 ├── labels_phase1/{train,val}/   # 第一阶段标注（3 类）
-├── labels_phase2/{train,val}/   # 第二阶段标注（12 类）
+├── labels_phase2/{train,val}/   # 第二阶段标注（9 类）
 └── labels → labels_phase1       # 软链接，切换阶段时重定向
 ```
 
@@ -128,8 +129,8 @@ data/merged/
 
 ### 分层划分策略
 
-- **按 12 类（第二阶段）进行分层划分**：12 类是 3 类的细分子集，按 12 类分层后 3 类自动平衡（反之不成立）
-- **当前阶段**：第二阶段标注尚未就绪，暂按 3 类分层。第二阶段标注完成后，重新执行一次合并脚本，按 12 类分层，同时输出两套标注目录
+- **按 9 类（第二阶段）进行分层划分**：9 类是 3 类的细分子集，按 9 类分层后 3 类自动平衡（反之不成立）
+- **当前阶段**：第二阶段标注尚未就绪，暂按 3 类分层。第二阶段标注完成后，重新执行一次合并脚本，按 9 类分层，同时输出两套标注目录
 - **训练/验证集划分在两阶段间保持一致**：同一张图片在两阶段中始终属于同一集合（训练或验证），确保评估公平性
 
 ---

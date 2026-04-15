@@ -18,16 +18,15 @@ CLASS_MAP = {
     "RedLeft": 0,
     "RedRight": 0,
     "RedStraight": 0,
-    "RedStraightLeft": 0,
     "Yellow": 1,
     "Green": 2,
     "GreenLeft": 2,
     "GreenRight": 2,
     "GreenStraight": 2,
-    "GreenStraightLeft": 2,
-    "GreenStraightRight": 2,
 }
-SKIP_CLASSES = {"off"}
+# Combined multi-direction labels (e.g. StraightLeft) skipped — only 5 total,
+# visually arrow-shaped but not round; rare in real-world Chinese traffic.
+SKIP_CLASSES = {"off", "RedStraightLeft", "GreenStraightLeft", "GreenStraightRight"}
 
 
 def resolve_image_path(yaml_path: Path, entry_path: str) -> Path | None:
