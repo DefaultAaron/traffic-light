@@ -1,15 +1,17 @@
-"""Convert S2TLD dataset from Pascal VOC XML to YOLO format.
+"""Convert S2TLD dataset from Pascal VOC XML to YOLO format (7-class).
 
 Handles three subsets:
   - Original: data/raw/S2TLD/{JPEGImages,Annotations-fix}/ (1920x1080)
-  - normal_1: data/raw/S2TLD/normal_1/{JPEGImages,Annotations}/ (1280x720)
-  - normal_2: data/raw/S2TLD/normal_2/{JPEGImages,Annotations}/ (1280x720)
+  - normal_1: data/raw/S2TLD/normal_1/{JPEGImages,Annotations-fix}/ (1280x720)
+  - normal_2: data/raw/S2TLD/normal_2/{JPEGImages,Annotations-fix}/ (1280x720)
+  All subsets use Annotations-fix (re-annotated with directional labels).
 
 Output: data/raw/S2TLD/yolo_labels/*.txt
   - Original files keep original stems (timestamps with spaces)
   - normal_1/normal_2 files prefixed: normal1_000000.txt, normal2_000779.txt
 """
 
+import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -18,15 +20,15 @@ OUTPUT_DIR = RAW_DIR / "yolo_labels"
 
 # (subset_prefix, annotations_dir, images_dir)
 SUBSETS = [
-    ("", RAW_DIR / "Annotations", RAW_DIR / "JPEGImages"),
+    ("", RAW_DIR / "Annotations-fix", RAW_DIR / "JPEGImages"),
     (
         "normal1",
-        RAW_DIR / "normal_1" / "Annotations",
+        RAW_DIR / "normal_1" / "Annotations-fix",
         RAW_DIR / "normal_1" / "JPEGImages",
     ),
     (
         "normal2",
-        RAW_DIR / "normal_2" / "Annotations",
+        RAW_DIR / "normal_2" / "Annotations-fix",
         RAW_DIR / "normal_2" / "JPEGImages",
     ),
 ]
@@ -35,20 +37,19 @@ CLASS_MAP = {
     "red": 0,
     "yellow": 1,
     "green": 2,
-    # Phase 2 directional labels → collapse to base color for Phase 1
-    # Phase 2 (9-class): redLeft→3, greenLeft→4, redForward→5, greenForward→6, redRight→7, greenRight→8
-    # Yellow directional → yellow round (data too sparse)
-    "redLeft": 0,
-    "yellowLeft": 1,
-    "greenLeft": 2,
+    "redLeft": 3,
+    "greenLeft": 4,
+    "redRight": 5,
+    "greenRight": 6,
+    # Forward arrows → base color (functionally equivalent to round lights)
     "redForward": 0,
-    "yellowForward": 1,
     "greenForward": 2,
-    "redRight": 0,
+    # Yellow directional → yellow round (data too sparse across all datasets)
+    "yellowLeft": 1,
+    "yellowForward": 1,
     "yellowRight": 1,
-    "greenRight": 2,
 }
-SKIP_CLASSES = {"off", "wait_on"}
+SKIP_CLASSES = {"off", "wait_on", "Wait_on"}
 
 
 def convert_box(
@@ -100,6 +101,9 @@ def convert_one(xml_path: Path, out_stem: str) -> tuple[int, dict[int, int]]:
 
 
 def main():
+    # Clean previous output to avoid stale labels from old conversions
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     grand_total_boxes = 0
@@ -135,7 +139,7 @@ def main():
                 total_counts[cls_id] = total_counts.get(cls_id, 0) + cnt
 
         n_images = len(xml_files) - skipped_no_image
-        cls_names = {0: "red", 1: "yellow", 2: "green"}
+        cls_names = {0: "red", 1: "yellow", 2: "green", 3: "redLeft", 4: "greenLeft", 5: "redRight", 6: "greenRight"}
         print(f"  {subset_name} conversion complete:")
         print(f"    Images: {n_images}")
         print(f"    Total boxes: {total_boxes}")
@@ -149,7 +153,7 @@ def main():
         for cls_id, cnt in total_counts.items():
             grand_total_counts[cls_id] = grand_total_counts.get(cls_id, 0) + cnt
 
-    cls_names = {0: "red", 1: "yellow", 2: "green"}
+    cls_names = {0: "red", 1: "yellow", 2: "green", 3: "redLeft", 4: "greenLeft", 5: "redRight", 6: "greenRight"}
     print(f"\n{'='*40}")
     print(f"S2TLD total (all subsets):")
     print(f"  Images: {grand_total_images}")

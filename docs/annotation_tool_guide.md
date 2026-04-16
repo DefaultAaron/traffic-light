@@ -87,7 +87,7 @@ uv run python scripts/annotate_bstld.py
 
 点击标注列表中的**类别名称**（如 `red`），弹出类别选择菜单，选择新类别即可完成修改。
 
-可用类别（第二阶段 9 类 + 特殊类）：
+可用类别（第二阶段 7 类 + 特殊类）：
 
 | 类别 | 含义 |
 |------|------|
@@ -96,8 +96,6 @@ uv run python scripts/annotate_bstld.py
 | `green` | 绿灯（圆形） |
 | `redLeft` | 红色左转箭头 |
 | `greenLeft` | 绿色左转箭头 |
-| `redForward` | 红色直行箭头 |
-| `greenForward` | 绿色直行箭头 |
 | `redRight` | 红色右转箭头 |
 | `greenRight` | 绿色右转箭头 |
 | `off` | 灭灯 |

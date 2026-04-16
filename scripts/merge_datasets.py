@@ -1,4 +1,4 @@
-"""Merge converted datasets and create stratified train/val split.
+"""Merge converted datasets and create stratified train/val split (7-class).
 
 Reads YOLO labels from each dataset's yolo_labels/ directory,
 copies images + labels into data/merged/{images,labels}/{train,val}/
@@ -186,7 +186,11 @@ def print_stats(train_pairs: list, val_pairs: list):
                     counts[int(line.split()[0])] += 1
         return counts
 
-    cls_names = {0: "red", 1: "yellow", 2: "green"}
+    cls_names = {
+        0: "red", 1: "yellow", 2: "green",
+        3: "redLeft", 4: "greenLeft",
+        5: "redRight", 6: "greenRight",
+    }
 
     train_counts = count_classes(train_pairs)
     val_counts = count_classes(val_pairs)
@@ -199,13 +203,13 @@ def print_stats(train_pairs: list, val_pairs: list):
     print(f"  Train images: {len(train_pairs)}")
     print(f"  Val images:   {len(val_pairs)}")
     print()
-    print(f"  {'Class':<10} {'Train':>8} {'Val':>8} {'Total':>8}")
-    print(f"  {'-'*36}")
+    print(f"  {'Class':<14} {'Train':>8} {'Val':>8} {'Total':>8}")
+    print(f"  {'-'*40}")
     for cls_id in sorted(total_counts):
         name = cls_names.get(cls_id, f"cls_{cls_id}")
-        print(f"  {name:<10} {train_counts[cls_id]:>8} {val_counts[cls_id]:>8} {total_counts[cls_id]:>8}")
-    print(f"  {'-'*36}")
-    print(f"  {'total':<10} {sum(train_counts.values()):>8} {sum(val_counts.values()):>8} {sum(total_counts.values()):>8}")
+        print(f"  {name:<14} {train_counts[cls_id]:>8} {val_counts[cls_id]:>8} {total_counts[cls_id]:>8}")
+    print(f"  {'-'*40}")
+    print(f"  {'total':<14} {sum(train_counts.values()):>8} {sum(val_counts.values()):>8} {sum(total_counts.values()):>8}")
     print(f"\n  Output: {MERGED_DIR}")
 
 

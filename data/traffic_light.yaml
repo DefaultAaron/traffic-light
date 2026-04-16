@@ -1,4 +1,4 @@
-# Ultralytics dataset config — Phase 1: 3-class traffic light detection
+# Ultralytics dataset config — 7-class traffic light detection
 path: /Users/aaron/Documents/Projects/mingtai/traffic-light/data/merged
 train: images/train
 val: images/val
@@ -7,3 +7,7 @@ names:
   0: red
   1: yellow
   2: green
+  3: redLeft
+  4: greenLeft
+  5: redRight
+  6: greenRight

@@ -1,10 +1,11 @@
-"""Convert LISA dataset from CSV to YOLO format.
+"""Convert LISA dataset from CSV to YOLO format (7-class).
 
 Source: data/raw/LISA/Annotations/Annotations/**/frameAnnotationsBOX.csv
 Output: data/raw/LISA/yolo_labels/*.txt
 """
 
 import csv
+import shutil
 from pathlib import Path
 
 from PIL import Image
@@ -15,12 +16,12 @@ OUTPUT_DIR = RAW_DIR / "yolo_labels"
 
 CLASS_MAP = {
     "stop": 0,
-    "stopLeft": 0,
+    "stopLeft": 3,        # red left arrow
     "warning": 1,
-    "warningLeft": 1,
+    "warningLeft": 1,     # yellow directional → yellow round (data too sparse)
     "go": 2,
-    "goLeft": 2,
-    "goForward": 2,
+    "goLeft": 4,          # green left arrow
+    "goForward": 2,       # green forward arrow → green (forward collapsed to base color)
 }
 
 # CSV path prefix → actual directory mapping
@@ -63,6 +64,9 @@ def resolve_image_path(csv_filename: str) -> Path | None:
 
 
 def main():
+    # Clean previous output to avoid stale labels from old conversions
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     csv_files = sorted(ANNOTATIONS_DIR.rglob("frameAnnotationsBOX.csv"))
@@ -128,7 +132,7 @@ def main():
         out_path.write_text("\n".join(lines) + "\n")
         total_boxes += len(lines)
 
-    cls_names = {0: "red", 1: "yellow", 2: "green"}
+    cls_names = {0: "red", 1: "yellow", 2: "green", 3: "redLeft", 4: "greenLeft", 5: "redRight", 6: "greenRight"}
     print(f"\nLISA conversion complete:")
     print(f"  CSV rows processed: {total_rows}")
     print(f"  Images: {len(image_annotations)}")

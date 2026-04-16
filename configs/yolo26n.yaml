@@ -5,5 +5,6 @@ epochs: 100
 imgsz: 640
 batch: -1  # auto batch size
 flipud: 0.0  # disable vertical flip — traffic lights have fixed orientation
+fliplr: 0.0  # disable horizontal flip — flipping swaps left/right arrow appearance but not labels
 name: yolo26n
 patience: 20  # early stopping patience

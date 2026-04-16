@@ -57,7 +57,7 @@ def val(args):
 
     model.val(
         data="data/traffic_light.yaml",
-        imgsz=640,
+        imgsz=args.imgsz,
         split=args.split,
     )
 
@@ -73,7 +73,27 @@ def export(args):
     else:
         model = YOLO(str(weights))
 
-    model.export(format=args.format, imgsz=640, half=args.half)
+    model.export(format=args.format, imgsz=args.imgsz, half=args.half)
+
+
+def infer(args):
+    """Run inference using TRT pipeline (TensorRT or ONNX Runtime)."""
+    from inference.demo import run_video
+    from inference.trt_pipeline import TRTDetector
+
+    detector = TRTDetector(
+        model_path=args.model,
+        conf_thresh=args.conf,
+        imgsz=args.imgsz,
+    )
+
+    # Parse source: integer for camera, string for file
+    try:
+        source = int(args.source)
+    except ValueError:
+        source = args.source
+
+    run_video(source, detector, show=not args.no_show, save=args.save, output_json=args.json)
 
 
 def train_all(args):
@@ -122,7 +142,19 @@ def main():
         "weights", help="Path to trained weights (e.g. runs/yolo26n/weights/best.pt)"
     )
     p_val.add_argument("--split", default="val", choices=["val", "test"])
+    p_val.add_argument("--imgsz", type=int, default=640, help="Input image size (default: 640)")
     p_val.set_defaults(func=val)
+
+    # infer
+    p_infer = sub.add_parser("infer", help="Run inference with TRT/ONNX pipeline")
+    p_infer.add_argument("--source", required=True, help="Video file or camera index (0, 1)")
+    p_infer.add_argument("--model", required=True, help="Model path (.engine or .onnx)")
+    p_infer.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
+    p_infer.add_argument("--imgsz", type=int, default=1280, help="Input image size (default: 1280 for 8MP cameras)")
+    p_infer.add_argument("--no-show", action="store_true", help="Disable display window")
+    p_infer.add_argument("--save", type=str, default=None, help="Save output video to path")
+    p_infer.add_argument("--json", action="store_true", help="Output per-frame JSON to stdout")
+    p_infer.set_defaults(func=infer)
 
     # export
     p_export = sub.add_parser("export", help="Export model to deployment format")
@@ -133,6 +165,7 @@ def main():
         choices=["engine", "coreml", "onnx"],
         help="Export format (default: engine/TensorRT)",
     )
+    p_export.add_argument("--imgsz", type=int, default=640, help="Input image size (default: 640)")
     p_export.add_argument("--half", action="store_true", help="FP16 quantization")
     p_export.set_defaults(func=export)
 

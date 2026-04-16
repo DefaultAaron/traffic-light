@@ -46,21 +46,19 @@ BSTLD_LABEL_MAP = {
     # Train-only directional (shouldn't appear in test set)
     "RedLeft": "redLeft",
     "RedRight": "redRight",
-    "RedStraight": "redForward",
+    "RedStraight": "red",       # forward collapsed to base color
     "GreenLeft": "greenLeft",
     "GreenRight": "greenRight",
-    "GreenStraight": "greenForward",
+    "GreenStraight": "green",   # forward collapsed to base color
 }
 
-# Phase 2: 9 classes \u2014 R/Y/G round + R/G left/forward/right (RGB tuples for PIL)
+# 7 classes \u2014 R/Y/G round + R/G left/right (RGB tuples for PIL)
 CLASS_COLORS = {
     "red": (255, 0, 0),
     "yellow": (255, 255, 0),
     "green": (0, 255, 0),
     "redLeft": (200, 0, 0),
     "greenLeft": (0, 200, 0),
-    "redForward": (255, 80, 80),
-    "greenForward": (80, 255, 80),
     "redRight": (255, 0, 128),
     "greenRight": (0, 255, 128),
     "off": (128, 128, 128),
@@ -69,7 +67,6 @@ CLASS_COLORS = {
 ANNOTATABLE_CLASSES = [
     "red", "yellow", "green",
     "redLeft", "greenLeft",
-    "redForward", "greenForward",
     "redRight", "greenRight",
     "off",
 ]
