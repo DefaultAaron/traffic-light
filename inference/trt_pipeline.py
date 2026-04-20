@@ -7,6 +7,10 @@ Supports two backends:
 Usage:
     detector = TRTDetector("best.engine")  # or "best.onnx"
     detections = detector.detect(frame)
+
+Thread safety: TRTDetector is NOT thread-safe. It holds a single CUDA
+stream and pre-allocated pinned host buffers shared across calls. Construct
+and call `detect()` on the same thread. Use one detector per worker thread.
 """
 
 from __future__ import annotations
@@ -192,9 +196,11 @@ class _ONNXBackend:
 class TRTDetector:
     """Traffic light detector using TensorRT or ONNX Runtime.
 
-    Automatically selects backend based on file extension:
+    Backend is picked by file extension:
       - .engine → TensorRT
-      - .onnx → ONNX Runtime
+      - .onnx   → ONNX Runtime
+
+    YOLO26 is NMS-free by architecture, so no external NMS is applied.
     """
 
     def __init__(
@@ -202,19 +208,15 @@ class TRTDetector:
         model_path: str,
         conf_thresh: float = 0.25,
         imgsz: int = 1280,
-        nms_thresh: float = 0.45,
     ):
         self.conf_thresh = conf_thresh
         self.imgsz = imgsz
-        self.nms_thresh = nms_thresh
 
         path = Path(model_path)
         if path.suffix == ".engine":
             self.backend = _TRTBackend(model_path)
-            self._needs_nms = False  # TensorRT engines from Ultralytics include NMS
         elif path.suffix == ".onnx":
             self.backend = _ONNXBackend(model_path)
-            self._needs_nms = True  # ONNX models may need NMS
         else:
             raise ValueError(f"Unsupported model format: {path.suffix} (expected .engine or .onnx)")
 
@@ -255,17 +257,18 @@ class TRTDetector:
         scale: float,
         pad: tuple[float, float],
     ) -> list[Detection]:
-        """Decode raw model output into Detection objects.
+        """Decode YOLO26 output into Detection objects.
 
-        Handles two common YOLO output formats:
-          - (1, N, 4+nc): YOLO26 end-to-end (no NMS needed)
-          - (1, 4+nc, N): YOLO11 raw (needs NMS, transposed)
+        Expected output (batch dim dropped): (N, 4 + num_classes) where each
+        row is (cx, cy, w, h, cls0, cls1, ...). Some exports transpose to
+        (4 + num_classes, N); we detect this by matching the expected class
+        count (len(CLASS_NAMES)) against one of the two dimensions.
         """
         output = np.squeeze(raw_output)  # remove batch dim
 
-        # Detect format: (N, 4+nc) vs (4+nc, N)
-        if output.ndim == 2 and output.shape[0] < output.shape[1]:
-            output = output.T  # transpose (4+nc, N) → (N, 4+nc)
+        expected_row_len = 4 + len(CLASS_NAMES)
+        if output.ndim == 2 and output.shape[0] == expected_row_len and output.shape[1] != expected_row_len:
+            output = output.T  # (4+nc, N) → (N, 4+nc)
 
         h_orig, w_orig = orig_shape
         pad_w, pad_h = pad
@@ -304,18 +307,4 @@ class TRTDetector:
                 y2=float(y2),
             ))
 
-        if self._needs_nms and detections:
-            detections = self._nms(detections)
-
         return detections
-
-    def _nms(self, detections: list[Detection]) -> list[Detection]:
-        """Apply non-maximum suppression using OpenCV."""
-        boxes = np.array([[d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1] for d in detections])
-        scores = np.array([d.confidence for d in detections])
-        indices = cv2.dnn.NMSBoxes(
-            boxes.tolist(), scores.tolist(), self.conf_thresh, self.nms_thresh
-        )
-        if len(indices) == 0:
-            return []
-        return [detections[i] for i in indices.flatten()]

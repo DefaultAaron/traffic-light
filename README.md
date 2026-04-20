@@ -49,6 +49,14 @@ python main.py train yolo11s --epochs 50 --device 0
 python main.py train yolo26n --epochs 3 --device mps  # quick sanity check on M4 Pro
 ```
 
+### Resume an interrupted training run
+
+```bash
+python main.py train --resume runs/yolo26n/weights/last.pt
+```
+
+Ultralytics restores epochs, batch, device, and all other hyperparameters from the run's `args.yaml`, so `--epochs`, `--batch`, and `--device` are ignored when `--resume` is set. The run must have at least one completed epoch (`last.pt` present).
+
 ### Train all model variants
 
 ```bash

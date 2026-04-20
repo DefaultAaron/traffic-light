@@ -31,6 +31,18 @@ def build_model(config: dict):
 
 
 def train(args):
+    if args.resume:
+        ckpt = Path(args.resume)
+        if not ckpt.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {ckpt}")
+        model_cls = RTDETR if "rtdetr" in str(ckpt).lower() else YOLO
+        model = model_cls(str(ckpt))
+        model.train(resume=True)
+        return
+
+    if not args.model:
+        raise SystemExit("train: 'model' is required unless --resume is given")
+
     config = load_config(args.model)
     if args.epochs:
         config["epochs"] = args.epochs
@@ -40,7 +52,7 @@ def train(args):
         config["device"] = args.device
 
     model = build_model(config)
-    model_key = config.pop("model")  # already loaded, don't pass twice
+    config.pop("model")  # already loaded, don't pass twice
     model.train(**config)
 
 
@@ -122,10 +134,13 @@ def main():
 
     # train
     p_train = sub.add_parser("train", help="Train a single model")
-    p_train.add_argument("model", choices=VALID_MODELS, help="Model config name")
+    p_train.add_argument("model", nargs="?", choices=VALID_MODELS,
+                         help="Model config name (omit when using --resume)")
     p_train.add_argument("--epochs", type=int)
     p_train.add_argument("--batch", type=int)
     p_train.add_argument("--device", type=str, help="e.g. 0, cpu, mps")
+    p_train.add_argument("--resume", type=str, metavar="CKPT",
+                         help="Resume from checkpoint (e.g. runs/yolo26n/weights/last.pt)")
     p_train.set_defaults(func=train)
 
     # train-all
