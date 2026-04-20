@@ -9,6 +9,7 @@ Usage: python scripts/merge_datasets.py [--val-ratio 0.2] [--seed 42]
 
 import argparse
 import random
+import re
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -18,6 +19,24 @@ from tqdm import tqdm
 ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
 MERGED_DIR = ROOT / "data" / "merged"
+
+# Finder/iCloud appends " 2", " 3"… before the extension when resolving a name
+# collision (sync conflict, re-extract, copy-paste). Filter these out so duplicate
+# labels/images never enter the merged dataset silently.
+_ICLOUD_DUP_RE = re.compile(r" \d+$")
+
+
+def _strip_icloud_dups(paths: list[Path], kind: str) -> list[Path]:
+    clean, dups = [], []
+    for p in paths:
+        (dups if _ICLOUD_DUP_RE.search(p.stem) else clean).append(p)
+    if dups:
+        print(
+            f"  WARNING: ignored {len(dups)} iCloud-duplicate {kind} "
+            f"(matching ' N' suffix, e.g. {dups[0].name!r}). "
+            f"Re-run the converter for this dataset to clean them."
+        )
+    return clean
 
 # (dataset_prefix, label_dir, image_dir, image_extensions)
 DATASETS = [
@@ -53,17 +72,17 @@ def build_image_index() -> dict[str, dict[str, Path]]:
     s2tld_dir = RAW_DIR / "S2TLD"
     s2tld_idx: dict[str, Path] = {}
     # Original (stems are timestamps with spaces)
-    for img in (s2tld_dir / "JPEGImages").glob("*.jpg"):
+    for img in _strip_icloud_dups(list((s2tld_dir / "JPEGImages").glob("*.jpg")), "s2tld images"):
         s2tld_idx[img.stem] = img
     # normal_1 → prefix with "normal1_"
     normal1_dir = s2tld_dir / "normal_1" / "JPEGImages"
     if normal1_dir.exists():
-        for img in normal1_dir.glob("*.jpg"):
+        for img in _strip_icloud_dups(list(normal1_dir.glob("*.jpg")), "s2tld normal_1 images"):
             s2tld_idx[f"normal1_{img.stem}"] = img
     # normal_2 → prefix with "normal2_"
     normal2_dir = s2tld_dir / "normal_2" / "JPEGImages"
     if normal2_dir.exists():
-        for img in normal2_dir.glob("*.jpg"):
+        for img in _strip_icloud_dups(list(normal2_dir.glob("*.jpg")), "s2tld normal_2 images"):
             s2tld_idx[f"normal2_{img.stem}"] = img
     index["s2tld"] = s2tld_idx
     print(f"  s2tld image index: {len(s2tld_idx)} images")
@@ -74,7 +93,7 @@ def build_image_index() -> dict[str, dict[str, Path]]:
     for split in ("train", "test"):
         split_dir = bstld_dir / split / "rgb" / split
         if split_dir.exists():
-            for img in split_dir.rglob("*.png"):
+            for img in _strip_icloud_dups(list(split_dir.rglob("*.png")), f"bstld {split} images"):
                 bstld_idx[f"{split}_{img.stem}"] = img
     index["bstld"] = bstld_idx
     print(f"  bstld image index: {len(bstld_idx)} images")
@@ -83,9 +102,9 @@ def build_image_index() -> dict[str, dict[str, Path]]:
     lisa_dir = RAW_DIR / "LISA"
     lisa_idx: dict[str, Path] = {}
     if lisa_dir.exists():
-        for img in lisa_dir.rglob("*.jpg"):
-            if "sample-" not in str(img):
-                lisa_idx[img.stem] = img
+        lisa_candidates = [p for p in lisa_dir.rglob("*.jpg") if "sample-" not in str(p)]
+        for img in _strip_icloud_dups(lisa_candidates, "lisa images"):
+            lisa_idx[img.stem] = img
     index["lisa"] = lisa_idx
     print(f"  lisa image index: {len(lisa_idx)} images")
 
@@ -113,7 +132,7 @@ def collect_pairs(image_index: dict[str, dict[str, Path]]) -> list[tuple[str, Pa
             continue
 
         idx = image_index.get(prefix, {})
-        label_files = sorted(label_dir.glob("*.txt"))
+        label_files = sorted(_strip_icloud_dups(list(label_dir.glob("*.txt")), f"{prefix} labels"))
         found = 0
         missing = 0
 
