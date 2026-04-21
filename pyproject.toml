@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "kaggle>=2.0.0",
+    "onnx>=1.21.0",
+    "onnx-graphsurgeon>=0.6.1",
+    "onnxruntime>=1.24.4",
+    "onnxslim>=0.1.91",
     "opencv-python>=4.11.0.86",
     "openpyxl>=3.1.5",
     "tqdm>=4.67.3",

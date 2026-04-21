@@ -118,16 +118,18 @@ rsync -avz --progress \
 
 #### 2. Orin environment
 
-JetPack 5.1.2 / L4T R35.4.1 ships with everything needed — no Docker required:
+JetPack 5.1.x / L4T R35.x ships from the factory flash — no Docker, no reflash, no JetPack upgrade. Dependency matrix:
 
 | Component | Version | Location |
 |---|---|---|
 | CUDA | 11.4 | `/usr/local/cuda` |
 | TensorRT | 8.5.2 | headers: `/usr/include/aarch64-linux-gnu/NvInfer.h`, libs: `/usr/lib/aarch64-linux-gnu/` |
 | OpenCV | 4.5.4 | system (`core`, `imgproc`, `highgui`, `videoio`) |
-| CMake | 3.16.3 (factory) → **upgrade required** | — |
+| CMake | 3.16.3 (factory) → **≥ 3.18 required** | — |
 
-The `nvidia-jetpack` meta-package is not needed; dependencies are pre-installed from the factory flash.
+Only CMake is upgraded on-device (the project's `CMakeLists.txt` uses `find_package(CUDAToolkit)`, which needs 3.18+). The rest is used as-is — **fleet consistency outweighs any benefit from upgrading TensorRT**, so we work around TRT 8.5.2's ONNX parser limitations instead (see §5, head-stripping step).
+
+The `nvidia-jetpack` meta-package is not required; CUDA, cuDNN, TRT libraries, and OpenCV are pre-installed from the factory flash.
 
 #### 3. Upgrade CMake (3.16 → ≥ 3.18)
 
@@ -159,17 +161,45 @@ cmake --build build -j$(nproc)
 
 #### 5. Build the TensorRT engine *on the Orin*
 
-TensorRT engines are **not portable** across GPU architectures — the `.engine` file must be produced on the target device. From an `.onnx` export:
+TensorRT engines are **not portable** across GPU architectures — the `.engine` file must be produced on the target device. The YOLO26 ONNX must also be stripped of its in-graph NMS-free head before TRT 8.5.2 will parse it.
 
-```bash
-# on the Orin
-/usr/src/tensorrt/bin/trtexec \
-    --onnx=weights/best.onnx \
-    --saveEngine=weights/best.engine \
-    --fp16
+##### Why the strip step exists
+
+TRT 8.5.2's ONNX parser has a shape-propagation bug around `ReduceMax → TopK`: it fails with
+
+```
+ERROR: onnx2trt_utils.cpp:345 In function convertAxis:
+[8] Assertion failed: (axis >= 0 && axis <= nbDims)
 ```
 
-Or run `python main.py export ... --format engine --half` on the Orin directly against the `.pt` checkpoint.
+even on a valid axis. YOLO26's head emits exactly this pattern. The in-graph `TopK` is a GPU-side pre-selection optimization — YOLO26 is NMS-free by training (1:1 anchor matching enforced in the loss), so no NMS is needed at inference. Cutting the head at the final `Concat([box_xywh, sigmoid(class_scores)], dim=1)` exposes raw `[1, 4+nc, N]` output; the C++ postprocess (`inference/cpp/src/trt_pipeline.cpp`) already handles this format with CPU-side confidence thresholding.
+
+##### Export → strip → build
+
+1. On the Mac, export `.pt` → `.onnx`:
+   ```bash
+   uv run python main.py export runs/detect/yolo26n-r1/weights/best.pt --format onnx
+   ```
+2. Rewrite the ONNX to drop the NMS-free head:
+   ```bash
+   uv run python scripts/strip_yolo26_head.py \
+       runs/detect/yolo26n-r1/weights/best.onnx \
+       runs/detect/yolo26n-r1/weights/best_stripped.onnx \
+       --num-classes 7
+   ```
+   Output shows the cut node, e.g. `cut at /model.23/Concat: output /model.23/Concat_output_0 shape [1, 11, 21504]`.
+3. Ship to the Orin:
+   ```bash
+   rsync -avz runs/detect/yolo26n-r1/weights/best_stripped.onnx \
+       nvidia@192.168.30.138:traffic-light/runs/yolo26n-r1/
+   ```
+4. On the Orin, build the engine:
+   ```bash
+   /usr/src/tensorrt/bin/trtexec \
+       --onnx=runs/yolo26n-r1/best_stripped.onnx \
+       --saveEngine=runs/yolo26n-r1/best.engine \
+       --fp16
+   ```
 
 #### 6. Run
 
@@ -190,9 +220,10 @@ The pipeline accepts video of any resolution or aspect ratio. Every frame is let
 
 - [x] Python pipeline + demo implemented and tested on M4 Pro
 - [x] C++ pipeline + demo implemented, mirrors Python semantics
-- [x] Source synced to Orin, dependencies verified (CUDA/TRT/OpenCV all present from factory flash)
-- [ ] CMake upgrade on Orin (blocked on device access — see note below)
-- [ ] First successful `cmake --build` on Orin
-- [ ] `.engine` built on-device from latest `.pt`
-- [ ] End-to-end C++ demo run on Orin with live camera
+- [x] Source synced to Orin; CUDA/TRT/OpenCV present from factory flash
+- [x] CMake upgrade on Orin (3.16 → ≥ 3.18)
+- [x] First successful `cmake --build` on Orin
+- [x] YOLO26 ONNX stripped of in-graph NMS head (`scripts/strip_yolo26_head.py`)
+- [x] `.engine` built on-device from stripped ONNX via `trtexec`
+- [x] End-to-end C++ demo run on Orin
 
