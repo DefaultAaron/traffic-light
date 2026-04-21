@@ -1,6 +1,9 @@
 # Traffic Light Recognition
 
-Traffic light detection and state classification (Red/Yellow/Green) for autonomous driving.
+Traffic light detection and state classification for autonomous driving on NVIDIA Jetson AGX Orin.
+
+- **R1 (current)**: 7-class traffic-light detector — `red`, `yellow`, `green`, `redLeft`, `greenLeft`, `redRight`, `greenRight`
+- **R2 (planned)**: joint detector expanded to **10–14 classes** — 9–12 traffic-light classes (adds `forwardRed`/`forwardGreen` + PM-pending extensions) and 1–2 barrier classes (`barrier` MVP, optional `armOn`/`armOff`). See `docs/phase_2_round_1_report.md` §"R2 范围扩展".
 
 ## Project Structure
 
@@ -37,7 +40,7 @@ traffic-light/
 | BSTLD | 13K | 24K | Non-commercial |
 | LISA | 43K | 113K | CC BY-NC-SA |
 
-Classes: `red`, `yellow`, `green`
+Classes: R1 uses 7 classes (3 colors + 4 arrow variants). R2 will extend to 10–14 classes (see top of README).
 
 ## Usage
 
@@ -95,7 +98,7 @@ Two equivalent implementations of the TensorRT detector live under `inference/`:
 | Build | `uv`/pip env | CMake ≥ 3.18, see below |
 | Use case | Quick iteration, debugging, JSON telemetry | Production deployment on Orin |
 
-Both accept the same flags: `--source`, `--model`, `--conf`, `--imgsz`, `--no-show`, `--save`. Classes and colors are kept in sync (7 classes: red, yellow, green, redLeft, greenLeft, redRight, greenRight).
+Both accept the same flags: `--source`, `--model`, `--conf`, `--imgsz`, `--no-show`, `--save`. Class names and draw colors are kept in sync between the two backends; R1 ships 7 classes, and when R2's class list is locked the constants in `trt_pipeline.py`, `trt_pipeline.hpp`, and `demo.cpp` will be updated in lockstep.
 
 ### Python deployment (dev / quick test)
 

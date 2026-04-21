@@ -38,7 +38,9 @@ Detection2DArray
 
 ---
 
-## 7 类检测类别
+## 检测类别
+
+### R1（当前部署，7 类）
 
 | class_id (string) | 含义 |
 |--------------------|------|
@@ -49,6 +51,20 @@ Detection2DArray
 | `greenLeft` | 绿色左转箭头 |
 | `redRight` | 红色右转箭头 |
 | `greenRight` | 绿色右转箭头 |
+
+### R2（计划，10–14 类，联合模型）
+
+R2 将在同一 `Detection2DArray` 上追加新类别（消息结构不变，订阅端只需忽略未识别的 `class_id`）：
+
+| class_id (string) | 含义 | 状态 |
+|--------------------|------|------|
+| `forwardRed` | 红色直行箭头 | 确认新增 |
+| `forwardGreen` | 绿色直行箭头 | 确认新增 |
+| （PM 待定 ≤3 项） | 候选：行人灯 / 黄色方向变体 / 闪烁状态 | 待定 |
+| `barrier` | 道路栏杆（检测即可，不区分状态） | R2 MVP |
+| `armOn` / `armOff` | 栏杆落 / 抬状态（二选一条件：采集数据各态 ≥500） | R2 最佳实践 |
+
+详见 `docs/phase_2_round_1_report.md` §"R2 范围扩展（PM 确认事项）"。
 
 ---
 
@@ -136,7 +152,7 @@ ament_target_dependencies(your_node rclcpp vision_msgs)
 | 消息类型 | `vision_msgs/Detection2DArray`，不会更换为自定义消息 |
 | Topic 名称 | `/traffic_light/detections`（默认值） |
 | `class_id` 为字符串 | 如 `"red"`、`"greenLeft"`，不是整数 |
-| 现有 7 类名称不变 | `red`、`yellow`、`green`、`redLeft`、`greenLeft`、`redRight`、`greenRight` |
+| R1 已有 7 类名称不变 | `red`、`yellow`、`green`、`redLeft`、`greenLeft`、`redRight`、`greenRight`。R2 新增类别仅追加，不会重命名已有类 |
 | `results` 数组 | 每个 `Detection2D` 固定包含 1 个 `ObjectHypothesisWithPose` |
 | 坐标系 | bbox 为**原始图像像素坐标**（非归一化） |
 

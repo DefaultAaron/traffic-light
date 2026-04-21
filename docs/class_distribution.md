@@ -1,7 +1,13 @@
-# 7 类标签分布分析
+# 7 类标签分布分析（R1 基线）
 
 **日期**: 2026-04-16
 **数据源**: S2TLD（全部子集已重标注）、BSTLD（训练集 YAML 含方向标签）、LISA
+
+> **R2 范围更新（2026-04-21）**：PM 确认 R2 将扩展为 **10–14 类联合模型**（9–12 类交通灯 + 1–2 类道路栏杆）。
+> - 交通灯确认新增 `forwardGreen`、`forwardRed`（总计至少 9 类），另可再新增 ≤3 类由 PM 最终敲定
+> - 栏杆 MVP 为单类 `barrier`，数据充分则升级为 `armOn` / `armOff`
+>
+> 下方 7 类表格保留作为 R1 基线；R2 新增类别的样本统计与数据缺口分析见 `docs/phase_2_round_1_report.md` §"R2 范围扩展（PM 确认事项）"。
 
 ---
 
@@ -52,14 +58,14 @@
 
 ---
 
-## 标签折叠规则
+## 标签折叠规则（R1）
 
-以下标签折叠为基础类别（在转换脚本中实现）：
+以下标签折叠为基础类别（在 R1 转换脚本中实现）：
 
 | 原始标签 | 目标类别 | 原因 |
 |----------|----------|------|
-| redForward, RedStraight | red (0) | 直行箭头功能等同于圆灯 |
-| greenForward, GreenStraight, goForward | green (2) | 直行箭头功能等同于圆灯 |
+| redForward, RedStraight | red (0) | R1 决策：直行箭头功能等同于圆灯 |
+| greenForward, GreenStraight, goForward | green (2) | R1 决策：直行箭头功能等同于圆灯 |
 | yellowLeft, yellowForward, yellowRight, warningLeft | yellow (1) | 黄灯方向数据极少，全部归入黄灯圆灯 |
 
 跳过的标签：
@@ -69,6 +75,8 @@
 | off | 灭灯状态，非检测目标 |
 | wait_on / Wait_on | S2TLD 特有倒计时状态 |
 | RedStraightLeft, GreenStraightLeft, GreenStraightRight | BSTLD 复合方向灯，仅 5 个样本 |
+
+> **R2 变化**：`redForward / RedStraight / goForward / greenForward / GreenStraight` 将从圆灯折叠中恢复，分别映射为新的 `forwardRed` / `forwardGreen` 类。该折叠在 R2 转换脚本切版时修改。若 PM 将 `yellowForward` / `warningLeft` 纳入 R2 新增 3 类额度，则对应折叠一并取消。
 
 ---
 
