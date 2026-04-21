@@ -79,3 +79,120 @@ python main.py export runs/yolo26n/weights/best.pt --format engine --half  # Ten
 python main.py export runs/yolo26n/weights/best.pt --format coreml         # CoreML (M4 Pro)
 python main.py export runs/yolo26n/weights/best.pt --format onnx           # ONNX (portable)
 ```
+
+## Deployment
+
+Target device: **NVIDIA Jetson AGX Orin 64GB** at `nvidia@192.168.30.138`.
+
+### Inference pipelines
+
+Two equivalent implementations of the TensorRT detector live under `inference/`:
+
+| | Python | C++ |
+|---|---|---|
+| Pipeline | `inference/trt_pipeline.py` | `inference/cpp/src/trt_pipeline.cpp` + `include/trt_pipeline.hpp` |
+| Demo | `inference/demo.py` | `inference/cpp/src/demo.cpp` |
+| Build | `uv`/pip env | CMake ≥ 3.18, see below |
+| Use case | Quick iteration, debugging, JSON telemetry | Production deployment on Orin |
+
+Both accept the same flags: `--source`, `--model`, `--conf`, `--imgsz`, `--no-show`, `--save`. Classes and colors are kept in sync (7 classes: red, yellow, green, redLeft, greenLeft, redRight, greenRight).
+
+### Python deployment (dev / quick test)
+
+```bash
+# On Orin (from project root)
+python -m inference.demo --source video.mp4 --model weights/best.engine
+python -m inference.demo --source 0 --model weights/best.engine --json  # webcam + JSON
+```
+
+### C++ deployment (production)
+
+#### 1. Sync source to the Orin
+
+```bash
+rsync -avz --progress \
+    --exclude 'build/' --exclude '*.o' --exclude '.DS_Store' \
+    ~/Documents/Projects/mingtai/traffic-light/inference/cpp \
+    nvidia@192.168.30.138:traffic-light/inference/
+```
+
+#### 2. Orin environment
+
+JetPack 5.1.2 / L4T R35.4.1 ships with everything needed — no Docker required:
+
+| Component | Version | Location |
+|---|---|---|
+| CUDA | 11.4 | `/usr/local/cuda` |
+| TensorRT | 8.5.2 | headers: `/usr/include/aarch64-linux-gnu/NvInfer.h`, libs: `/usr/lib/aarch64-linux-gnu/` |
+| OpenCV | 4.5.4 | system (`core`, `imgproc`, `highgui`, `videoio`) |
+| CMake | 3.16.3 (factory) → **upgrade required** | — |
+
+The `nvidia-jetpack` meta-package is not needed; dependencies are pre-installed from the factory flash.
+
+#### 3. Upgrade CMake (3.16 → ≥ 3.18)
+
+The project requires CMake 3.18+ for `find_package(CUDAToolkit)`. Pick one:
+
+```bash
+# Option A (user-space, simplest)
+pip3 install --user cmake
+export PATH=$HOME/.local/bin:$PATH
+
+# Option B (system, Kitware apt repo)
+wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | \
+    gpg --dearmor | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main" | \
+    sudo tee /etc/apt/sources.list.d/kitware.list
+sudo apt update && sudo apt install -y cmake
+```
+
+#### 4. Build
+
+```bash
+cd ~/traffic-light/inference/cpp
+export PATH=/usr/local/cuda/bin:$PATH
+export CUDACXX=/usr/local/cuda/bin/nvcc
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+# produces: build/tl_demo
+```
+
+#### 5. Build the TensorRT engine *on the Orin*
+
+TensorRT engines are **not portable** across GPU architectures — the `.engine` file must be produced on the target device. From an `.onnx` export:
+
+```bash
+# on the Orin
+/usr/src/tensorrt/bin/trtexec \
+    --onnx=weights/best.onnx \
+    --saveEngine=weights/best.engine \
+    --fp16
+```
+
+Or run `python main.py export ... --format engine --half` on the Orin directly against the `.pt` checkpoint.
+
+#### 6. Run
+
+```bash
+./build/tl_demo --source /path/to/video.mp4 --model weights/best.engine
+./build/tl_demo --source 0 --model weights/best.engine --no-show --save out.mp4
+```
+
+### Input resolution
+
+The pipeline accepts video of any resolution or aspect ratio. Every frame is letterboxed (aspect-preserving resize + gray padding) to the engine's fixed `imgsz × imgsz` (default 1280 × 1280). Phone clips, 4K footage, portrait orientation, and sub-`imgsz` inputs all work transparently.
+
+- **Engine input size is baked in at export time.** The demo's `--imgsz` flag is a sanity-check override only — if it disagrees with the engine, the engine wins (you'll see a `[TRT] warning` on startup). To run at a different size, re-export: `python main.py export ... --imgsz <N> --format onnx` and rebuild the `.engine`.
+- **Input smaller than `imgsz`** (e.g., 720p into a 1280 engine): letterbox upsamples with bilinear interpolation. No failure, but detail can't be invented — small/distant traffic lights that were blurry in the source stay blurry.
+- **Input larger than `imgsz`** (e.g., 4K or portrait phone footage into a 1280 engine): letterbox downsamples to fit, so very small or distant lights may be missed. Either crop the source to landscape before inference, or export a larger-`imgsz` engine (1600, 1920) — at the cost of higher per-frame latency.
+
+### Deployment status
+
+- [x] Python pipeline + demo implemented and tested on M4 Pro
+- [x] C++ pipeline + demo implemented, mirrors Python semantics
+- [x] Source synced to Orin, dependencies verified (CUDA/TRT/OpenCV all present from factory flash)
+- [ ] CMake upgrade on Orin (blocked on device access — see note below)
+- [ ] First successful `cmake --build` on Orin
+- [ ] `.engine` built on-device from latest `.pt`
+- [ ] End-to-end C++ demo run on Orin with live camera
+

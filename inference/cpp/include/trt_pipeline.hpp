@@ -69,6 +69,7 @@ private:
         bool is_fp16 = false;
         void* device = nullptr;  // cudaMalloc'd
         void* host = nullptr;    // pinned host buffer
+        int binding_index = -1;  // TRT 8.x enqueueV2 binding slot; unused on TRT 10+
     };
 
     void loadEngine(const std::string& path);
@@ -88,6 +89,10 @@ private:
 
     std::vector<TensorBuf> inputs_;
     std::vector<TensorBuf> outputs_;
+
+    // TRT 8.x enqueueV2 needs a binding-indexed pointer array. Populated in
+    // allocateBuffers() and reused for every detect() call. Unused on TRT 10+.
+    std::vector<void*> binding_ptrs_;
 
     // Reused per-frame buffer for FP16 → float32 expansion during postprocess.
     std::vector<float> fp16_scratch_;

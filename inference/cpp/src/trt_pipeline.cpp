@@ -3,8 +3,10 @@
 #include <cuda_runtime_api.h>
 #include <NvInfer.h>
 
-#if !defined(NV_TENSORRT_MAJOR) || NV_TENSORRT_MAJOR < 10
-#error "This pipeline requires TensorRT 10 or newer (JetPack 6+). For TRT 8.x, you'd need to switch to enqueueV2 + getBindingIndex."
+#if !defined(NV_TENSORRT_MAJOR)
+#error "NV_TENSORRT_MAJOR not defined — is NvInfer.h included?"
+#elif NV_TENSORRT_MAJOR < 8 || (NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR < 5)
+#error "This pipeline requires TensorRT 8.5 or newer."
 #endif
 
 #include <algorithm>
@@ -193,6 +195,7 @@ void TRTDetector::loadEngine(const std::string& path) {
 }
 
 void TRTDetector::allocateBuffers() {
+#if NV_TENSORRT_MAJOR >= 10
     const int n = engine_->getNbIOTensors();
 
     // Pass 1: set all input shapes (replacing any dynamic dim with 1) so
@@ -235,6 +238,51 @@ void TRTDetector::allocateBuffers() {
         if (mode == nvinfer1::TensorIOMode::kINPUT) inputs_.push_back(std::move(buf));
         else                                        outputs_.push_back(std::move(buf));
     }
+#else
+    // TRT 8.x: index-based bindings API + enqueueV2.
+    const int n = engine_->getNbBindings();
+
+    // Pass 1: resolve dynamic input dims to 1 via the context.
+    for (int i = 0; i < n; ++i) {
+        if (!engine_->bindingIsInput(i)) continue;
+        nvinfer1::Dims dims = engine_->getBindingDimensions(i);
+        for (int k = 0; k < dims.nbDims; ++k) {
+            if (dims.d[k] < 0) dims.d[k] = 1;
+        }
+        if (!context_->setBindingDimensions(i, dims)) {
+            throw std::runtime_error("setBindingDimensions failed for binding " +
+                                     std::to_string(i));
+        }
+    }
+
+    // Pass 2: allocate every binding; cache device pointers by binding index
+    // for enqueueV2.
+    binding_ptrs_.assign(n, nullptr);
+    for (int i = 0; i < n; ++i) {
+        const char* name = engine_->getBindingName(i);
+        bool is_input = engine_->bindingIsInput(i);
+        auto dtype = engine_->getBindingDataType(i);
+        nvinfer1::Dims dims = context_->getBindingDimensions(i);
+
+        TensorBuf buf;
+        buf.name = name ? name : "";
+        buf.binding_index = i;
+        buf.shape.assign(dims.d, dims.d + dims.nbDims);
+        for (auto& d : buf.shape) if (d < 0) d = 1;
+        buf.elem_count = std::accumulate(buf.shape.begin(), buf.shape.end(), size_t{1},
+                                         std::multiplies<size_t>());
+        buf.elem_size = dtypeSize(dtype);
+        buf.is_fp16 = (dtype == nvinfer1::DataType::kHALF);
+        const size_t dev_bytes = buf.elem_count * buf.elem_size;
+
+        CUDA_CHECK(cudaMalloc(&buf.device, dev_bytes));
+        CUDA_CHECK(cudaMallocHost(&buf.host, dev_bytes));
+        binding_ptrs_[i] = buf.device;
+
+        if (is_input) inputs_.push_back(std::move(buf));
+        else          outputs_.push_back(std::move(buf));
+    }
+#endif
 
     if (inputs_.empty() || outputs_.empty()) {
         throw std::runtime_error("Engine has no input or output tensors");
@@ -304,9 +352,15 @@ std::vector<Detection> TRTDetector::detect(const cv::Mat& frame) {
     float scale = 1.f, pad_w = 0.f, pad_h = 0.f;
     preprocess(frame, scale, pad_w, pad_h);
 
+#if NV_TENSORRT_MAJOR >= 10
     if (!context_->enqueueV3(stream_)) {
         throw std::runtime_error("enqueueV3 failed");
     }
+#else
+    if (!context_->enqueueV2(binding_ptrs_.data(), stream_, nullptr)) {
+        throw std::runtime_error("enqueueV2 failed");
+    }
+#endif
 
     for (auto& out : outputs_) {
         CUDA_CHECK(cudaMemcpyAsync(out.host, out.device, out.elem_count * out.elem_size,

@@ -13,6 +13,7 @@ wheels/
 # Pretrained & trained weights
 weights/
 runs/
+demo/
 
 # Datasets
 data/raw/
