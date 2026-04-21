@@ -275,22 +275,21 @@ class TRTDetector:
         detections: list[Detection] = []
 
         for row in output:
-            # row: [cx, cy, w, h, cls0_conf, cls1_conf, ..., clsN_conf]
-            box = row[:4]
+            # row: [x1, y1, x2, y2, cls0_conf, ..., clsN_conf] in letterbox frame.
+            # YOLO26 head (post-strip at Concat_3) emits xyxy directly via
+            # (anchor ± DFL-decoded distance) × stride — not cxcywh.
             class_scores = row[4:]
-
             cls_id = int(np.argmax(class_scores))
             conf = float(class_scores[cls_id])
 
             if conf < self.conf_thresh:
                 continue
 
-            # Convert from letterboxed coords to original image coords
-            cx, cy, bw, bh = box
-            x1 = (cx - bw / 2 - pad_w) / scale
-            y1 = (cy - bh / 2 - pad_h) / scale
-            x2 = (cx + bw / 2 - pad_w) / scale
-            y2 = (cy + bh / 2 - pad_h) / scale
+            lx1, ly1, lx2, ly2 = row[:4]
+            x1 = (lx1 - pad_w) / scale
+            y1 = (ly1 - pad_h) / scale
+            x2 = (lx2 - pad_w) / scale
+            y2 = (ly2 - pad_h) / scale
 
             # Clip to image bounds
             x1 = max(0, min(x1, w_orig))

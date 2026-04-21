@@ -411,23 +411,26 @@ std::vector<Detection> TRTDetector::postprocess(const cv::Mat& orig,
     std::vector<Detection> dets;
     dets.reserve(64);
 
+    // YOLO26 head (post-strip at Concat_3) emits boxes as xyxy in the
+    // letterboxed input frame — the in-graph Sub/Add_1 + stride-Mul produces
+    // (x1, y1, x2, y2) directly, not (cx, cy, w, h).
     for (int64_t i = 0; i < num_rows; ++i) {
-        float cx, cy, bw, bh;
+        float lx1, ly1, lx2, ly2;
         int cls_id = 0;
         float best = 0.f;
 
         if (transposed) {
-            cx = data[0 * num_rows + i];
-            cy = data[1 * num_rows + i];
-            bw = data[2 * num_rows + i];
-            bh = data[3 * num_rows + i];
+            lx1 = data[0 * num_rows + i];
+            ly1 = data[1 * num_rows + i];
+            lx2 = data[2 * num_rows + i];
+            ly2 = data[3 * num_rows + i];
             for (int c = 0; c < num_classes; ++c) {
                 float s = data[(4 + c) * num_rows + i];
                 if (s > best) { best = s; cls_id = c; }
             }
         } else {
             const float* row = data + i * row_len;
-            cx = row[0]; cy = row[1]; bw = row[2]; bh = row[3];
+            lx1 = row[0]; ly1 = row[1]; lx2 = row[2]; ly2 = row[3];
             for (int c = 0; c < num_classes; ++c) {
                 if (row[4 + c] > best) { best = row[4 + c]; cls_id = c; }
             }
@@ -435,10 +438,10 @@ std::vector<Detection> TRTDetector::postprocess(const cv::Mat& orig,
 
         if (best < conf_thresh_) continue;
 
-        float x1 = (cx - bw / 2.f - pad_w) / scale;
-        float y1 = (cy - bh / 2.f - pad_h) / scale;
-        float x2 = (cx + bw / 2.f - pad_w) / scale;
-        float y2 = (cy + bh / 2.f - pad_h) / scale;
+        float x1 = (lx1 - pad_w) / scale;
+        float y1 = (ly1 - pad_h) / scale;
+        float x2 = (lx2 - pad_w) / scale;
+        float y2 = (ly2 - pad_h) / scale;
 
         x1 = std::max(0.f, std::min(x1, static_cast<float>(orig_w)));
         y1 = std::max(0.f, std::min(y1, static_cast<float>(orig_h)));
