@@ -21,3 +21,12 @@ dependencies = [
 orin = ["pycuda>=2024.1"]
 # ONNX Runtime for development/testing on x86/Apple Silicon
 onnx = ["onnxruntime>=1.18.0"]
+# DEIM-D-FINE training (alternative detector track). Reuses torch/torchvision
+# from ultralytics; adds only DEIM-specific extras.
+deim = [
+    "faster-coco-eval>=1.6.5",
+    "tensorboard>=2.14",
+    "scipy>=1.11",
+    "calflops>=0.3.2",
+    "transformers>=4.41",
+]

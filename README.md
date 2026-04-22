@@ -43,6 +43,41 @@ Ultralytics restores epochs, batch, device, and hyperparameters from `args.yaml`
 
 Candidate model comparison, dataset licensing, and milestones: [`docs/planning/development_plan.md`](docs/planning/development_plan.md).
 
+## Alternative Detector Track: DEIM-D-FINE
+
+A parallel track evaluates DEIM-D-FINE (Apache-2.0) as a hedge against Ultralytics AGPL licensing and as a precision ceiling probe. See [`docs/proposals/yolo26_alternatives_survey.md`](docs/proposals/yolo26_alternatives_survey.md) for the rationale.
+
+**Environment setup (recommended: same uv venv)**
+
+```bash
+uv sync --extra deim               # adds DEIM-specific deps to the existing venv
+```
+
+This reuses torch/torchvision already pinned by ultralytics. If resolver conflicts emerge (unlikely), fall back to a separate conda env per DEIM's README:
+
+```bash
+conda create -n deim python=3.11.9 && conda activate deim
+pip install -r DEIM/requirements.txt
+```
+
+**Data conversion (one-time, shared with Ultralytics)**
+
+```bash
+uv run python scripts/yolo_to_coco.py
+# → data/merged/annotations/instances_{train,val}.json
+# Images are NOT copied — DEIM reads from data/merged/images/{train,val}/
+```
+
+**Training**
+
+```bash
+# S / M variants (N is skipped — see proposal §size selection)
+NPROC=1 ./scripts/train_deim.sh s -t weights/deim_dfine_s_coco.pth
+NPROC=1 ./scripts/train_deim.sh m -t weights/deim_dfine_m_coco.pth
+```
+
+Checkpoints and logs land in `runs/deim_dfine_{s,m}_r2/`. Use `-t` to fine-tune from COCO weights (strongly recommended on our 55k-image set).
+
 ## Deployment
 
 Target: **NVIDIA Jetson AGX Orin 64GB**. Two equivalent backends under `inference/`:

@@ -1,0 +1,10 @@
+# YOLOv13-s training config
+model: weights/yolov13s.pt
+data: data/traffic_light.yaml
+epochs: 100
+imgsz: 640
+batch: -1
+flipud: 0.0
+fliplr: 0.0
+name: yolov13s
+patience: 20
