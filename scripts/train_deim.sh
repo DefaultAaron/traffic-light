@@ -12,6 +12,7 @@
 set -e
 
 SIZE="${1:?usage: scripts/train_deim.sh {n|s|m} [extra args]}"
+SIZE="${SIZE//$'\r'/}"   # strip CR in case the script was checked out with CRLF
 shift
 
 case "$SIZE" in
