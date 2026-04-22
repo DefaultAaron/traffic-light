@@ -50,6 +50,8 @@ def train(args):
         config["batch"] = args.batch
     if args.device:
         config["device"] = args.device
+    if args.imgsz:
+        config["imgsz"] = args.imgsz
 
     model = build_model(config)
     config.pop("model")  # already loaded, don't pass twice
@@ -122,6 +124,8 @@ def train_all(args):
             config["batch"] = args.batch
         if args.device:
             config["device"] = args.device
+        if args.imgsz:
+            config["imgsz"] = args.imgsz
 
         model = build_model(config)
         config.pop("model")
@@ -138,6 +142,7 @@ def main():
                          help="Model config name (omit when using --resume)")
     p_train.add_argument("--epochs", type=int)
     p_train.add_argument("--batch", type=int)
+    p_train.add_argument("--imgsz", type=int, help="Override training image size (default: config value)")
     p_train.add_argument("--device", type=str, help="e.g. 0, cpu, mps")
     p_train.add_argument("--resume", type=str, metavar="CKPT",
                          help="Resume from checkpoint (e.g. runs/yolo26n/weights/last.pt)")
@@ -148,6 +153,7 @@ def main():
     p_all.add_argument("--models", nargs="+", choices=VALID_MODELS)
     p_all.add_argument("--epochs", type=int)
     p_all.add_argument("--batch", type=int)
+    p_all.add_argument("--imgsz", type=int, help="Override training image size (default: config value)")
     p_all.add_argument("--device", type=str)
     p_all.set_defaults(func=train_all)
 

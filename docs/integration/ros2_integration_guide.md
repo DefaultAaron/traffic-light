@@ -64,7 +64,7 @@ R2 将在同一 `Detection2DArray` 上追加新类别（消息结构不变，订
 | `barrier` | 道路栏杆（检测即可，不区分状态） | R2 MVP |
 | `armOn` / `armOff` | 栏杆落 / 抬状态（二选一条件：采集数据各态 ≥500） | R2 最佳实践 |
 
-详见 `docs/phase_2_round_1_report.md` §"R2 范围扩展（PM 确认事项）"。
+详见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
 
 ---
 

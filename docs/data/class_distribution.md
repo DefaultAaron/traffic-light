@@ -7,7 +7,7 @@
 > - 交通灯确认新增 `forwardGreen`、`forwardRed`（总计至少 9 类），另可再新增 ≤3 类由 PM 最终敲定
 > - 栏杆 MVP 为单类 `barrier`，数据充分则升级为 `armOn` / `armOff`
 >
-> 下方 7 类表格保留作为 R1 基线；R2 新增类别的样本统计与数据缺口分析见 `docs/phase_2_round_1_report.md` §"R2 范围扩展（PM 确认事项）"。
+> 下方 7 类表格保留作为 R1 基线；R2 新增类别的样本统计与数据缺口分析见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
 
 ---
 
