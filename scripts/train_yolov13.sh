@@ -20,8 +20,11 @@
 
 set -e
 
-SIZE="${1:?usage: scripts/train_yolov13.sh {n|s|m|l} [extra args]}"
-SIZE="${SIZE//$'\r'/}"   # strip CR in case the script was checked out with CRLF
+if [[ -z "${1:-}" ]]; then
+    echo "usage: scripts/train_yolov13.sh <n|s|m|l> [extra args]" >&2
+    exit 1
+fi
+SIZE="${1//$'\r'/}"       # strip CR in case of CRLF
 shift
 
 case "$SIZE" in
