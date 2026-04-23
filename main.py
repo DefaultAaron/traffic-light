@@ -77,7 +77,12 @@ def val(args):
 
 
 def export(args):
-    """Export a trained model to deployment format."""
+    """Export a trained model to deployment format.
+
+    When ``--format onnx`` is used on a YOLO26 model, the NMS-free head is
+    auto-stripped into ``*_stripped.onnx`` so the result parses on TRT 8.5.2
+    (JetPack 5.1). Pass ``--no-strip`` to disable.
+    """
     weights = Path(args.weights)
     if not weights.exists():
         raise FileNotFoundError(f"Weights not found: {weights}")
@@ -87,7 +92,22 @@ def export(args):
     else:
         model = YOLO(str(weights))
 
-    model.export(format=args.format, imgsz=args.imgsz, half=args.half)
+    output_path = model.export(format=args.format, imgsz=args.imgsz, half=args.half)
+
+    if args.format == "onnx" and "yolo26" in str(weights).lower() and not args.no_strip:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "strip_yolo26_head", ROOT / "scripts" / "strip_yolo26_head.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        src = Path(output_path)
+        dst = src.with_name(f"{src.stem}_stripped_{args.imgsz}.onnx")
+        mod.strip_head(str(src), str(dst), num_classes=len(model.names))
+        src.unlink()
+        print(f"removed intermediate {src}")
 
 
 def infer(args):
@@ -188,6 +208,8 @@ def main():
     )
     p_export.add_argument("--imgsz", type=int, default=640, help="Input image size (default: 640)")
     p_export.add_argument("--half", action="store_true", help="FP16 quantization")
+    p_export.add_argument("--no-strip", action="store_true",
+                          help="For YOLO26 ONNX export, skip the NMS-free head strip")
     p_export.set_defaults(func=export)
 
     args = parser.parse_args()

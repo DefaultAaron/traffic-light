@@ -32,14 +32,16 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 
 | File | Contents |
 |---|---|
-| [`phase_1_report.md`](reports/phase_1_report.md) | R1 3-class baseline: training, eval, findings. Phase 2 preview (historical) |
-| [`phase_1_results.md`](reports/phase_1_results.md) | Raw eval tables (RT-DETR-l, YOLO11/26 n/s/m) — R1 3-class |
-| [`phase_2_round_1_report.md`](reports/phase_2_round_1_report.md) | R2 Round-1: 7-class training + Orin deployment + diagnostic experiments + PM scope expansion (10–14 classes) |
+| [`phase_1_report.md`](reports/phase_1_report.md) | Phase 1 3-class baseline — model selection narrative (historical) |
+| [`phase_1_results.md`](reports/phase_1_results.md) | Raw eval tables for Phase 1 (RT-DETR-L, YOLO11/26 n/s/m, 3-class) |
+| [`phase_2_round_1_report.md`](reports/phase_2_round_1_report.md) | R1 7-class: YOLO26 n/s/m training + Orin deployment + demo diagnosis + alt-track launch + R2 scope lock (10–14 classes) — **living doc** |
+| [`phase_2_round_1_results.md`](reports/phase_2_round_1_results.md) | Raw eval tables for R1 (YOLO26 n/s/m populated; YOLOv13-s and DEIM-D-FINE-S/M pending) |
 
 ## proposals/
 
 | File | Status |
 |---|---|
+| [`yolo26_alternatives_survey.md`](proposals/yolo26_alternatives_survey.md) | **In training (2026-04-22)** — YOLOv13-s + DEIM-D-FINE-S/M as R1 alt tracks |
 | [`depth_estimation_feasibility.md`](proposals/depth_estimation_feasibility.md) | **On hold**, awaiting team leader approval |
 | [`temporal_encoder_feasibility.md`](proposals/temporal_encoder_feasibility.md) | **Deferred**, revisit after 2026-05-15 deadline |
 

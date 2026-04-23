@@ -48,6 +48,29 @@ def find_head_concat(graph, num_classes):
     return candidates[-1] if candidates else None
 
 
+def strip_head(src: str, dst: str, num_classes: int) -> None:
+    """Strip YOLO26's NMS-free head, writing raw [1, 4+nc, N] output to ``dst``."""
+    model = onnx.load(src)
+    model = onnx.shape_inference.infer_shapes(model)
+    graph = gs.import_onnx(model)
+
+    match = find_head_concat(graph, num_classes)
+    if match is None:
+        raise RuntimeError(
+            f"no Concat node with output shape [*, {4+num_classes}, *] found "
+            "(expected channel dim 4+num_classes = box xywh + class scores)"
+        )
+
+    node, out = match
+    print(f"cut at {node.name}: output {out.name} shape {out.shape}")
+
+    before = len(graph.nodes)
+    graph.outputs = [out]
+    graph.cleanup().toposort()
+    onnx.save(gs.export_onnx(graph), dst)
+    print(f"{before} -> {len(graph.nodes)} nodes, wrote {dst}")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -57,25 +80,11 @@ def main():
                     help="number of detection classes (default: 7)")
     args = ap.parse_args()
 
-    model = onnx.load(args.src)
-    model = onnx.shape_inference.infer_shapes(model)
-    graph = gs.import_onnx(model)
-
-    match = find_head_concat(graph, args.num_classes)
-    if match is None:
-        print(f"error: no Concat node with output shape [*, {4+args.num_classes}, *] found.",
-              file=sys.stderr)
-        print("       expected channel dim 4+num_classes (box xywh + class scores).", file=sys.stderr)
+    try:
+        strip_head(args.src, args.dst, args.num_classes)
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    node, out = match
-    print(f"cut at {node.name}: output {out.name} shape {out.shape}")
-
-    before = len(graph.nodes)
-    graph.outputs = [out]
-    graph.cleanup().toposort()
-    onnx.save(gs.export_onnx(graph), args.dst)
-    print(f"{before} -> {len(graph.nodes)} nodes, wrote {args.dst}")
 
 
 if __name__ == "__main__":

@@ -46,7 +46,10 @@ def convert_split(split: str, names: list[str]) -> dict:
     img_id = 0
     ann_id = 0
 
-    img_paths = sorted(p for p in img_dir.iterdir() if p.suffix.lower() in IMG_EXTS)
+    img_paths = sorted(
+        p for p in img_dir.iterdir()
+        if p.suffix.lower() in IMG_EXTS and not p.name.startswith("._")
+    )
 
     for img_path in tqdm(img_paths, desc=f"convert {split}"):
         with Image.open(img_path) as im:

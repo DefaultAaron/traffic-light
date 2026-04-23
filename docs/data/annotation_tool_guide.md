@@ -87,7 +87,7 @@ uv run python scripts/annotate_bstld.py
 
 点击标注列表中的**类别名称**（如 `red`），弹出类别选择菜单，选择新类别即可完成修改。
 
-可用类别（第二阶段 7 类 + 特殊类）：
+可用类别（R1 7 类 + 特殊类）：
 
 | 类别 | 含义 |
 |------|------|
@@ -100,6 +100,8 @@ uv run python scripts/annotate_bstld.py
 | `greenRight` | 绿色右转箭头 |
 | `off` | 灭灯 |
 | `wait_on` | 等待亮灯（仅 S2TLD） |
+
+> **R2 扩展**：类别清单将扩至 10–14 类（新增 `forwardRed` / `forwardGreen` + PM 待定 ≤3 项 + `barrier` MVP）。工具内类别列表将在 PM SOP 锁定后更新；此前保持 R1 7 类，**不要提前用未锁定类别名标注**。
 
 ### 5.2 添加标注
 
@@ -207,7 +209,7 @@ BSTLD 原始标注使用大写英文类别名，首次生成 XML 时会自动映
 | `Green` | `green` |
 | `off` | `off` |
 
-BSTLD 测试集仅包含以上 4 类，方向标注（`redLeft`、`greenLeft` 等）需通过工具手动添加。
+BSTLD 测试集原始 YAML 仅含以上 4 类圆灯标签；方向（`redLeft` / `greenLeft` / `redRight` / `greenRight`）和直行（R2 的 `forwardRed` / `forwardGreen`）需在此工具中手动补标。
 
 ---
 

@@ -1,17 +1,19 @@
-# 7 类标签分布分析（R1 基线）
+# 标签分布分析（R1 7 类 / R2 9 类基线）
 
-**日期**: 2026-04-16
+**日期**: 2026-04-16（R1 7 类初版）、2026-04-23（追加 R2 9 类）
 **数据源**: S2TLD（全部子集已重标注）、BSTLD（训练集 YAML 含方向标签）、LISA
 
 > **R2 范围更新（2026-04-21）**：PM 确认 R2 将扩展为 **10–14 类联合模型**（9–12 类交通灯 + 1–2 类道路栏杆）。
 > - 交通灯确认新增 `forwardGreen`、`forwardRed`（总计至少 9 类），另可再新增 ≤3 类由 PM 最终敲定
 > - 栏杆 MVP 为单类 `barrier`，数据充分则升级为 `armOn` / `armOff`
 >
-> 下方 7 类表格保留作为 R1 基线；R2 新增类别的样本统计与数据缺口分析见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
+> 本文保留 **R1 7 类** 表作为历史基线，追加 **R2 9 类** 表反映直行箭头从圆灯折叠中回收后的分布。栏杆与 PM 待定类别的样本规划见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
 
 ---
 
-## 预期 7 类分布（转换脚本重跑后）
+## R1 7 类分布
+
+R1 转换脚本将直行箭头折叠进圆灯（`RedStraight` / `redForward` → `red`；`GreenStraight` / `greenForward` / `goForward` → `green`）。
 
 | 类别 | ID | S2TLD | BSTLD | LISA | 总计 | 占比 |
 |------|-----|------:|------:|-----:|-----:|-----:|
@@ -23,6 +25,34 @@
 | redRight | 5 | 20 | 5 | 0 | **25** | 0.0% |
 | greenRight | 6 | 4 | 13 | 0 | **17** | 0.0% |
 | **总计** | | **13,476** | **23,069** | **109,475** | **146,020** | |
+
+---
+
+## R2 9 类分布（R1 + `forwardRed` / `forwardGreen`）
+
+R2 从 R1 圆灯中回收直行箭头为独立类 — `RedStraight` / `redForward` → `forwardRed`，`GreenStraight` / `greenForward` / `goForward` → `forwardGreen`。其余 7 类数量 = R1 表减去回收的直行样本，总标注数不变。
+
+| 类别 | ID | S2TLD | BSTLD | LISA | 总计 | 占比 |
+|------|-----|------:|------:|-----:|-----:|-----:|
+| red | 0 | 5,380 | 8,378 | 44,318 | **58,076** | 39.8% |
+| yellow | 1 | 280 | 598 | 3,019 | **3,897** | 2.7% |
+| green | 2 | 4,881 | 12,776 | 46,723 | **64,380** | 44.1% |
+| redLeft | 3 | 2,375 | 1,092 | 12,734 | **16,201** | 11.1% |
+| greenLeft | 4 | 536 | 178 | 2,476 | **3,190** | 2.2% |
+| redRight | 5 | 20 | 5 | 0 | **25** | 0.0% |
+| greenRight | 6 | 4 | 13 | 0 | **17** | 0.0% |
+| **forwardRed** | 7 | 0 | 9 | 0 | **9** | 0.006% |
+| **forwardGreen** | 8 | 0 | 20 | 205 | **225** | 0.15% |
+| **总计** | | **13,476** | **23,069** | **109,475** | **146,020** | |
+
+**回收来源**：
+- `forwardRed` = BSTLD train `RedStraight` (9)；S2TLD annotations-fix 与 LISA 均无对应直行红灯标签
+- `forwardGreen` = BSTLD train `GreenStraight` (20) + LISA `goForward` (205)；S2TLD annotations-fix 无 `greenForward` 标签
+
+**数据缺口**：
+- `forwardRed` 仅 9 条 — 低于 `redRight` / `greenRight` 之外所有类别，**无法独立训练**。
+- `forwardGreen` 225 条 — 仍严重不足（< `yellow` 3,897 的 6%），模型大概率在此类收敛失败。
+- 两者均需 R2 现场采集 / BSTLD-LISA 人工复扫补齐。优先级高于 `redRight` / `greenRight`（后者在 R1 已证实无法训练但暂保留类别定义）。
 
 ---
 

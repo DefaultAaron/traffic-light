@@ -14,7 +14,9 @@ wheels/
 weights/
 runs/
 demo/
+logs/
 DEIM/
+yolov13/
 
 # Datasets
 data/raw/

@@ -5,12 +5,16 @@
 # Ultralytics, so its checkpoint can't be loaded via `main.py`. Instead,
 # we run it through YOLOv13's own fork of Ultralytics in a separate venv.
 #
-# One-time setup (on the training machine):
-#   git clone https://github.com/iMoonLab/yolov13.git      # verify URL
-#   uv venv yolov13/.venv --python 3.12
+# One-time setup (run from traffic-light/ project root):
+#   git clone https://github.com/iMoonLab/yolov13.git      # upstream ships pyproject.toml at root
+#   uv venv yolov13/.venv --python 3.11                    # pinned — reqs include cp311-only wheels (onnxruntime 1.15.1, optional flash-attn)
 #   source yolov13/.venv/bin/activate
-#   pip install -e yolov13/                                # or: pip install -r yolov13/requirements.txt
-#   pip install -r yolov13/requirements.txt               # if -e path doesn't pull all deps
+#   uv pip install -r yolov13/requirements.txt             # uv venv has no `pip` — always use `uv pip`
+#   uv pip install -e yolov13/                             # editable install
+#
+# Verify after install:
+#   python -c "from ultralytics.nn.modules.block import DSC3k2; print('DSC3k2 OK')"
+#   command -v yolo        # expect <repo>/yolov13/.venv/bin/yolo
 #
 # Usage:
 #   scripts/train_yolov13.sh s                             # YOLOv13-s defaults

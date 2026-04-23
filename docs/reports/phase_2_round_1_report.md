@@ -66,9 +66,9 @@
 |------|---------|-----------|--------------|-----------|--------|------|
 | YOLO26n-r1 | 39 / 100 | 0.720 | 0.484 | 0.940 | 0.689 | 早停收敛 |
 | YOLO26s-r1 | 32 / 100 | 0.849 | 0.608 | 0.930 | 0.670 | 早停收敛 |
-| YOLO26m-r1 | — | — | — | — | — | **训练中** |
+| YOLO26m-r1 | 21 / 72 | 0.869 | 0.635 | 0.934 | 0.712 | 训练完成 |
 
-两个已完成的模型均在早停窗口内触发 `patience=20` 停止，mAP50-95 曲线自最佳轮次起 20 轮无改善。
+三个模型均在早停窗口内触发 `patience=20` 停止，mAP50-95 曲线自最佳轮次起 20 轮无改善。YOLO26m-r1 相对 s-r1 提升有限（mAP50 +2.0 pp / mAP50-95 +2.7 pp），但推理成本显著更高 — 在 Orin 1280 延迟预算内优先选 s。
 
 ### 与第一阶段（3类）对比
 
@@ -81,6 +81,31 @@
 - YOLO26s 从 3 类扩到 7 类仅下降 2 pp mAP50-95，可接受。
 - YOLO26n 下降显著（>10 pp），在右转 / greenLeft 等小样本类别上严重失衡，印证"容量不足的模型无法补偿类别不均衡"。
 - R1 `patience=20` 在多类不均衡任务中可能偏紧（R2 改 `patience=40`）。
+
+### R1 备选架构（并行训练）
+
+为降低单一架构风险 + 探明精度上限，R1 期间并行训练两条备选轨道。选型依据与环境配置见 [`../proposals/yolo26_alternatives_survey.md`](../proposals/yolo26_alternatives_survey.md)。
+
+| 模型 | 许可证 | 角色 | 训练轮次 | 最佳 mAP50 | 最佳 mAP50-95 | Precision | Recall | 状态 |
+|------|-------|------|---------|-----------|--------------|-----------|--------|------|
+| YOLOv13-s | AGPL-3.0 | YOLO26 同架构家族低风险对照 | — | — | — | — | — | 训练中 |
+| DEIM-D-FINE-S | Apache-2.0 | 商用许可证备选 + 小目标精度探底 | — | — | — | — | — | 训练中 |
+| DEIM-D-FINE-M | Apache-2.0 | 精度上限基准 | — | — | — | — | — | 训练中 |
+
+**三条轨道的分工**：
+- **主力（YOLO26 s/m）**：部署路径最成熟，Orin TRT 管线已打通 — 即便备选轨道胜出，数据处理 / 部署流程可复用。
+- **YOLOv13-s**：`HyperACE` / `DSC3k2` 自定义模块相对 YOLO26 为增量改动，作为"YOLO26 出 bug 时的快速替换"。与 YOLO26 同属 AGPL，替换不改变合规策略。
+- **DEIM-D-FINE-S/M**：Apache-2.0 从根本上解决 AGPL 商用问题；同时 D-FINE 的 FDR（Fine-grained Distribution Refinement）回归头在小目标定位上有 paper 级优势，对交通灯这种 bbox 宽度 < 3% 的目标理论收益大。N 规格按 `yolo26_alternatives_survey.md §六` 评估不具备数据性价比，R1 不训。
+
+**评估口径统一**：三条轨道共用同一合并数据集 `data/merged/`（YOLO 格式 + COCO JSON 双出）、同一 80/20 分层切分、同一 7 类定义 — 所有指标可直接横向对比。YOLOv13 走独立 venv（`yolov13/.venv`），DEIM 走主 `uv` 的 `--extra deim` 可选组，均不污染主力训练环境。
+
+**增强口径对齐**：三条轨道均禁用水平翻转（箭头方向语义反转），其余光学 / 几何增强保持各框架默认。DEIM 默认数据管线继承 `base/dataloader.yml` 包含 `RandomHorizontalFlip`，在 `deim_hgnetv2_{s,m}_traffic_light.yml` 中显式覆盖 `transforms.ops` 剔除（2026-04-23）；Mosaic / RandomPhotometricDistort / RandomZoomOut / RandomIoUCrop / mixup 保留，由 `stop_epoch` 在尾段关闭以避免稀疏类（`redRight` / `greenRight`）样本被破坏。YOLO26 已在 R1 初版以 `fliplr=0` 锁定，YOLOv13 沿用。
+
+**R1 决策点**（三轨完成后执行）：
+1. 若主力 YOLO26s/m 在部署域评估集上已达 R2 验收标准（mAP50 ≥ 0.60），直接进入 R2 数据侧工作，备选轨道降为监控组。
+2. 若 YOLOv13-s 相对 YOLO26s **+≥ 3 pp mAP50**，切换主力为 YOLOv13-s（合规策略不变）。
+3. 若 DEIM-D-FINE 相对 YOLO26 最佳 **+≥ 5 pp mAP50**，且 Orin 端 FP16 延迟 ≤ 50 ms/帧，启动主力切换 — 需提前验证 Orin JetPack 5.1 / TRT 8.5 上 `MultiscaleDeformableAttnPlugin_TRT` 可从 OSS 构建（风险项，见 survey §三）。
+4. 若三者持平（差异 < 2 pp），按许可证成本排序：**DEIM > YOLOv13 > YOLO26**，优先 Apache-2.0。
 
 ---
 
@@ -261,5 +286,7 @@ R2 启动前只需 PM 提供**最终类别清单**，以上 6 处改动 <0.5 天
 | 2026-04-21 | Zhengri Wu | 定位"框过大"根因：C++/Python TRT postprocess 把输出 4 通道误解为 `cxcywh`，实际是 `xyxy`。已修复 `inference/cpp/src/trt_pipeline.cpp` 与 `inference/trt_pipeline.py`；ORT 验证 f100 从"67% 面积大框"变为"21×50 紧贴目标"，与 Ultralytics 原生一致 |
 | 2026-04-21 | Zhengri Wu | Orin 端延迟实测：s-r1 @ 1280 → ~25 ms/帧，@ 1536 → ~28 ms/帧，均远低于 50 ms 预算。R2 锁定 `imgsz=1280` 训练，1536 作为 OOD 诊断备选 |
 | 2026-04-21 | Zhengri Wu | R2 范围扩展：PM 确认交通灯 +2 类（`forwardGreen` / `forwardRed`），总交通灯最少 9 类、最多 12 类；栏杆 MVP 单类 `barrier`，最佳实践 `armOn` / `armOff`。联合模型总 `nc` 范围 **10–14** |
-| — | — | **待补充**：YOLO26m-r1 训练完成后追加指标 |
+| 2026-04-22 | Zhengri Wu | YOLO26m-r1 训练完成：72 轮早停，best@21 mAP50=0.869 / mAP50-95=0.635 / P=0.934 / R=0.712。相对 s-r1 提升有限（+2.0 / +2.7 pp），Orin 部署仍首选 s |
+| 2026-04-22 | Zhengri Wu | R1 范围扩展：并行训练 YOLOv13-s（AGPL 低风险对照）+ DEIM-D-FINE-S/M（Apache-2.0 商用备选 + 精度上限）。选型依据 `yolo26_alternatives_survey.md`；DEIM-N 按性价比评估不训练。三轨同数据、同切分，指标可直接横向对比。R1 决策点写入 §R1 备选架构 |
+| 2026-04-23 | Zhengri Wu | DEIM-S/M 训练配置修正：`deim_hgnetv2_{s,m}_traffic_light.yml` 显式覆盖 `train_dataloader.dataset.transforms.ops`，剔除 `base/dataloader.yml` 继承的 `RandomHorizontalFlip`（否则 `redLeft↔redRight` / `greenLeft↔greenRight` 语义反转）。Mosaic / 光学 / IoU-crop / mixup 保留，`stop_epoch` 调度不变。优化器 / LR / 调度器未调整 — 已按单卡 4090 + COCO fine-tune 正确缩放 |
 | — | — | **待补充**：部署域评估集建立后的基准指标 |

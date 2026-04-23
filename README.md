@@ -39,9 +39,23 @@ YOLOv13 needs its **own venv** because its fork ships custom modules (`DSC3k2`, 
 
 ```bash
 git clone https://github.com/iMoonLab/yolov13.git         # verify URL against the paper repo
-uv venv yolov13/.venv --python 3.12
-source yolov13/.venv/bin/activate && pip install -e yolov13/
+# Pin 3.11 — requirements.txt includes cp311-only wheels (onnxruntime 1.15.1, optional flash-attn).
+# Python 3.12 fails resolution.
+uv venv yolov13/.venv --python 3.11
+source yolov13/.venv/bin/activate
+
+# Strip the flash-attn local-wheel line (upstream ships a pre-compiled cp311 wheel reference);
+# flash-attn is an optional speedup, training works without it.
+grep -v -i 'flash.attn\|flash_attn' yolov13/requirements.txt > /tmp/y13-reqs.txt
+uv pip install -r /tmp/y13-reqs.txt
+uv pip install -e yolov13/
+
+# verify (both must succeed)
+python -c "from ultralytics.nn.modules.block import DSC3k2; print('DSC3k2 OK')"
+command -v yolo                                            # expect yolov13/.venv/bin/yolo
 ```
+
+`uv venv` doesn't provision `pip` — always use `uv pip ...` inside the venv. If `uv pip install -e yolov13/` errors with *"does not appear to be a Python project"*, the clone is incomplete (upstream has a root-level `pyproject.toml`) — re-clone: `rm -rf yolov13 && git clone https://github.com/iMoonLab/yolov13.git` (preserve the venv first: `mv yolov13/.venv /tmp/y13venv` then move it back after re-clone).
 
 ## Data Preparation
 
@@ -131,6 +145,7 @@ ROS 2 message contract for the planning module: **[`docs/integration/ros2_integr
 - [`docs/planning/development_plan.md`](docs/planning/development_plan.md) — candidate models, dataset licensing, milestones
 - [`docs/proposals/yolo26_alternatives_survey.md`](docs/proposals/yolo26_alternatives_survey.md) — YOLOv13 + DEIM-D-FINE rationale and setup
 - [`docs/proposals/temporal_encoder_feasibility.md`](docs/proposals/temporal_encoder_feasibility.md) — LSTM/GRU/tracker analysis (deferred post-5/15)
-- [`docs/reports/phase_1_report.md`](docs/reports/phase_1_report.md) — 3-class baseline results
-- [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) — 7-class R1 + R2 scope lock
+- [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) — R1 7-class results, Orin deployment, alt-track launch, R2 scope lock (living doc)
+- [`docs/reports/phase_2_round_1_results.md`](docs/reports/phase_2_round_1_results.md) — raw R1 eval tables
+- [`docs/reports/phase_1_report.md`](docs/reports/phase_1_report.md) — Phase 1 3-class baseline (historical)
 - [`docs/README.md`](docs/README.md) — full documentation index
