@@ -1,8 +1,11 @@
 # 时序编码器（LSTM/GRU 等）可行性分析
 
-> **状态（2026-04-21）**：**延后至 5/15 截止日期之后**。5/15 前保持逐帧检测；实车测试若暴露闪烁/稳定性问题，**方案 A（tracker + EMA vote）** 是最快 mitigation（~2–3 天）。方案 B（per-track GRU）是 R3 的自然延续。方案 C/D/E 不在路线图上。
+> **状态（2026-04-23）**：
+> - **方案 A 已落地**（Python + C++ 两端，fixture 驱动单测通过，Orin 集成待触发）。实现与调参见 [`../integration/tracker_voting_guide.md`](../integration/tracker_voting_guide.md)。
+> - **方案 B（per-track GRU）** 保留为 R3 候选（5/15 之后），`TrackedDetection.class_probs` 已作为 GRU 的 soft 输入接口暴露。
+> - 方案 C/D/E 不在路线图上。
 >
-> 详细延后决策见用户记忆 `project_temporal_encoder_deferred.md`。
+> 本文档仍作为"为什么选 Plan A 而非 LSTM/GRU/ConvLSTM"的依据保留；实施细节以 tracker_voting_guide.md 为准。
 
 ---
 
@@ -114,17 +117,18 @@
 
 ## 推荐路径
 
-### 若 5/15 实车测试暴露稳定性问题（hotfix）：方案 A
+### 方案 A — 已落地（2026-04-23）
 
 ```
 YOLO26 检测（现有）
-  → ByteTrack / OC-SORT 关联
-  → EMA 投票（窗口 N=5，α=0.3）
-  → 带 tracking_id 的 Detection2DArray
+  → ByteTrack 关联（Python + C++ 两端自写，共享 JSON fixtures）
+  → 每轨迹 EMA 类别缓冲（α=0.3，min_hits=3，track_buffer=30）
+  → 带 tracking_id 的输出（Python TrackedDetection / C++ tl::TrackedDetection）
 ```
 
-- 工作量：~2–3 天（集成 `byte-tracker` 或 `OC_SORT` 的 C++ / Python 实现；ROS2 节点内维护 track map）
-- 预期：闪烁 -60–70%
+- 落地情况：`inference/tracker/*.py`（vendored ByteTrack MIT）+ `inference/cpp/{include,src}/tracker.{hpp,cpp}`；CLI 开关 `--track`
+- 超参数：R2 实车 replay 数据到位前不锁定，以 fixture 金标 + `scripts/measure_flicker.py` 持续迭代
+- 实施 / 调参 / 决策门：[`../integration/tracker_voting_guide.md`](../integration/tracker_voting_guide.md)
 
 ### R3（5/15 之后）：方案 B
 

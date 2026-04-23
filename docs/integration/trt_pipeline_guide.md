@@ -137,9 +137,24 @@ YOLO26 的 head 恰好产生这种模式。图内的 `TopK` 是一个 GPU 侧预
 ```bash
 ./build/tl_demo --source /path/to/video.mp4 --model weights/best.engine
 ./build/tl_demo --source 0 --model weights/best.engine --no-show --save out.mp4
+
+# 启用跟踪（flicker mitigation；细节见 ./tracker_voting_guide.md）
+./build/tl_demo --source video.mp4 --model best.engine \
+    --track --alpha 0.3 --min-hits 3 --track-json runs/out.jsonl
 ```
 
 Orin 无显示器时（如纯 SSH 会话）必须加 `--no-show` —— 否则 OpenCV 的 GTK HighGUI 后端会 abort。
+
+### 批量扫描（runs × demos）
+
+`scripts/run_demos_all_engines.sh` 在所有 `runs/<run>/*.engine × demo/demo*.mp4` 组合上顺序调用 `tl_demo`，输出到 `demo/<run>/<engine_stem>/<demo_name>.mp4`。引擎文件名含 `1280` / `1536` 时自动推断对应 `--imgsz`。**串行设计**：TRT context 不可并发共享，且便于对齐延迟测量。
+
+```bash
+./scripts/run_demos_all_engines.sh                               # 默认：CONF=0.25, SKIP_EXIST=1
+CONF=0.3 TRACK=1 ./scripts/run_demos_all_engines.sh              # 环境变量覆盖
+nohup ./scripts/run_demos_all_engines.sh \
+    > logs/run_demos_all_engines.log 2>&1 &                      # SSH-safe 后台长跑
+```
 
 ---
 

@@ -1,0 +1,35 @@
+{
+  "name": "fast_transition",
+  "description": "Legitimate green → yellow → red transition over ~12 frames. Smoothed class must follow within ~10 frames of the change.",
+  "num_classes": 7,
+  "config": {
+    "alpha": 0.3,
+    "min_hits": 3,
+    "track_thresh": 0.25,
+    "high_thresh": 0.5,
+    "match_thresh": 0.8,
+    "track_buffer": 30
+  },
+  "frames": [
+    [{"class_id": 2, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 2, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 2, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 2, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 1, "confidence": 0.85, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 1, "confidence": 0.85, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 1, "confidence": 0.85, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 1, "confidence": 0.85, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}]
+  ],
+  "expected": {
+    "unique_tracks": 1,
+    "final_smoothed_class_id": 0,
+    "smoothed_class_at_last_frame": 0
+  }
+}

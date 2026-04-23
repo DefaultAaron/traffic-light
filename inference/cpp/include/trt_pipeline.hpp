@@ -7,14 +7,14 @@
 // `detect()` calls. Create one detector per worker thread, or serialize
 // access externally.
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include <opencv2/core.hpp>
+
+#include "detection.hpp"
 
 // Forward-declare TensorRT / CUDA types so callers don't need the headers.
 namespace nvinfer1 {
@@ -27,22 +27,6 @@ struct CUstream_st;
 typedef struct CUstream_st* cudaStream_t;
 
 namespace tl {
-
-inline const std::array<const char*, 7> kClassNames = {
-    "red", "yellow", "green", "redLeft", "greenLeft", "redRight", "greenRight",
-};
-
-struct Detection {
-    int class_id;
-    float confidence;
-    float x1, y1, x2, y2;
-
-    const char* class_name() const {
-        return (class_id >= 0 && static_cast<size_t>(class_id) < kClassNames.size())
-                   ? kClassNames[class_id]
-                   : "unknown";
-    }
-};
 
 class TRTDetector {
 public:

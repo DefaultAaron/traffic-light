@@ -267,13 +267,14 @@ R2 启动前只需 PM 提供**最终类别清单**，以上 6 处改动 <0.5 天
 
 | 产物 | 路径 | 说明 |
 |------|------|------|
-| 训练权重 | `runs/detect/yolo26{n,s}-r1/weights/best.pt` | n / s 变体最佳 |
+| 训练权重 | `runs/detect/yolo26{n,s,m}-r1/weights/best.pt` | n / s / m 变体最佳 |
 | ONNX（640）| `runs/detect/yolo26{n,s}-r1/weights/stripped.onnx` | 640 导出 + 裁头 |
-| ONNX（1280 / 1536）| `runs/detect/yolo26{n,s}-r1/weights/stripped_{1280,1536}.onnx` | 高分辨率导出 + 裁头 |
+| ONNX（1280 / 1536）| `runs/detect/yolo26{n,s}-r1/weights/stripped_{1280,1536}.onnx` | 高分辨率导出 + 裁头（部署选 s） |
 | TRT 引擎 | `runs/detect/yolo26{n,s}-r1/weights/best*.engine` | Orin 端构建 |
-| Demo 回放 | `runs/diagnose/{n,s}-pt-{640,1280,1536}/demo.mp4`、`demo/s-r1-{1280,1536}.mp4` | 诊断用 |
-| 训练指标 | `runs/detect/yolo26{n,s}-r1/results.csv` | 逐轮记录 |
-| 部署文档 | [`../integration/trt_pipeline_guide.md`](../integration/trt_pipeline_guide.md) | |
+| Demo 回放 | `runs/diagnose/{n,s}-pt-{640,1280,1536}/demo.mp4`、`demo/s-r1-{1280,1536}.mp4` | 诊断用；批量扫描脚本 `scripts/run_demos_all_engines.sh` |
+| 训练指标 | `runs/detect/yolo26{n,s,m}-r1/results.csv` | 逐轮记录 |
+| 跟踪库 | `inference/tracker/*.py`、`inference/cpp/{include,src}/tracker.{hpp,cpp}` | Python + C++ 两端；fixtures 驱动的 parity 单测 |
+| 部署文档 | [`../integration/trt_pipeline_guide.md`](../integration/trt_pipeline_guide.md)、[`../integration/tracker_voting_guide.md`](../integration/tracker_voting_guide.md) | |
 
 ---
 

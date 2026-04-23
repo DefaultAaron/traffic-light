@@ -27,6 +27,7 @@ Detection2DArray
         │   ├── center.position.y  ← 边框中心 y（像素）
         │   ├── size_x             ← 边框宽度（像素）
         │   └── size_y             ← 边框高度（像素）
+        ├── tracking_id            ← 跟踪 ID（字符串；禁用跟踪时为空）
         └── results[0]
             └── ObjectHypothesisWithPose
                 └── hypothesis
@@ -34,7 +35,9 @@ Detection2DArray
                     └── score      ← 置信度 0.0–1.0
 ```
 
-> **注意**：`hypothesis.class_id` 为**字符串**（如 `"red"`），不是整数。
+> **注意**：
+> - `hypothesis.class_id` 为**字符串**（如 `"red"`），不是整数。
+> - `tracking_id` 仅在启用跟踪（`--track`）时填充；禁用时为空字符串。多相机部署下全局单增，详见 [`tracker_voting_guide.md`](./tracker_voting_guide.md)。
 
 ---
 

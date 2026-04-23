@@ -9,7 +9,11 @@
 **输出**: `vision_msgs/Detection2DArray` ROS2 消息（多目标检测），规划模块结合深度信息决策
 **截止日期**: 2026 年 5 月 15 日
 
-> **进度（2026-04-22）**：阶段 A 完成（YOLO26 n/s/m R1 + Orin 1280 引擎链路）；R1 备选轨道（YOLOv13-s、DEIM-D-FINE-S/M）训练中。阶段 B 进入，阻塞于 PM 最终类别清单 + 标注 SOP。
+> **进度（2026-04-23）**：
+> - 阶段 A 完成：YOLO26 n/s/m R1 + Orin 1280/1536 引擎链路（FP16 25/28 ms/帧）+ xyxy 后处理修复
+> - R1 备选轨道（YOLOv13-s、DEIM-D-FINE-S/M）训练中
+> - 跟踪 + EMA 投票（Plan A）已在 Python + C++ 两端落地（fixture 驱动单测通过，Orin 集成待触发）
+> - 阶段 B 阻塞于 PM 最终类别清单 + 标注 SOP
 >
 > R2 范围扩展详见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
 

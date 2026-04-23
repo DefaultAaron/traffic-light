@@ -1,0 +1,25 @@
+{
+  "name": "single_fp_suppression",
+  "description": "A detection appears for exactly one frame then nothing. Must be suppressed by min_hits=3 and never reach output.",
+  "num_classes": 7,
+  "config": {
+    "alpha": 0.3,
+    "min_hits": 3,
+    "track_thresh": 0.25,
+    "high_thresh": 0.5,
+    "match_thresh": 0.8,
+    "track_buffer": 30
+  },
+  "frames": [
+    [{"class_id": 0, "confidence": 0.90, "x1": 200, "y1": 200, "x2": 220, "y2": 240}],
+    [],
+    [],
+    [],
+    [],
+    []
+  ],
+  "expected": {
+    "unique_tracks": 0,
+    "per_frame_track_count": [0, 0, 0, 0, 0, 0]
+  }
+}

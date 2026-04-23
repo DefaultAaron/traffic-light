@@ -134,11 +134,31 @@ Configs are tuned for **single RTX 4090 24GB**: batch 8 (S) / 4 (M), LRs scaled 
 Target: **NVIDIA Jetson AGX Orin 64GB**. Two equivalent backends under `inference/`:
 
 - **Python** — `inference/demo.py`, quick dev / JSON telemetry
-- **C++** — `inference/cpp/`, production on Orin
+- **C++** — `inference/cpp/`, production on Orin (Orin-measured: ~25 ms/frame at 1280 FP16)
 
 End-to-end Orin workflow (source sync, environment, CMake upgrade, ONNX head stripping, `trtexec`, run): **[`docs/integration/trt_pipeline_guide.md`](docs/integration/trt_pipeline_guide.md)**.
 
 ROS 2 message contract for the planning module: **[`docs/integration/ros2_integration_guide.md`](docs/integration/ros2_integration_guide.md)**.
+
+### Tracker (flicker mitigation)
+
+Both backends accept `--track` to enable ByteTrack + per-track EMA class voting. Python and C++ share JSON fixtures for parity (`tests/fixtures/tracker/`). Design and tuning knobs: **[`docs/integration/tracker_voting_guide.md`](docs/integration/tracker_voting_guide.md)**.
+
+```bash
+./inference/cpp/build/tl_demo --source video.mp4 --model best.engine \
+    --track --alpha 0.3 --min-hits 3 --track-json runs/out.jsonl
+```
+
+### Demo sweep across engines
+
+`scripts/run_demos_all_engines.sh` runs `tl_demo` sequentially across every `runs/<run>/*.engine` × `demo/demo*.mp4` pair, writing to `demo/<run>/<engine_stem>/<demo_name>.mp4`. Resume-friendly (`SKIP_EXIST=1`) and single-engine-at-a-time by design (TRT contexts are not safe to share).
+
+```bash
+./scripts/run_demos_all_engines.sh                              # defaults
+CONF=0.3 TRACK=1 ./scripts/run_demos_all_engines.sh             # override
+nohup ./scripts/run_demos_all_engines.sh \
+    > logs/run_demos_all_engines.log 2>&1 &                     # long-running sweep
+```
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 # 跟踪 + EMA 投票集成指南（Plan A）
 
-> **状态（2026-04-23）**：**主动开发中**。本组件与 R1 备选架构训练并行推进，在 R2 数据就绪前持续迭代；C++ 端为生产部署目标。背景与权衡见 [`../proposals/temporal_encoder_feasibility.md`](../proposals/temporal_encoder_feasibility.md)，延后策略已更新为"并行而非门控"。
+> **状态（2026-04-23）**：**Python 与 C++ 两端已落地并通过终审**。R1 备选架构训练并行推进；两端共享同一份 JSON fixtures 与语义断言，余下为 Orin 构建 + fixture 单测上线。背景与权衡见 [`../proposals/temporal_encoder_feasibility.md`](../proposals/temporal_encoder_feasibility.md)，延后策略已更新为"并行而非门控"。
 
 本指南规定在现有逐帧 `TRTDetector` 之上叠加 ByteTrack 关联 + 每轨迹 EMA 类别投票的实现计划。**Python 与 C++ 语义对等**：Python 用于快速验证与离线指标，**C++ 为 Orin 生产部署**。
 
@@ -41,30 +41,33 @@ inference/
 ├── trt_pipeline.py              (不变)
 ├── tracker/                     ← Python 侧
 │   ├── __init__.py              → 导出 TrackSmoother, TrackedDetection
-│   ├── byte_tracker.py          → 引入的 ByteTrack 核心（Kalman + Hungarian + STrack）
+│   ├── basetrack.py             → BaseTrack / TrackState（vendored from ByteTrack MIT）
+│   ├── byte_tracker.py          → BYTETracker + STrack（vendored，已做本地裁剪）
+│   ├── kalman_filter.py         → 8-dim 常速度 Kalman（vendored）
+│   ├── matching.py              → IoU 距离 + Hungarian（scipy.linear_sum_assignment）
 │   └── smoother.py              → TrackSmoother: 包装 tracker 与 EMA 类别缓冲
-├── demo.py                      (+ --track, + JSON tracking_id, + 按轨迹着色)
+├── demo.py                      (+ --track / --alpha / --min-hits / --track-json)
 └── cpp/                         ← C++ 侧（生产部署）
-    ├── CMakeLists.txt           (+ tl_tracker 目标，+ 可选 nlohmann/json fixtures 依赖)
+    ├── CMakeLists.txt           (+ tl_tracker STATIC 目标，+ TL_BUILD_TRACKER_ONLY 选项)
     ├── include/
+    │   ├── detection.hpp        ← 与 TRT 流水线共享的 POD Detection（无 TRT 依赖）
     │   ├── trt_pipeline.hpp     (不变)
-    │   └── tracker.hpp          ← TrackSmoother / TrackedDetection 对等接口
+    │   └── tracker.hpp          ← TrackSmoother / TrackedDetection / TrackerConfig
     ├── src/
     │   ├── trt_pipeline.cpp     (不变)
-    │   ├── byte_tracker.cpp     ← 引入的 C++ ByteTrack 核心
-    │   ├── tracker.cpp          ← TrackSmoother 实现
-    │   └── demo.cpp             (+ --track / --alpha / --min-hits / --track-json)
+    │   ├── tracker.cpp          ← 全部 tracker 逻辑（Kalman + Hungarian + STrack + EMA）
+    │   └── demo.cpp             (+ --track / --alpha / --min-hits / --high-thresh /
+    │                               --match-thresh / --track-buffer / --track-json)
     └── tests/
-        └── test_tracker.cpp     ← 消费 Python 端导出的合成序列 fixtures
+        └── test_tracker.cpp     ← 消费 tests/fixtures/tracker/*.json（nlohmann/json FetchContent）
 tests/
-└── test_tracker.py              → 合成序列（pytest）
-scripts/
-└── measure_flicker.py           → 消费 --json 输出的指标脚本
-third_party/
-└── bytetrack/                   ← 上游 vendored 源码（Python + C++），记录 commit SHA
+├── fixtures/tracker/*.json      → 合成序列金标（Python 与 C++ 共享）
+└── test_tracker.py              → 合成序列 + 单元测试（pytest）
 docs/integration/
 └── tracker_voting_guide.md      (本文)
 ```
+
+> **说明**：C++ 端未单独拆出 `byte_tracker.cpp` —— Kalman / Hungarian / STrack / BYTETracker 全部藏在 `tracker.cpp` 的匿名命名空间内，只通过 `tl::TrackSmoother` 暴露。依赖仅 OpenCV（`cv::Mat` 用作 Kalman 线性代数）+ STL；没有 Eigen，没有 lapjv，没有 cython_bbox。Mac 开发机可用 `-DTL_BUILD_TRACKER_ONLY=ON` 仅构建 tracker 库 + 单测，跳过 CUDA/TensorRT。
 
 ---
 
@@ -73,49 +76,55 @@ docs/integration/
 ### 4.1 Python
 
 ```python
-# inference/tracker/smoother.py
-from dataclasses import dataclass
+# inference/tracker/smoother.py（已落地）
+from dataclasses import dataclass, field
 from inference.trt_pipeline import Detection
 
 @dataclass
 class TrackedDetection(Detection):
-    tracking_id: int
-    age: int                     # 自首次出现起经过的帧数
-    hits: int                    # 已确认的检测次数
-    raw_class_id: int            # 平滑前逐帧 argmax
-    class_probs: list[float]     # 平滑后的每类概率
+    tracking_id: int = -1
+    age: int = 0                 # 自首次出现起经过的帧数
+    hits: int = 0                # 已确认的检测次数
+    raw_class_id: int = -1       # 平滑前逐帧 argmax
+    raw_confidence: float = 0.0
+    class_probs: list[float] = field(default_factory=list)
 
 class TrackSmoother:
     def __init__(
         self,
         num_classes: int = 7,
         alpha: float = 0.3,
-        track_thresh: float = 0.25,
-        high_thresh: float = 0.5,
-        match_thresh: float = 0.8,
+        track_thresh: float = 0.25,   # 外层低截断：低于此直接丢弃
+        high_thresh: float = 0.5,     # 喂给 BYTETracker 的高/低分界线
+        match_thresh: float = 0.8,    # 第一轮 IoU 代价上限
         track_buffer: int = 30,
         min_hits: int = 3,
-    ): ...
+        frame_rate: int = 30,
+    ):
+        # 构造器校验：alpha ∈ (0, 1]；num_classes > 0；high_thresh >= track_thresh
+        ...
 
     def update(self, detections: list[Detection], frame_idx: int) -> list[TrackedDetection]: ...
-    def reset(self) -> None: ...  # 切换输入源或帧间隔 > 200 ms 时调用
+    def reset(self) -> None: ...  # 切换输入源或帧间隔 > track_buffer 时调用
 ```
 
 ### 4.2 C++（对等）
 
 ```cpp
-// inference/cpp/include/tracker.hpp
+// inference/cpp/include/tracker.hpp（已落地，下面为精简展示）
 #pragma once
-#include "trt_pipeline.hpp"
+#include "detection.hpp"   // 与 TRT 流水线共享的 POD Detection
+#include <memory>
 #include <vector>
 
 namespace tl {
 
 struct TrackedDetection : Detection {
-    int tracking_id;
-    int age;
-    int hits;
-    int raw_class_id;
+    int tracking_id     = -1;
+    int age             = 0;    // 自首次出现起经过的帧数
+    int hits            = 0;    // 已确认的检测次数
+    int raw_class_id    = -1;   // 平滑前逐帧 argmax
+    float raw_confidence = 0.f;
     std::vector<float> class_probs;  // size == num_classes
 };
 
@@ -127,6 +136,7 @@ struct TrackerConfig {
     float match_thresh  = 0.8f;
     int   track_buffer  = 30;
     int   min_hits      = 3;
+    int   frame_rate    = 30;   // 仅用于缩放 track_buffer 到时间
 };
 
 class TrackSmoother {
@@ -136,10 +146,13 @@ public:
 
     TrackSmoother(const TrackSmoother&) = delete;
     TrackSmoother& operator=(const TrackSmoother&) = delete;
+    TrackSmoother(TrackSmoother&&) noexcept;
+    TrackSmoother& operator=(TrackSmoother&&) noexcept;
 
     std::vector<TrackedDetection> update(const std::vector<Detection>& detections,
                                          int frame_idx);
-    void reset();
+    void reset();  // 切换输入源或帧间隔 > track_buffer 时调用
+    const TrackerConfig& config() const noexcept;
 
 private:
     struct Impl;
@@ -149,10 +162,14 @@ private:
 }  // namespace tl
 ```
 
+> **线程安全**：`TrackSmoother` 不是线程安全的 —— 它持有所有活跃轨迹的 Kalman 状态。每相机一个实例，同线程内调用 `update()`。
+>
+> **多相机 ID 命名空间**：track ID 来自进程内全局计数器（与 Python `BaseTrack._count` 语义一致）。多相机部署要么每相机一个进程，要么在 publisher 层为 ID 加前缀。
+
 `TRTDetector` 两端均保持不变。Demo 层组合：
 
 ```python
-# Python
+# Python — inference/demo.py
 detector = TRTDetector(model_path=args.model, conf_thresh=args.conf, imgsz=args.imgsz)
 tracker = TrackSmoother(num_classes=len(CLASS_NAMES)) if args.track else None
 for i, frame in enumerate(frames):
@@ -161,13 +178,20 @@ for i, frame in enumerate(frames):
 ```
 
 ```cpp
-// C++
-tl::TRTDetector detector(model_path, conf, imgsz);
+// C++ — inference/cpp/src/demo.cpp
+tl::TrackerConfig tcfg;
+tcfg.num_classes   = 7;
+tcfg.alpha         = opts.alpha;
+tcfg.min_hits      = opts.min_hits;
+tcfg.high_thresh   = opts.high_thresh;
+tcfg.match_thresh  = opts.match_thresh;
+tcfg.track_buffer  = opts.track_buffer;
+tcfg.frame_rate    = int(cap.get(cv::CAP_PROP_FPS) /*fallback 30*/);
 std::optional<tl::TrackSmoother> tracker;
-if (opts.track) tracker.emplace(tl::TrackerConfig{.num_classes = 7, .alpha = opts.alpha});
-for (int i = 0; ; ++i) {
+if (opts.track) tracker.emplace(tcfg);
+for (int i = 0; /* loop */ ; ++i) {
     auto dets = detector.detect(frame);
-    auto out = tracker ? tracker->update(dets, i) : /* wrap as TrackedDetection without ids */;
+    auto out = tracker ? tracker->update(dets, i) : wrapUntracked(dets);
 }
 ```
 
@@ -177,25 +201,37 @@ for (int i = 0; ; ++i) {
 
 两端并行推进。Python 先行 1–2 天，把 fixtures 与指标脚本跑通，C++ 紧随其后，共享同一份合成序列金标。
 
-### 5.1 Python 侧（~3 天）
+### 5.1 Python 侧 — ✅ 已完成
 
-| 步骤 | 工作量 | 产出 |
+| 步骤 | 状态 | 产出 |
 |---|---|---|
-| P1. 引入 ByteTrack Python 核心 | 1 天 | `third_party/bytetrack/python/`（MIT，记录 commit SHA）；`inference/tracker/byte_tracker.py` 精简版 |
-| P2. `TrackSmoother` 实现 | 0.5 天 | `inference/tracker/smoother.py`（EMA 缓冲、`min_hits` 过滤、`reset()`） |
-| P3. Demo 集成 | 0.5 天 | `--track` / `--alpha` / `--min-hits` CLI；JSON 增加 `tracking_id` / `raw_class_id` / `class_probs` |
-| P4. 合成序列 fixtures + pytest | 0.5 天 | `tests/fixtures/tracker/*.json`（detector 输出 + 期望轨迹）；`tests/test_tracker.py` |
-| P5. `measure_flicker.py` + 回放 | 0.5 天 | 在 `runs/diagnose/*/demo.mp4` 上开/关跟踪对比 |
+| P1. 引入 ByteTrack Python 核心 | ✅ | `inference/tracker/{basetrack,byte_tracker,matching,kalman_filter}.py`（MIT，upstream `ifzhang/ByteTrack@d1bf019`；本地裁剪见文件 docstring） |
+| P2. `TrackSmoother` 实现 | ✅ | `inference/tracker/smoother.py`：EMA 缓冲、`min_hits` 过滤、构造器入参校验、`reset()`、回声腔 fallback |
+| P3. Demo 集成 | ✅ | `inference/demo.py` 新增 `--track` / `--alpha` / `--min-hits` / `--track-json` CLI |
+| P4. 合成序列 fixtures + pytest | ✅ | `tests/fixtures/tracker/{fast_transition,gap_survival,single_fp_suppression,static_flip,two_box_stability}.json` + `tests/test_tracker.py` |
+| P5. `measure_flicker.py` + 回放 | ⏳ | 指标脚本已落地；在实车 replay 到位前指标数字仅为合成值 |
 
-### 5.2 C++ 侧（~4 天，可在 P3 完成后开始）
+### 5.2 C++ 侧 — ✅ 已完成
 
-| 步骤 | 工作量 | 产出 |
+| 步骤 | 状态 | 产出 |
 |---|---|---|
-| C1. 引入 C++ ByteTrack 核心 | 1 天 | `third_party/bytetrack/cpp/`（MIT，见 §六.1）；`inference/cpp/src/byte_tracker.cpp` 精简版；仅依赖 Eigen + OpenCV |
-| C2. `TrackSmoother` 实现 | 1 天 | `tracker.hpp` / `tracker.cpp`；pImpl 隐藏 Kalman/Hungarian 细节；签名与 Python 对等 |
-| C3. CMake 集成 | 0.5 天 | 新目标 `tl_tracker`（STATIC），`tl_demo` 链接它；Eigen 通过 `find_package(Eigen3 REQUIRED)`（JetPack 预装）；见 §六.3 |
-| C4. Demo 集成 | 0.5 天 | `demo.cpp` 新增 `--track` / `--alpha` / `--min-hits` / `--track-json`；按 `tracking_id % N` 着色 |
-| C5. Fixture 驱动的单测 | 1 天 | `inference/cpp/tests/test_tracker.cpp` 读取 Python 端导出的 `tests/fixtures/tracker/*.json`（用 nlohmann/json header-only），断言**与 Python 一致的平滑轨迹**；CMake 目标 `tl_tracker_test`，默认 `BUILD_TESTS=OFF` |
+| C1. 引入 C++ ByteTrack 核心 | ✅ | **自写而非 vendored**：直接在 `tracker.cpp` 匿名命名空间里以 `cv::Mat` 重写 Kalman、手写 O(n²·m) Jonker-Volgenant Hungarian（带 1e9 masking + 方阵填充），避开 Eigen / lapjv 依赖；见 §六.1 |
+| C2. `TrackSmoother` 实现 | ✅ | `tracker.hpp` + `tracker.cpp`（约 815 行）；pImpl 隐藏 ByteTracker 内部；签名与 Python 对等，包括 `TrackerConfig` 校验、回声腔 fallback、状态 GC |
+| C3. CMake 集成 | ✅ | `TL_BUILD_TRACKER_ONLY` 选项开关（默认 OFF）；开启时**跳过 `project(CUDA)` 与 TRT 流水线**，方便 Mac/Linux 开发机仅构建 tracker + fixture 单测 |
+| C4. Demo 集成 | ✅ | `demo.cpp`：`--track`、`--alpha`、`--min-hits`、`--high-thresh`、`--match-thresh`、`--track-buffer`、`--track-json`；按 `tracking_id % 12` 色板着色，绘制 `#<id> <class> <conf>` |
+| C5. Fixture 驱动的单测 | ✅ | `inference/cpp/tests/test_tracker.cpp` 通过 FetchContent 拉 nlohmann/json v3.11.3；默认 `TL_BUILD_TESTS=ON`；CTest 目标 `tracker_parity`。覆盖 `per_frame_track_count` / `unique_tracks` / `final_smoothed_class_id` / `smoothed_never_in` / `gap_survival` / `two_box_stability` 六类断言 + `reset()` 烟测 + 构造器校验烟测 |
+
+### 5.2.1 终审修复（2026-04-23）
+
+Python 与 C++ 两端在第二轮终审中发现并修复的**实际 bug**（非风格性差异）：
+
+| 位置 | 问题 | 修复 |
+|---|---|---|
+| `inference/cpp/src/tracker.cpp::ByteTracker::update` | Lost 轨迹进入 predict 前未归零 `mean[7]`（高度速度），与 `STrack.multi_predict` 在 Python 侧行为不一致 —— gap 期间框高会漂移，再关联时 IoU 退化 | 对 pool 中状态非 `Tracked` 的轨迹显式 `mean.at<double>(7) = 0.0`，对齐 `byte_tracker.py:49–62` |
+| `inference/cpp/src/tracker.cpp::linearAssignment` | 空行代价矩阵（pool 为空但有检测）会把 m 也当 0，使 `unmatched_b` 返回空集 —— 第一帧无新轨迹初始化 | 改造签名接受显式 `(n, m)`；三个调用点传入实际维度。根因：`vector<vector<double>>` 无法表示"0 行 × M 列"；scipy 的 `linear_sum_assignment` 通过 numpy `shape[1]` 保留信息，这里通过参数补回 |
+| `inference/cpp/src/tracker.cpp` 分桶 | `s == track_thresh` 边界 C++ 落入 second，Python 会直接丢弃（`scores < track_thresh` 严格） | `else if (s > 0.1f && s < trackThresh_)` 两侧严格，匹配 Python 语义 |
+
+现有 fixtures 全部为"静态 / 缓漂移框"，上述三处不会在现有金标里暴露；动态 + gap 场景一定会打爆。动态金标待 R2 实车 replay 就绪后补入。
 
 ### 5.3 与训练的协调
 
@@ -207,91 +243,155 @@ for (int i = 0; ; ++i) {
 
 ## 六、C++ 依赖与构建细节
 
-### 6.1 ByteTrack C++ 上游
+### 6.1 为什么没有引入 C++ ByteTrack 上游
 
-- 推荐源：`Vertical-Beach/ByteTrack-cpp`（MIT，纯 C++17，无 CUDA / 无 YOLOX 依赖）
-- 裁剪：移除可视化、视频 IO、测试二进制；保留 `BYTETracker`、`STrack`、`KalmanFilter`、`lapjv`
-- 记录：`third_party/bytetrack/README.md` 写明 upstream commit SHA、裁剪清单、本地 patch 列表
+原计划引入 `Vertical-Beach/ByteTrack-cpp`，评审后改为**自写精简实现**：
+
+- 上游引入 Eigen + 第三方 lapjv（GPL 区分不一），本仓库已有 OpenCV（`cv::Mat` 可做 8×8 / 4×4 线性代数），不必多一个矩阵库
+- Python 侧已用 `scipy.optimize.linear_sum_assignment`（1e9 masking），非 lapjv，上游 C++ 的 lapjv 反而会成为**语义漂移源**
+- 跟踪器规模（约 400 行核心逻辑）自写的维护成本远低于长期 vendored 源的许可 / 裁剪 / patch 维护
+- 所有数值常量（`track_buffer` 的 `frame_rate/30` 缩放、`det_thresh = track_thresh + 0.1`、Kalman `std_weight_position=1/20`、`std_weight_velocity=1/160`、第二轮 `thresh=0.5`、unconfirmed `thresh=0.7`、`remove_duplicate` 的 `iou<0.15`）在自写版内严格复刻；参考文件的 `inference/tracker/*.py` 均标有 upstream commit `ifzhang/ByteTrack@d1bf019`
+
+第三方许可记录：Python 端的 vendored 源仍记在 `THIRD_PARTY_LICENSES.md`（MIT）；C++ 端为自写，无额外条目。
 
 ### 6.2 `TrackedDetection` 继承 `Detection` 的 ABI 注意
 
-`Detection` 是 POD；`TrackedDetection` 加入 `std::vector<float>` 后不再可 `memcpy`。仅在 API 层返回；内部跟踪 bookkeeping 用独立的 `Track` 结构，最终 `update()` 退出前物化。
+`Detection` 是 POD；`TrackedDetection` 加入 `std::vector<float> class_probs` 后不再可 `memcpy`。仅在 API 层返回；内部 bookkeeping（匿名命名空间里的 `TrackState_`）用独立结构持 `std::vector<double>`，`update()` 退出前下降到 `float` 物化到输出。
 
-### 6.3 CMake 变更（追加到 `inference/cpp/CMakeLists.txt`）
+### 6.3 CMake 实际布局（`inference/cpp/CMakeLists.txt` 已上线）
 
 ```cmake
-# ---- Eigen (JetPack 预装 /usr/include/eigen3) ----
-find_package(Eigen3 REQUIRED NO_MODULE)
+# 默认全量构建（tracker + TRT 流水线 + demo）
+# 仅 tracker 开发：cmake -DTL_BUILD_TRACKER_ONLY=ON ..
+option(TL_BUILD_TRACKER_ONLY "Build only the tracker library (skip TensorRT/CUDA)" OFF)
 
-add_library(tl_tracker STATIC
-    src/byte_tracker.cpp
-    src/tracker.cpp
-)
-target_include_directories(tl_tracker PUBLIC include)
-target_link_libraries(tl_tracker PUBLIC Eigen3::Eigen ${OpenCV_LIBS})
-target_compile_options(tl_tracker PRIVATE -Wall -Wextra)
-
-target_link_libraries(tl_demo PRIVATE tl_tracker)
-
-option(BUILD_TESTS "Build tracker tests" OFF)
-if(BUILD_TESTS)
-    # nlohmann/json: 优先 find_package(nlohmann_json)，否则 FetchContent
-    find_package(nlohmann_json QUIET)
-    if(NOT nlohmann_json_FOUND)
-        include(FetchContent)
-        FetchContent_Declare(nlohmann_json
-            URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
-        FetchContent_MakeAvailable(nlohmann_json)
-    endif()
-    add_executable(tl_tracker_test tests/test_tracker.cpp)
-    target_link_libraries(tl_tracker_test PRIVATE tl_tracker nlohmann_json::nlohmann_json)
+if(TL_BUILD_TRACKER_ONLY)
+    project(traffic_light_trt CXX)
+else()
+    project(traffic_light_trt CXX CUDA)
 endif()
+
+find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio)
+
+add_library(tl_tracker STATIC src/tracker.cpp)
+target_include_directories(tl_tracker PUBLIC include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(tl_tracker PUBLIC ${OpenCV_LIBS})
+
+option(TL_BUILD_TESTS "Build tracker parity tests" ON)
+if(TL_BUILD_TESTS)
+    include(FetchContent)
+    FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG        v3.11.3
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(nlohmann_json)
+
+    add_executable(tl_tracker_tests tests/test_tracker.cpp)
+    target_link_libraries(tl_tracker_tests
+        PRIVATE tl_tracker nlohmann_json::nlohmann_json)
+    target_compile_definitions(tl_tracker_tests PRIVATE
+        TL_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/tracker")
+    enable_testing()
+    add_test(NAME tracker_parity COMMAND tl_tracker_tests)
+endif()
+
+if(TL_BUILD_TRACKER_ONLY)
+    return()  # 跳过 CUDA / TensorRT / tl_demo
+endif()
+
+# TRT 流水线 + demo（省略，见实际文件）
 ```
 
-### 6.4 Orin 验证
+三点变化相对最初规划：
 
-- 构建：`cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON && cmake --build build -j$(nproc)`
-- 运行：`./build/tl_demo --source video.mp4 --model best.engine --track --no-show --save out_tracked.mp4`
-- 延迟预算断言：`--track` 开启时每帧 `TrackSmoother::update` < 1 ms（用 `std::chrono::steady_clock` 打点，在 20 条并发轨迹下验证）
+1. `Eigen3::Eigen` **未使用** —— Kalman 用 `cv::Mat` + `cv::solve(DECOMP_CHOLESKY)`
+2. 默认 `TL_BUILD_TESTS=ON`（原先 `BUILD_TESTS=OFF`）—— 单测足够轻量，默认开；Orin 全量构建自动拉 nlohmann/json
+3. 新增 `TL_BUILD_TRACKER_ONLY` —— 解决 "Mac 没 CUDA / TensorRT 但想跑 tracker 测试" 的开发机工作流
+
+### 6.4 验证流程
+
+**Mac / Linux 开发机**（无 CUDA / TensorRT）：
+
+```bash
+cmake -S inference/cpp -B inference/cpp/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DTL_BUILD_TRACKER_ONLY=ON
+cmake --build inference/cpp/build -j$(nproc)
+ctest --test-dir inference/cpp/build --output-on-failure
+```
+
+**Orin 生产机**（CUDA + TensorRT）：
+
+```bash
+cmake -S inference/cpp -B inference/cpp/build -DCMAKE_BUILD_TYPE=Release
+cmake --build inference/cpp/build -j$(nproc)
+ctest --test-dir inference/cpp/build --output-on-failure   # parity 单测先过
+./inference/cpp/build/tl_demo --source video.mp4 --model best.engine \
+    --track --alpha 0.3 --min-hits 3 --track-json runs/out.jsonl
+```
+
+- 延迟预算断言：`--track` 开启时每帧 `TrackSmoother::update` < 1 ms（用 `std::chrono::steady_clock` 在 20 条并发轨迹下打点验证）
+- Python↔C++ 逐帧对比：在同一视频上各跑一次 `--track-json`，用 `scripts/measure_flicker.py` 交叉比对 `class_flips_per_track`（允许 `tracking_id` 编号漂移，但数量、区间、平滑类别需一致）
 
 ---
 
 ## 七、测试策略
 
-### 7.1 合成 fixtures（Python 作为金标产生方）
+### 7.1 合成 fixtures（Python 与 C++ 共享的金标）
 
-`tests/fixtures/tracker/*.json` 由 Python 端脚本生成，每个 fixture 含：
+`tests/fixtures/tracker/*.json` 是 Python 与 C++ 两端**同时**消费的金标序列。每个文件结构：
 
 ```jsonc
 {
-  "name": "static_with_flip",
+  "name": "static_flip",
   "num_classes": 7,
+  "config": {                      // 可选；未提供则走构造器默认
+    "alpha": 0.3,
+    "min_hits": 3,
+    "high_thresh": 0.5
+  },
   "frames": [
-    { "frame_idx": 0, "detections": [ {"class_id": 0, "confidence": 0.9, "x1": 100, "y1": 100, "x2": 120, "y2": 150} ] },
-    // ... 注入 1 帧翻转 class_id=3
+    // 每帧是一个 detection 数组
+    [ {"class_id": 0, "confidence": 0.9, "x1": 100, "y1": 100, "x2": 120, "y2": 150} ],
+    [ {"class_id": 3, "confidence": 0.9, "x1": 100, "y1": 100, "x2": 120, "y2": 150} ],
+    // ...
   ],
   "expected": {
-    "unique_tracks": 1,
-    "final_class_id": 0,       // 平滑后仍为 red
-    "min_hits_confirmed": 3
+    "per_frame_track_count": [0, 0, 1, 1, 1, ...],  // 逐帧轨迹数（可选）
+    "unique_tracks": 1,                              // 整段总轨迹数（可选）
+    "final_smoothed_class_id": 0,                    // 末帧平滑类别（可选）
+    "smoothed_never_in": [3, 5]                      // 平滑输出永不包含的 class_id（可选）
   }
 }
 ```
 
-Python 与 C++ 两端均读取同一 JSON，生成相同断言。语义漂移会立刻被看见。
+两端都逐一读文件、运行 `TrackSmoother.update()`、对比 `expected.*`。Python 由 `pytest tests/test_tracker.py` 驱动；C++ 由 `ctest -R tracker_parity` 驱动，底层 `inference/cpp/tests/test_tracker.cpp` 用 nlohmann/json 解析 + 自写的 `TL_CHECK` 宏做断言（有意不引入 GoogleTest / Catch2，降低构建复杂度）。
 
-### 7.2 场景覆盖
+### 7.2 已覆盖场景（当前 5 个 fixture）
 
-1. 静态框 + 1 帧类别翻转 → 平滑类别不变
-2. 10 帧序列中间 5 帧无检测 → 轨迹存活，`tracking_id` 保持
-3. 双框，一静一动 → id 不交换
-4. 单次 FP（只出现 1 帧） → 因 `hits < min_hits` 被过滤
-5. 真 green → yellow → red 快速过渡 → 平滑延迟 < 10 帧（@ α=0.3）
+| Fixture | 覆盖 |
+|---|---|
+| `static_flip.json` | 静态框 + 1 帧类别翻转 → 平滑类别不变 |
+| `gap_survival.json` | 序列中段若干帧无检测 → 轨迹存活，`tracking_id` 保持（专项断言 `checkGapSurvival`） |
+| `two_box_stability.json` | 双框，一静一动 → `tracking_id` 不交换（专项断言 `checkTwoBoxStability`） |
+| `single_fp_suppression.json` | 单帧 FP → `hits < min_hits` 被过滤，不出现在输出 |
+| `fast_transition.json` | 真 green → yellow → red 过渡 → 平滑类别无多余中间跳变 |
 
-### 7.3 回放基准
+C++ 端额外烟测（不依赖 fixture）：`reset()` 后 ID 从 1 重开、`num_classes=0` / `alpha=0` / `alpha=1.1` / `high_thresh < track_thresh` 在构造器内全部抛出。
+
+### 7.3 已知金标空白（R2 待补）
+
+现有 fixture 全是**静态或缓漂移**框，不覆盖：
+
+1. 动态（有速度）+ 多帧 gap 场景：会暴露 Lost 轨迹 Kalman 预测时的速度行为（2026-04-23 修复的 Bug A）
+2. `score == track_thresh` 精确边界：会暴露分桶边界行为（2026-04-23 修复的 Bug B）
+
+待 R2 实车 replay 到位，补动态 + gap fixture 与边界分值 fixture 各一。
+
+### 7.4 回放基准
 
 - 输入：`runs/diagnose/{n,s}-pt-{640,1280,1536}/demo.mp4`
-- 指标：`scripts/measure_flicker.py` 输出 JSON，两端均跑一次，交叉比对 `class_flips_per_track`
+- 指标：`scripts/measure_flicker.py` 输出 JSON，Python / C++ 两端各跑一次，交叉比对 `class_flips_per_track`（允许 `tracking_id` 编号漂移，但数量、区间、平滑类别需一致）
 
 ---
 
@@ -318,7 +418,7 @@ Python 与 C++ 两端均读取同一 JSON，生成相同断言。语义漂移会
 | 长间隔后 `tracking_id` 冲突 | `track_buffer=30` 移除僵尸轨迹；id 严格单增 |
 | 真实 green→yellow→red 过渡被 EMA 拖慢 | `α=0.3` 对应 ~8 帧达 95%（@ 30 fps ≈ 0.27 s），快于合法黄灯；R2 实车数据上再调 |
 | Python ↔ C++ Kalman 实现差异导致轨迹分裂 | fixtures 双端比对；差异 > 0 立刻根因定位（浮点 / lap assignment tie-break） |
-| Eigen / nlohmann/json 在 JetPack 缺失 | Eigen 预装；nlohmann/json 用 FetchContent 兜底（仅测试时） |
+| nlohmann/json 在 JetPack 缺失 | 已切到 FetchContent 直接拉 tag `v3.11.3`，不走系统包路径；Eigen 整个需求已移除（Kalman 改用 `cv::Mat`） |
 | `TrackedDetection` 不再 POD，打破旧下游 | Demo 层转换为 `Detection` 再绘制；`to_ros_msg()` 填 `tracking_id` |
 | R2 nc 变化打破缓冲区形状 | `num_classes` 构造器参数；形状不匹配时抛错而非静默 |
 | ByteTrack 上游许可证 | Python / C++ 均为 MIT；`THIRD_PARTY_LICENSES.md` 各登记一条 |

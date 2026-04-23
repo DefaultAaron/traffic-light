@@ -113,7 +113,8 @@ def export(args):
 def infer(args):
     """Run inference using TRT pipeline (TensorRT or ONNX Runtime)."""
     from inference.demo import run_video
-    from inference.trt_pipeline import TRTDetector
+    from inference.tracker import TrackSmoother
+    from inference.trt_pipeline import CLASS_NAMES, TRTDetector
 
     detector = TRTDetector(
         model_path=args.model,
@@ -121,13 +122,30 @@ def infer(args):
         imgsz=args.imgsz,
     )
 
+    tracker = None
+    if getattr(args, "track", False):
+        tracker = TrackSmoother(
+            num_classes=len(CLASS_NAMES),
+            alpha=args.alpha,
+            track_thresh=args.conf,
+            high_thresh=args.high_thresh,
+            min_hits=args.min_hits,
+            track_buffer=args.track_buffer,
+        )
+
     # Parse source: integer for camera, string for file
     try:
         source = int(args.source)
     except ValueError:
         source = args.source
 
-    run_video(source, detector, show=not args.no_show, save=args.save, output_json=args.json)
+    run_video(
+        source, detector,
+        show=not args.no_show,
+        save=args.save,
+        output_json=args.json,
+        tracker=tracker,
+    )
 
 
 def train_all(args):
@@ -195,6 +213,16 @@ def main():
     p_infer.add_argument("--no-show", action="store_true", help="Disable display window")
     p_infer.add_argument("--save", type=str, default=None, help="Save output video to path")
     p_infer.add_argument("--json", action="store_true", help="Output per-frame JSON to stdout")
+    p_infer.add_argument("--track", action="store_true",
+                         help="Enable ByteTrack + EMA class voting")
+    p_infer.add_argument("--alpha", type=float, default=0.3,
+                         help="EMA smoothing coefficient (default: 0.3)")
+    p_infer.add_argument("--min-hits", type=int, default=3,
+                         help="Minimum observations before emitting a track (default: 3)")
+    p_infer.add_argument("--high-thresh", type=float, default=0.5,
+                         help="High/low detection split for two-pass association (default: 0.5)")
+    p_infer.add_argument("--track-buffer", type=int, default=30,
+                         help="Frames to keep lost tracks alive (default: 30)")
     p_infer.set_defaults(func=infer)
 
     # export

@@ -1,0 +1,29 @@
+{
+  "name": "gap_survival",
+  "description": "Detection disappears for 3 frames after the track is confirmed. Same tracking_id must resume when detection returns.",
+  "num_classes": 7,
+  "config": {
+    "alpha": 0.3,
+    "min_hits": 3,
+    "track_thresh": 0.25,
+    "high_thresh": 0.5,
+    "match_thresh": 0.8,
+    "track_buffer": 30
+  },
+  "frames": [
+    [{"class_id": 2, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 2, "confidence": 0.89, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 2, "confidence": 0.91, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [],
+    [],
+    [],
+    [{"class_id": 2, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150}],
+    [{"class_id": 2, "confidence": 0.92, "x1": 100, "y1": 100, "x2": 120, "y2": 150}]
+  ],
+  "expected": {
+    "unique_tracks": 1,
+    "final_smoothed_class_id": 2,
+    "per_frame_track_count": [0, 0, 1, 0, 0, 0, 1, 1],
+    "tracking_id_stable_after_gap": true
+  }
+}

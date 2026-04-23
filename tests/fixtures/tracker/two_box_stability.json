@@ -1,0 +1,41 @@
+{
+  "name": "two_box_stability",
+  "description": "Two simultaneous tracks — one static red, one green drifting diagonally. IDs must not swap.",
+  "num_classes": 7,
+  "config": {
+    "alpha": 0.3,
+    "min_hits": 3,
+    "track_thresh": 0.25,
+    "high_thresh": 0.5,
+    "match_thresh": 0.8,
+    "track_buffer": 30
+  },
+  "frames": [
+    [
+      {"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150},
+      {"class_id": 2, "confidence": 0.90, "x1": 400, "y1": 300, "x2": 420, "y2": 350}
+    ],
+    [
+      {"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150},
+      {"class_id": 2, "confidence": 0.88, "x1": 405, "y1": 303, "x2": 425, "y2": 353}
+    ],
+    [
+      {"class_id": 0, "confidence": 0.92, "x1": 100, "y1": 100, "x2": 120, "y2": 150},
+      {"class_id": 2, "confidence": 0.91, "x1": 410, "y1": 306, "x2": 430, "y2": 356}
+    ],
+    [
+      {"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150},
+      {"class_id": 2, "confidence": 0.89, "x1": 415, "y1": 309, "x2": 435, "y2": 359}
+    ],
+    [
+      {"class_id": 0, "confidence": 0.90, "x1": 100, "y1": 100, "x2": 120, "y2": 150},
+      {"class_id": 2, "confidence": 0.90, "x1": 420, "y1": 312, "x2": 440, "y2": 362}
+    ]
+  ],
+  "expected": {
+    "unique_tracks": 2,
+    "per_frame_track_count": [0, 0, 2, 2, 2],
+    "static_track_class_id": 0,
+    "moving_track_class_id": 2
+  }
+}

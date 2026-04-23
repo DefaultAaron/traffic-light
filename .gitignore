@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
 
 # Virtual environments
 .venv
@@ -17,6 +18,7 @@ demo/
 logs/
 DEIM/
 yolov13/
+ByteTrack/
 
 # Datasets
 data/raw/
