@@ -19,7 +19,7 @@ import numpy as np
 from inference.tracker import TrackedDetection, TrackSmoother
 from inference.trt_pipeline import CLASS_NAMES, Detection, TRTDetector
 
-# Colors for each class (BGR for OpenCV)
+# Colors for each class (BGR for OpenCV) — shared by raw detections and tracker output.
 CLASS_COLORS = {
     0: (0, 0, 255),      # red
     1: (0, 255, 255),    # yellow
@@ -30,14 +30,6 @@ CLASS_COLORS = {
     6: (128, 255, 0),    # greenRight
 }
 
-# Palette cycled by tracking_id when --track is on.
-TRACK_COLORS = [
-    (56, 56, 255),   (151, 157, 255), (31, 112, 255),  (29, 178, 255),
-    (49, 210, 207),  (10, 249, 72),   (23, 204, 146),  (134, 219, 61),
-    (52, 147, 26),   (187, 212, 0),   (168, 153, 44),  (255, 194, 0),
-    (147, 69, 52),   (255, 115, 100), (236, 24, 0),    (132, 56, 255),
-]
-
 
 def _label(det) -> str:
     if isinstance(det, TrackedDetection):
@@ -46,8 +38,6 @@ def _label(det) -> str:
 
 
 def _color(det) -> tuple:
-    if isinstance(det, TrackedDetection):
-        return TRACK_COLORS[det.tracking_id % len(TRACK_COLORS)]
     return CLASS_COLORS.get(det.class_id, (255, 255, 255))
 
 
@@ -56,7 +46,10 @@ def draw_detections(frame: np.ndarray, detections: list, fps: float | None = Non
     for det in detections:
         color = _color(det)
         x1, y1, x2, y2 = int(det.x1), int(det.y1), int(det.x2), int(det.y2)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        # Thicker box for tracker output so it's distinguishable from raw detector output
+        # in side-by-side comparison videos. Class color stays semantic.
+        thickness = 3 if isinstance(det, TrackedDetection) else 2
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
         label = _label(det)
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -76,11 +69,14 @@ def run_video(
     save: str | None = None,
     output_json: bool = False,
     tracker: TrackSmoother | None = None,
+    track_json: str | None = None,
 ):
     """Run detection (and optional tracking) on a video source."""
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video source: {source}")
+
+    track_json_fp = open(track_json, "w") if track_json else None
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -118,8 +114,14 @@ def run_video(
             t1 = time.perf_counter()
             dt_detect = t1 - t0
 
+            # 0-indexed frame number passed to the tracker. Held separately
+            # because frame_count below is post-incremented for the human-
+            # readable "Frame N" log line — but --track-json must match the
+            # C++ tl_demo schema which is 0-indexed for parity diffing.
+            track_frame_idx = frame_count
+
             if tracker is not None:
-                tracked = tracker.update(raw_dets, frame_count)
+                tracked = tracker.update(raw_dets, track_frame_idx)
                 dt_track = time.perf_counter() - t1
                 display_dets: list = tracked
             else:
@@ -140,7 +142,28 @@ def run_video(
                     "detections": [d.to_dict() for d in display_dets],
                 }
                 print(json.dumps(record), flush=True)
-            elif frame_count % 30 == 0:
+
+            if track_json_fp is not None and tracker is not None:
+                tracks_payload = [
+                    {
+                        "tracking_id": t.tracking_id,
+                        "class_id": t.class_id,
+                        "class_name": t.class_name,
+                        "confidence": t.confidence,
+                        "x1": t.x1, "y1": t.y1, "x2": t.x2, "y2": t.y2,
+                        "age": t.age,
+                        "hits": t.hits,
+                        "raw_class_id": t.raw_class_id,
+                        "raw_confidence": t.raw_confidence,
+                        "class_probs": list(t.class_probs),
+                    }
+                    for t in display_dets
+                ]
+                track_json_fp.write(
+                    json.dumps({"frame": track_frame_idx, "tracks": tracks_payload}) + "\n"
+                )
+
+            if frame_count % 30 == 0 and not output_json:
                 suffix = f" track {dt_track*1000:.2f}ms" if tracker is not None else ""
                 print(
                     f"Frame {frame_count}: {len(display_dets)} detections, "
@@ -162,6 +185,8 @@ def run_video(
         cap.release()
         if writer:
             writer.release()
+        if track_json_fp is not None:
+            track_json_fp.close()
         if show:
             cv2.destroyAllWindows()
 
@@ -191,6 +216,9 @@ def main():
                         help="High/low detection split for two-pass association (default: 0.5)")
     parser.add_argument("--track-buffer", type=int, default=30,
                         help="Frames to keep lost tracks alive (default: 30 = ~1s @ 30fps)")
+    parser.add_argument("--track-json", type=str, default=None,
+                        help="Write per-frame tracker output as JSONL (one {frame,tracks} object "
+                             "per line, schema matches C++ tl_demo --track-json for parity diffing)")
     args = parser.parse_args()
 
     # Parse source: integer for camera, string for file
@@ -216,12 +244,16 @@ def main():
             track_buffer=args.track_buffer,
         )
 
+    if args.track_json and tracker is None:
+        parser.error("--track-json requires --track")
+
     run_video(
         source, detector,
         show=not args.no_show,
         save=args.save,
         output_json=args.json,
         tracker=tracker,
+        track_json=args.track_json,
     )
 
 

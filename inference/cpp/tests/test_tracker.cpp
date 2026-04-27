@@ -193,6 +193,43 @@ void checkGapSurvival(const FixtureRun& run) {
     }
 }
 
+void checkOverlappingClasses(const FixtureRun& run) {
+    if (run.name != "overlapping_classes") return;
+    if (!run.expected.contains("left_track_class_id") ||
+        !run.expected.contains("right_track_class_id")) return;
+    int expected_left = run.expected["left_track_class_id"].get<int>();
+    int expected_right = run.expected["right_track_class_id"].get<int>();
+    bool any_confirmed = false;
+    for (const auto& frame : run.outputs) {
+        if (frame.size() != 2) continue;
+        any_confirmed = true;
+        // Sort by x1 ascending → left, right.
+        std::vector<tl::TrackedDetection> sorted = frame;
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const tl::TrackedDetection& a, const tl::TrackedDetection& b) {
+                      return a.x1 < b.x1;
+                  });
+        if (sorted[0].class_id != expected_left) {
+            std::cerr << "  overlapping_classes: left track class polluted "
+                      << "(got " << sorted[0].class_id
+                      << " expected " << expected_left
+                      << " raw=" << sorted[0].raw_class_id << ")\n";
+            ++g_failures;
+        }
+        if (sorted[1].class_id != expected_right) {
+            std::cerr << "  overlapping_classes: right track class polluted "
+                      << "(got " << sorted[1].class_id
+                      << " expected " << expected_right
+                      << " raw=" << sorted[1].raw_class_id << ")\n";
+            ++g_failures;
+        }
+    }
+    if (!any_confirmed) {
+        std::cerr << "  overlapping_classes: no confirmed two-track frames\n";
+        ++g_failures;
+    }
+}
+
 void checkTwoBoxStability(const FixtureRun& run) {
     if (run.name != "two_box_stability") return;
     std::set<int> static_ids, moving_ids;
@@ -301,6 +338,7 @@ int main(int argc, char** argv) {
         checkSmoothedNeverIn(run);
         checkGapSurvival(run);
         checkTwoBoxStability(run);
+        checkOverlappingClasses(run);
     }
 
     std::cout << "Smoke: reset\n";

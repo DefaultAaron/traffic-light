@@ -28,19 +28,10 @@
 
 namespace {
 
-// BGR colors keyed to class_id (used when tracker is disabled).
+// BGR colors keyed to class_id — shared by raw detections and tracker output.
 const cv::Scalar kClassColors[] = {
     {0, 0, 255},    {0, 255, 255}, {0, 255, 0},   {0, 0, 180},
     {0, 180, 0},    {128, 0, 255}, {128, 255, 0},
-};
-
-// Deterministic distinct palette keyed by tracking_id (used when --track).
-// Matches inference/demo.py's per-track palette style so side-by-side videos
-// read the same.
-const cv::Scalar kTrackColors[] = {
-    {255,  64,  64}, { 64, 255,  64}, { 64,  64, 255}, {255, 255,  64},
-    { 64, 255, 255}, {255,  64, 255}, {255, 160,  64}, { 64, 160, 255},
-    {160,  64, 255}, {255, 255, 255}, {128, 255, 128}, {255, 128, 128},
 };
 
 cv::Scalar colorForClass(int cls) {
@@ -49,16 +40,11 @@ cv::Scalar colorForClass(int cls) {
     return kClassColors[cls];
 }
 
-cv::Scalar colorForTrack(int track_id) {
-    constexpr int n = static_cast<int>(sizeof(kTrackColors) / sizeof(kTrackColors[0]));
-    return kTrackColors[((track_id % n) + n) % n];
-}
-
 void drawBox(cv::Mat& frame, const cv::Scalar& color, float x1, float y1, float x2, float y2,
-             const std::string& label) {
+             const std::string& label, int thickness = 2) {
     cv::Point p1(static_cast<int>(x1), static_cast<int>(y1));
     cv::Point p2(static_cast<int>(x2), static_cast<int>(y2));
-    cv::rectangle(frame, p1, p2, color, 2);
+    cv::rectangle(frame, p1, p2, color, thickness);
     int baseline = 0;
     cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
     cv::rectangle(frame, {p1.x, p1.y - ts.height - 4}, {p1.x + ts.width, p1.y}, color, cv::FILLED);
@@ -76,12 +62,14 @@ void drawDetections(cv::Mat& frame, const std::vector<tl::Detection>& dets) {
 }
 
 void drawTracks(cv::Mat& frame, const std::vector<tl::TrackedDetection>& tracks) {
+    // Thicker box so tracker output is distinguishable from raw detector output
+    // in side-by-side comparison videos. Class color stays semantic.
     for (const auto& t : tracks) {
         std::ostringstream label;
         label.precision(2);
         label << "#" << t.tracking_id << " " << t.class_name() << " "
               << std::fixed << t.confidence;
-        drawBox(frame, colorForTrack(t.tracking_id), t.x1, t.y1, t.x2, t.y2, label.str());
+        drawBox(frame, colorForClass(t.class_id), t.x1, t.y1, t.x2, t.y2, label.str(), 3);
     }
 }
 

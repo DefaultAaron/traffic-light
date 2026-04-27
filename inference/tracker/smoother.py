@@ -11,7 +11,6 @@ Design notes in `docs/integration/tracker_voting_guide.md`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -45,6 +44,11 @@ class TrackedDetection(Detection):
         d["raw_confidence"] = self.raw_confidence
         d["class_probs"] = list(self.class_probs)
         return d
+
+    def to_ros_msg(self):
+        det = super().to_ros_msg()
+        det.tracking_id = str(self.tracking_id)
+        return det
 
 
 class TrackSmoother:
@@ -136,7 +140,12 @@ class TrackSmoother:
             got_measurement = strack.frame_id == current
 
             if got_measurement:
-                det_idx = _best_iou_match(strack.tlbr, dets_filtered)
+                # Use the index ByteTrack actually associated to this track,
+                # not an IoU lookup after the fact (which can collide on
+                # overlapping boxes with different classes — see
+                # tests/fixtures/tracker/overlapping_classes.json).
+                src_idx = strack.source_det_idx
+                det_idx = src_idx if 0 <= src_idx < len(dets_filtered) else None
                 if det_idx is not None:
                     raw_cls = dets_filtered[det_idx].class_id
                     raw_conf = dets_filtered[det_idx].confidence
@@ -229,34 +238,3 @@ def _detection_box(d: Detection) -> tuple[float, float, float, float]:
     return (d.x1, d.y1, d.x2, d.y2)
 
 
-def _best_iou_match(
-    box: np.ndarray, detections: list[Detection], min_iou: float = 0.1
-) -> Optional[int]:
-    """Find the detection index whose xyxy has highest IoU with `box`.
-    Returns None if no detection clears `min_iou`.
-    """
-    if not detections:
-        return None
-    bx1, by1, bx2, by2 = box
-    b_area = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-    best_iou = min_iou
-    best_idx: Optional[int] = None
-    for i, d in enumerate(detections):
-        ix1 = max(bx1, d.x1)
-        iy1 = max(by1, d.y1)
-        ix2 = min(bx2, d.x2)
-        iy2 = min(by2, d.y2)
-        iw = max(0.0, ix2 - ix1)
-        ih = max(0.0, iy2 - iy1)
-        inter = iw * ih
-        if inter <= 0:
-            continue
-        d_area = max(0.0, d.x2 - d.x1) * max(0.0, d.y2 - d.y1)
-        union = b_area + d_area - inter
-        if union <= 0:
-            continue
-        iou = inter / union
-        if iou > best_iou:
-            best_iou = iou
-            best_idx = i
-    return best_idx

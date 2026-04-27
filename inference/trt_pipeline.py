@@ -260,7 +260,9 @@ class TRTDetector:
         """Decode YOLO26 output into Detection objects.
 
         Expected output (batch dim dropped): (N, 4 + num_classes) where each
-        row is (cx, cy, w, h, cls0, cls1, ...). Some exports transpose to
+        row is (x1, y1, x2, y2, cls0, cls1, ...) in letterbox pixels. The
+        stripped YOLO26 head emits xyxy directly via (anchor ± DFL-decoded
+        distance) × stride — NOT cxcywh. Some exports transpose to
         (4 + num_classes, N); we detect this by matching the expected class
         count (len(CLASS_NAMES)) against one of the two dimensions.
         """

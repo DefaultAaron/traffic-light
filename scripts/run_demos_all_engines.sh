@@ -26,6 +26,8 @@
 #   TRACK        1 to enable --track          (default: 0)
 #   SKIP_EXIST   1 to skip outputs already    (default: 1)
 #                present (resume friendly)
+#   OVERWRITE    1 to delete + regenerate     (default: 0)
+#                stale outputs (forces SKIP_EXIST=0)
 
 set -euo pipefail
 
@@ -36,6 +38,9 @@ OUT_DIR=${OUT_DIR:-$DEMOS_DIR}
 CONF=${CONF:-0.25}
 TRACK=${TRACK:-0}
 SKIP_EXIST=${SKIP_EXIST:-1}
+OVERWRITE=${OVERWRITE:-0}
+# OVERWRITE forces a fresh run; the two flags would otherwise contradict.
+[[ "$OVERWRITE" == "1" ]] && SKIP_EXIST=0
 
 if [[ ! -x "$TL_DEMO" ]]; then
     echo "tl_demo binary not found or not executable: $TL_DEMO" >&2
@@ -107,6 +112,13 @@ for run_path in "${runs[@]}"; do
                 echo "  [skip] $out (already exists)"
                 skipped=$((skipped + 1))
                 continue
+            fi
+
+            # If we're regenerating, drop the stale file first so a write
+            # failure can't leave the old result behind to be silently kept.
+            if [[ "$OVERWRITE" == "1" && -e "$out" ]]; then
+                echo "  [overwrite] removing stale $out"
+                rm -f "$out"
             fi
 
             cmd=( "$TL_DEMO"

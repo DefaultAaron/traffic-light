@@ -30,7 +30,7 @@ from .kalman_filter import KalmanFilter
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
 
-    def __init__(self, tlwh, score):
+    def __init__(self, tlwh, score, source_det_idx: int = -1):
         self._tlwh = np.asarray(tlwh, dtype=float)
         self.kalman_filter = None
         self.mean, self.covariance = None, None
@@ -38,6 +38,11 @@ class STrack(BaseTrack):
 
         self.score = score
         self.tracklet_len = 0
+        # Index into the original `dets` array passed to BYTETracker.update();
+        # propagated through update()/re_activate() so the smoother can recover
+        # the exact matched detection (class, confidence) instead of doing an
+        # IoU lookup after the fact, which can collide on overlapping boxes.
+        self.source_det_idx: int = source_det_idx
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -85,6 +90,7 @@ class STrack(BaseTrack):
         if new_id:
             self.track_id = self.next_id()
         self.score = new_track.score
+        self.source_det_idx = new_track.source_det_idx
 
     def update(self, new_track, frame_id):
         self.frame_id = frame_id
@@ -97,6 +103,7 @@ class STrack(BaseTrack):
         self.state = TrackState.Tracked
         self.is_activated = True
         self.score = new_track.score
+        self.source_det_idx = new_track.source_det_idx
 
     @property
     def tlwh(self):
@@ -197,6 +204,12 @@ class BYTETracker:
         inds_high = scores < self.track_thresh
         inds_second = np.logical_and(inds_low, inds_high)
 
+        # Preserve original-array indices so STracks can carry them through
+        # the association steps; smoother uses these to recover the exact
+        # matched detection (no IoU-after-the-fact ambiguity).
+        high_idxs = np.where(remain_inds)[0].tolist()
+        second_idxs = np.where(inds_second)[0].tolist()
+
         dets_high = bboxes[remain_inds]
         dets_second = bboxes[inds_second]
         scores_keep = scores[remain_inds]
@@ -204,8 +217,8 @@ class BYTETracker:
 
         if len(dets_high) > 0:
             detections = [
-                STrack(STrack.tlbr_to_tlwh(tlbr), s)
-                for (tlbr, s) in zip(dets_high, scores_keep)
+                STrack(STrack.tlbr_to_tlwh(tlbr), s, source_det_idx=src_idx)
+                for (tlbr, s, src_idx) in zip(dets_high, scores_keep, high_idxs)
             ]
         else:
             detections = []
@@ -241,8 +254,8 @@ class BYTETracker:
         # Step 3: Second association, with low-score detections.
         if len(dets_second) > 0:
             detections_second = [
-                STrack(STrack.tlbr_to_tlwh(tlbr), s)
-                for (tlbr, s) in zip(dets_second, scores_second)
+                STrack(STrack.tlbr_to_tlwh(tlbr), s, source_det_idx=src_idx)
+                for (tlbr, s, src_idx) in zip(dets_second, scores_second, second_idxs)
             ]
         else:
             detections_second = []

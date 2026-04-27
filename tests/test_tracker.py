@@ -116,6 +116,31 @@ def test_gap_survival_same_tracking_id():
     )
 
 
+def test_overlapping_classes_no_pollution():
+    """Two overlapping detections with different classes must not contaminate
+    each other's EMA class state. Regression for inference_code_review_2026-04-27
+    §Medium: with IoU-after-the-fact class recovery, both tracks could pick the
+    same detection and pollute the other's class. After carrying the matched
+    detection index out of ByteTrack, each track recovers its own detection."""
+    path = FIXTURE_DIR / "overlapping_classes.json"
+    data, outputs = _run_fixture(path)
+    confirmed = [o for o in outputs if len(o) == 2]
+    assert confirmed, "expected at least one confirmed two-track frame"
+    expected_left = data["expected"]["left_track_class_id"]
+    expected_right = data["expected"]["right_track_class_id"]
+    for frame_out in confirmed:
+        sorted_by_x = sorted(frame_out, key=lambda d: d.x1)
+        left, right = sorted_by_x[0], sorted_by_x[1]
+        assert left.class_id == expected_left, (
+            f"left track class polluted: got {left.class_id} (expected {expected_left}); "
+            f"raw_class={left.raw_class_id}, probs={left.class_probs}"
+        )
+        assert right.class_id == expected_right, (
+            f"right track class polluted: got {right.class_id} (expected {expected_right}); "
+            f"raw_class={right.raw_class_id}, probs={right.class_probs}"
+        )
+
+
 def test_two_box_ids_do_not_swap():
     """Two-box fixture: the static and moving boxes keep distinct, stable ids."""
     path = FIXTURE_DIR / "two_box_stability.json"
@@ -169,3 +194,70 @@ def test_num_classes_validation():
         TrackSmoother(num_classes=7, alpha=1.1)
     with pytest.raises(ValueError):
         TrackSmoother(num_classes=7, track_thresh=0.6, high_thresh=0.5)
+
+
+def test_tracked_to_ros_msg_populates_tracking_id(monkeypatch):
+    """Regression for inference_code_review_2026-04-27 §High: TrackedDetection
+    must override to_ros_msg() so downstream ROS consumers see tracking_id."""
+    import sys
+    import types
+
+    # Stub vision_msgs.msg with the minimum surface to_ros_msg() touches.
+    class _Vec:
+        def __init__(self):
+            self.x = 0.0
+            self.y = 0.0
+
+    class _Pose:
+        def __init__(self):
+            self.position = _Vec()
+
+    class _Center:
+        def __init__(self):
+            self.position = _Vec()
+
+    class BoundingBox2D:
+        def __init__(self):
+            self.center = _Center()
+            self.size_x = 0.0
+            self.size_y = 0.0
+
+    class _Hyp:
+        def __init__(self):
+            self.class_id = ""
+            self.score = 0.0
+
+    class ObjectHypothesisWithPose:
+        def __init__(self):
+            self.hypothesis = _Hyp()
+
+    class Detection2D:
+        def __init__(self):
+            self.bbox = None
+            self.results = []
+            self.tracking_id = ""
+
+    fake_msg = types.ModuleType("vision_msgs.msg")
+    fake_msg.BoundingBox2D = BoundingBox2D
+    fake_msg.Detection2D = Detection2D
+    fake_msg.ObjectHypothesisWithPose = ObjectHypothesisWithPose
+    fake_pkg = types.ModuleType("vision_msgs")
+    fake_pkg.msg = fake_msg
+    monkeypatch.setitem(sys.modules, "vision_msgs", fake_pkg)
+    monkeypatch.setitem(sys.modules, "vision_msgs.msg", fake_msg)
+
+    tracked = TrackedDetection(
+        class_id=0,
+        confidence=0.9,
+        x1=10.0, y1=20.0, x2=30.0, y2=40.0,
+        tracking_id=42,
+        age=5,
+        hits=4,
+        raw_class_id=0,
+        raw_confidence=0.88,
+        class_probs=[0.9, 0.1, 0, 0, 0, 0, 0],
+    )
+    msg = tracked.to_ros_msg()
+    assert msg.tracking_id == "42"
+    assert msg.results[0].hypothesis.class_id == "red"
+    assert msg.results[0].hypothesis.score == pytest.approx(0.9)

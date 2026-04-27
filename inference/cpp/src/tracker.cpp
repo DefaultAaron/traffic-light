@@ -151,8 +151,14 @@ struct STrack {
     // Initial box as tlwh (top-left + width/height).
     std::array<float, 4> init_tlwh{};
 
-    explicit STrack(const std::array<float, 4>& tlwh, float s)
-        : score(s), init_tlwh(tlwh) {}
+    // Index into the original `dets` array passed to ByteTracker::update();
+    // propagated through update()/reActivate() so the smoother can recover
+    // the exact matched detection (class, confidence) instead of doing an
+    // IoU lookup after the fact, which can collide on overlapping boxes.
+    int source_det_idx = -1;
+
+    STrack(const std::array<float, 4>& tlwh, float s, int src_idx = -1)
+        : score(s), init_tlwh(tlwh), source_det_idx(src_idx) {}
 
     static std::array<float, 4> tlbrToTlwh(float x1, float y1, float x2, float y2) {
         return {x1, y1, x2 - x1, y2 - y1};
@@ -206,6 +212,7 @@ struct STrack {
         frame_id = fid;
         if (assignNewId) track_id = nextTrackId();
         score = newTrack.score;
+        source_det_idx = newTrack.source_det_idx;
     }
 
     void update(const KalmanFilter& kf, const STrack& newTrack, int fid) {
@@ -217,6 +224,7 @@ struct STrack {
         state = TrackState::Tracked;
         is_activated = true;
         score = newTrack.score;
+        source_det_idx = newTrack.source_det_idx;
     }
 
     void markLost()    { state = TrackState::Lost; }
@@ -482,14 +490,17 @@ public:
         // `else if (s > 0.1)`, which would include the boundary in
         // the second bucket and diverge on quantized/rounded scores.
         std::vector<STrackPtr> detsHigh, detsSecond;
-        for (const auto& r : dets) {
+        // Carry original-array indices on each STrack so the smoother can
+        // recover the exact matched detection without IoU-after-the-fact.
+        for (size_t i = 0; i < dets.size(); ++i) {
+            const auto& r = dets[i];
             float s = r[4];
             if (s > trackThresh_) {
                 detsHigh.push_back(std::make_shared<STrack>(
-                    STrack::tlbrToTlwh(r[0], r[1], r[2], r[3]), s));
+                    STrack::tlbrToTlwh(r[0], r[1], r[2], r[3]), s, int(i)));
             } else if (s > 0.1f && s < trackThresh_) {
                 detsSecond.push_back(std::make_shared<STrack>(
-                    STrack::tlbrToTlwh(r[0], r[1], r[2], r[3]), s));
+                    STrack::tlbrToTlwh(r[0], r[1], r[2], r[3]), s, int(i)));
             }
         }
 
@@ -645,23 +656,6 @@ std::vector<double> oneHot(int classId, int numClasses) {
     return v;
 }
 
-// Recover the input-detection index that best overlaps `box`. Mirrors
-// `_best_iou_match` in Python; returns -1 if no detection clears `minIou`.
-int bestIouMatch(const std::array<float, 4>& box,
-                 const std::vector<Detection>& dets,
-                 double minIou = 0.1) {
-    int bestIdx = -1;
-    double bestIou = minIou;
-    for (size_t i = 0; i < dets.size(); ++i) {
-        double v = iou(box, {dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2});
-        if (v > bestIou) {
-            bestIou = v;
-            bestIdx = int(i);
-        }
-    }
-    return bestIdx;
-}
-
 int argmax(const std::vector<double>& v) {
     int best = 0;
     for (size_t i = 1; i < v.size(); ++i) {
@@ -727,7 +721,11 @@ struct TrackSmoother::Impl {
             std::array<float, 4> box = strack->tlbr();
 
             if (got_measurement) {
-                int det_idx = bestIouMatch(strack->tlbr(), filtered);
+                // Use the index ByteTrack actually associated to this track,
+                // not an IoU lookup after the fact (which can collide on
+                // overlapping boxes with different classes).
+                int det_idx = strack->source_det_idx;
+                if (det_idx < 0 || det_idx >= int(filtered.size())) det_idx = -1;
                 if (det_idx >= 0) {
                     const auto& d = filtered[det_idx];
                     raw_cls = d.class_id;
