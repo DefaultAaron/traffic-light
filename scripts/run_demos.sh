@@ -1,39 +1,47 @@
 #!/usr/bin/env bash
-# Same sweep as run_demos_all_engines.sh but always with --track enabled,
-# and outputs land in a sibling tree suffixed with _tracker so detector-only
-# and tracker runs sit side by side without collisions.
+# Sweep every (run, engine, demo) triple through the C++ TRT pipeline demo.
 #
-# Layout expected on the Orin:
-#   runs/<run>/*.engine                       e.g. runs/yolo26m-r1/best_1280.engine
+# Layout expected:
+#   runs/<run>/*.engine                       e.g. runs/yolo26s-r1/best_1280.engine
 #   demo/demo*.mp4                            input clips
 #
 # Produced layout:
-#   demo/<run>_tracker/<engine_stem>/<demo_name>.mp4
-#   demo/<run>_tracker/<engine_stem>/<demo_name>.tracks.jsonl   (if SAVE_TRACK_JSON=1)
+#   demo/<run>/<engine_stem>/<demo_name>.mp4                    (TRACK=0, default)
+#   demo/<run>_tracker/<engine_stem>/<demo_name>.mp4            (TRACK=1)
+#   demo/<run>_tracker/<engine_stem>/<demo_name>.tracks.jsonl   (TRACK=1 + SAVE_TRACK_JSON=1)
+#
+# The `_tracker` suffix on TRACK=1 lets detector-only and tracker sweeps coexist
+# under the same OUT_DIR without overwriting each other.
+#
+# Sequential by design: each tl_demo invocation blocks the next so a single
+# GPU/TRT context is in flight at a time (TRT engines are not safe to share
+# concurrently and we want clean per-run latency numbers).
 #
 # Usage:
-#   ./scripts/run_demos_all_engines_tracker.sh
-#   CONF=0.3 ./scripts/run_demos_all_engines_tracker.sh
-#   SAVE_TRACK_JSON=1 ./scripts/run_demos_all_engines_tracker.sh
+#   ./scripts/run_demos.sh                           # detector-only sweep
+#   TRACK=1 ./scripts/run_demos.sh                   # tracker sweep
+#   CONF=0.3 ./scripts/run_demos.sh
+#   TRACK=1 SAVE_TRACK_JSON=1 ./scripts/run_demos.sh
 #
-# Env overrides (in addition to those in run_demos_all_engines.sh):
+# Env overrides:
 #   TL_DEMO          path to tl_demo binary       (default: inference/cpp/build/tl_demo)
 #   RUNS_DIR         root of engines              (default: runs)
 #   DEMOS_DIR        root of input .mp4 clips     (default: demo)
 #   OUT_DIR          root for output clips        (default: $DEMOS_DIR)
 #   CONF             detector confidence          (default: 0.25)
-#   ALPHA            tracker EMA alpha            (default: tl_demo built-in)
-#   MIN_HITS         min hits before confirmed    (default: tl_demo built-in)
-#   HIGH_THRESH      first-pass IoU/score thresh  (default: tl_demo built-in)
-#   MATCH_THRESH     match cost cutoff            (default: tl_demo built-in)
-#   TRACK_BUFFER     frames a lost track survives (default: tl_demo built-in)
-#   SAVE_TRACK_JSON  1 to also dump tracks.jsonl  (default: 0)
+#   TRACK            1 to enable --track          (default: 0)
 #   SKIP_EXIST       1 to skip outputs already    (default: 1)
 #                    present (resume friendly)
 #   OVERWRITE        1 to delete + regenerate     (default: 0)
-#                    stale .mp4 (and matching
-#                    .tracks.jsonl); forces
-#                    SKIP_EXIST=0
+#                    stale outputs (forces SKIP_EXIST=0)
+#
+# Tracker tuning (TRACK=1 only; falls through to tl_demo built-in if unset):
+#   ALPHA            tracker EMA alpha
+#   MIN_HITS         min hits before confirmed
+#   HIGH_THRESH      first-pass IoU/score thresh
+#   MATCH_THRESH     match cost cutoff
+#   TRACK_BUFFER     frames a lost track survives
+#   SAVE_TRACK_JSON  1 to also dump <demo>.tracks.jsonl  (default: 0)
 
 set -euo pipefail
 
@@ -42,6 +50,7 @@ RUNS_DIR=${RUNS_DIR:-runs}
 DEMOS_DIR=${DEMOS_DIR:-demo}
 OUT_DIR=${OUT_DIR:-$DEMOS_DIR}
 CONF=${CONF:-0.25}
+TRACK=${TRACK:-0}
 SKIP_EXIST=${SKIP_EXIST:-1}
 SAVE_TRACK_JSON=${SAVE_TRACK_JSON:-0}
 OVERWRITE=${OVERWRITE:-0}
@@ -54,6 +63,7 @@ if [[ ! -x "$TL_DEMO" ]]; then
     exit 1
 fi
 
+# Engine resolution: filename-based — `*1536* → 1536`, `*1280* → 1280`, else 640.
 imgsz_for() {
     local name=$1
     case "$name" in
@@ -62,6 +72,15 @@ imgsz_for() {
         *)      echo 640  ;;
     esac
 }
+
+# Suffix the run output dir when tracking, so detector-only and tracker
+# results sit side by side under the same OUT_DIR without colliding.
+run_suffix=""
+mode_label="detector-only"
+if [[ "$TRACK" == "1" ]]; then
+    run_suffix="_tracker"
+    mode_label="tracker"
+fi
 
 shopt -s nullglob
 
@@ -102,15 +121,16 @@ for run_path in "${runs[@]}"; do
     for eng in "${engines[@]}"; do
         eng_name=$(basename "$eng" .engine)
         imgsz=$(imgsz_for "$eng_name")
-        out_subdir="$OUT_DIR/${run_name}_tracker/$eng_name"
+        out_subdir="$OUT_DIR/${run_name}${run_suffix}/$eng_name"
         mkdir -p "$out_subdir"
 
         echo
-        echo "=== ${run_name}_tracker / $eng_name  (imgsz=$imgsz, conf=$CONF, track=1) ==="
+        echo "=== ${run_name}${run_suffix} / $eng_name  (imgsz=$imgsz, conf=$CONF, $mode_label) ==="
 
         for demo in "${demos[@]}"; do
             demo_name=$(basename "$demo")
             out="$out_subdir/$demo_name"
+            track_json_path="${out%.mp4}.tracks.jsonl"
             total=$((total + 1))
 
             if [[ "$SKIP_EXIST" == "1" && -s "$out" ]]; then
@@ -121,12 +141,9 @@ for run_path in "${runs[@]}"; do
 
             # If regenerating, drop the stale .mp4 + companion .tracks.jsonl
             # first so a write failure can't leave half-stale state behind.
-            if [[ "$OVERWRITE" == "1" ]]; then
-                track_json_path="${out%.mp4}.tracks.jsonl"
-                if [[ -e "$out" || -e "$track_json_path" ]]; then
-                    echo "  [overwrite] removing stale $out (and any .tracks.jsonl)"
-                    rm -f "$out" "$track_json_path"
-                fi
+            if [[ "$OVERWRITE" == "1" && ( -e "$out" || -e "$track_json_path" ) ]]; then
+                echo "  [overwrite] removing stale $out (and any .tracks.jsonl)"
+                rm -f "$out" "$track_json_path"
             fi
 
             cmd=( "$TL_DEMO"
@@ -135,17 +152,18 @@ for run_path in "${runs[@]}"; do
                   --conf   "$CONF"
                   --imgsz  "$imgsz"
                   --no-show
-                  --save   "$out"
-                  --track )
+                  --save   "$out" )
 
-            [[ -n "${ALPHA:-}"        ]] && cmd+=( --alpha        "$ALPHA"        )
-            [[ -n "${MIN_HITS:-}"     ]] && cmd+=( --min-hits     "$MIN_HITS"     )
-            [[ -n "${HIGH_THRESH:-}"  ]] && cmd+=( --high-thresh  "$HIGH_THRESH"  )
-            [[ -n "${MATCH_THRESH:-}" ]] && cmd+=( --match-thresh "$MATCH_THRESH" )
-            [[ -n "${TRACK_BUFFER:-}" ]] && cmd+=( --track-buffer "$TRACK_BUFFER" )
-
-            if [[ "$SAVE_TRACK_JSON" == "1" ]]; then
-                cmd+=( --track-json "${out%.mp4}.tracks.jsonl" )
+            if [[ "$TRACK" == "1" ]]; then
+                cmd+=( --track )
+                [[ -n "${ALPHA:-}"        ]] && cmd+=( --alpha        "$ALPHA"        )
+                [[ -n "${MIN_HITS:-}"     ]] && cmd+=( --min-hits     "$MIN_HITS"     )
+                [[ -n "${HIGH_THRESH:-}"  ]] && cmd+=( --high-thresh  "$HIGH_THRESH"  )
+                [[ -n "${MATCH_THRESH:-}" ]] && cmd+=( --match-thresh "$MATCH_THRESH" )
+                [[ -n "${TRACK_BUFFER:-}" ]] && cmd+=( --track-buffer "$TRACK_BUFFER" )
+                if [[ "$SAVE_TRACK_JSON" == "1" ]]; then
+                    cmd+=( --track-json "$track_json_path" )
+                fi
             fi
 
             echo "  -> $demo_name"
@@ -155,6 +173,7 @@ for run_path in "${runs[@]}"; do
                 rc=$?
                 echo "  [fail] rc=$rc for $demo_name -> $out" >&2
                 failed=$((failed + 1))
+                # Remove a partial/empty output so a re-run picks it up cleanly.
                 [[ -f "$out" && ! -s "$out" ]] && rm -f "$out"
             fi
         done
@@ -163,5 +182,5 @@ done
 
 elapsed=$(( $(date +%s) - start_ts ))
 echo
-echo "Tracker sweep done: $done_count ran, $skipped skipped, $failed failed, $total total (${elapsed}s)"
+echo "Sweep ($mode_label) done: $done_count ran, $skipped skipped, $failed failed, $total total (${elapsed}s)"
 (( failed == 0 ))
