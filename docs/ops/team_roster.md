@@ -176,7 +176,7 @@
 
 ---
 
-## 集群 D — 自定义（2 名专家）
+## 集群 D — 自定义（4 名专家）
 
 ### D1. demo-reviewer
 
@@ -204,6 +204,34 @@
 | **项目关联文件** | `research/surveys/alt_detector_architectures.md`（既有的调研体例 — paper-researcher 沿用）；未来的 `docs/paper/` |
 | **关键约束** | paper-researcher 是 **协作伙伴**，不是预言机。它读不到没给它的论文；它必须引用 **具体的论文**（带年份 + 会刊），不能编造结果。该角色最大的风险是幻觉，需要在提示词中明确约束。 |
 | **写权限** | **无**。frontmatter 仅授予 `Read` / `WebSearch` / `WebFetch` / `Glob` / `Grep`，未授予 `Write` / `Edit` / `Bash`。所有产出以响应文本形式返回，由主会话决定是否落盘以及落盘到哪个路径。这是工具网关层的强制约束，不是 prose 层面的"请勿"。 |
+
+### D3. doc-manager（新建，2026-04-28）
+
+| | |
+|---|---|
+| **来源** | 新建自定义 agent — `.claude/agents/doc-manager.md` |
+| **领域** | `docs/` 与 `research/` 树的撰写 / 重构 / 重命名 / 跨引用审计 / 语言合规 |
+| **职责** | 文件夹重组、过期文档精简、跨引用修复、语言规则强制（`docs/` 中文 + READMEs 英文）；与 `script-maintainer` 互补：脚本变更引发的多文档改写由其承接 |
+| **何时调用** | 文件夹重命名 / 大规模移动；"清理过期文档"；论文资料与执行文档分家；rename / delete 后的批量交叉引用更新；语言合规审计；新文档草稿 |
+| **预期输入** | 明确任务（"将 X 移到 Y 并更新所有引用" / "把过期事故记录精简为 runbook"），约束（目标长度、必保留章节、必删章节），是否涉及语言切换 |
+| **预期输出** | 结构化交付清单：触动文件 + 跨引用 grep 结果（必须 clean）+ 语言审计 + 范围外项目 |
+| **项目关联文件** | `docs/`, `research/`, 任意 `README.md`；现有英文例外（`docs/ops/{scripts_reference,tailscale_runbook}.md`）保留英文 |
+| **写权限** | `docs/`, `research/`, root `README.md`。**不可触碰**：`inference/`, `scripts/`, `main.py`, `configs/`, `.claude/`, hooks, `pyproject.toml`, ignore 文件, agent-tool 配置（`CLAUDE.md` 等）|
+| **关键约束** | 1) 语言规则零例外（参见上方"项目关联文件"）；2) 任何 rename / move 后必须 grep 项目范围内所有 `*.md` + 源代码注释、确认 0 残留；3) 用 `git mv` 保留历史；4) 范围外任务必须以 `out-of-scope:` 形式回退，不要自行越界 |
+
+### D4. script-maintainer（新建，2026-04-28）
+
+| | |
+|---|---|
+| **来源** | 新建自定义 agent — `.claude/agents/script-maintainer.md` |
+| **领域** | `scripts/` 树（shell + Python）：训练 wrapper、数据集转换、demo sweep、模型导出、验证工具、ops 辅助脚本 |
+| **职责** | 重复脚本合并、过期脚本删除、env-var 契约调优、新脚本撰写；保持 `docs/ops/scripts_reference.md` 同步；遵守 `exec` trainer + SEED.txt 项目约定 |
+| **何时调用** | 合并 `scripts/foo.sh` 与 `scripts/foo_variant.sh` 这类重复；删除过期脚本；新增训练 / 数据 / demo 脚本；现有脚本契约重构 |
+| **预期输入** | 明确任务、env-var 契约必保留 / 可调整、输出目录约定、触发上下文（哪次代码 / 文档变更带出此需求）|
+| **预期输出** | 结构化交付清单：触动脚本 + `bash -n` / `py_compile` 验证 + `chmod +x` 验证 + scripts_reference 同步状态 + 跨引用 grep 结果 + codex stop-gate 暴露面（exec 是否守住、SEED 与 `"$@"` 是否一致、是否引入 masking 风险）+ 范围外项目 |
+| **项目关联文件** | `scripts/`, `docs/ops/scripts_reference.md`（编辑），`feedback_codex_conflictor_pattern.md`（必读，Pattern B）|
+| **写权限** | `scripts/`, `docs/ops/scripts_reference.md`。**不可触碰**：`inference/`, `main.py`, `configs/`, training YAML, hooks, agent files, `pyproject.toml` |
+| **关键约束** | 1) 训练 wrapper 必须 `exec` 调用 trainer（无 post-exec 行、无 `|| true`、无 safety net）；2) SEED.txt 在 `exec` 之前预写、且从 `"$@"` 提升 seed override；3) resume 路径不写 SEED；4) 每个 shell 脚本 `bash -n` 通过、Python `py_compile` 通过才算完成；5) 新 shell 脚本一律 `chmod +x`；6) 合并脚本前先列出双方所有 env-var 默认值，证明合并版本无静默 default 变化 |
 
 ---
 
@@ -247,10 +275,11 @@
                        │   │   │   │   │
    ┌───────────────────┘   │   │   │   └────────────────────┐
    ▼                       ▼   ▼   ▼                        ▼
-┌──────────┐  ┌──────────┐ ┌─────────┐ ┌────────────┐  ┌────────────┐
-│ 集群 A   │  │ 集群 B   │ │ Codex C │ │demo-revi-  │  │  paper-    │
-│ (构建)   │  │ (评审)   │ │(对抗)   │ │  ewer      │  │ researcher │
-└──────────┘  └──────────┘ └─────────┘ └────────────┘  └────────────┘
+┌──────────┐  ┌──────────┐ ┌─────────┐ ┌────────────────────────────────────┐
+│ 集群 A   │  │ 集群 B   │ │ Codex C │ │ 集群 D（自定义）                   │
+│ (构建)   │  │ (评审)   │ │(对抗)   │ │ demo-reviewer / paper-researcher / │
+│          │  │          │ │         │ │ doc-manager / script-maintainer    │
+└──────────┘  └──────────┘ └─────────┘ └────────────────────────────────────┘
 ```
 
 ### 对抗回路（codex 反对者）
@@ -283,6 +312,8 @@
   - `paper-researcher`：**完全无写权限** — frontmatter 不授予 `Write` / `Edit` / `Bash`
     任一工具，由 Claude Code 工具网关层强制执行（不依赖 prose 自律）。
     草稿通过响应文本返回；保存到 `docs/paper/` 等路径由主会话执行。
+  - `doc-manager`：写权限限于 `docs/`、`research/`、根 `README.md`；不可触碰代码 / 配置 / 脚本 / hooks / agent files
+  - `script-maintainer`：写权限限于 `scripts/` 与 `docs/ops/scripts_reference.md`；不可触碰 inference / main.py / configs / training YAML / hooks / agent files
 
 ---
 
