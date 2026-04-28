@@ -1,6 +1,6 @@
 # 交通灯检测增强方法可行性调研
 
-> **状态（2026-04-27）**：研究报告。在已有三条计划（[`development_plan.md`](../planning/development_plan.md) 主检测器选型、[`temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) 时序优化、[`cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) 跨检测推理）之外，系统性地识别能进一步增强交通灯检测的方法。
+> **状态（2026-04-27）**：研究报告。在已有三条计划（[`development_plan.md`](../../docs/planning/development_plan.md) 主检测器选型、[`temporal_optimization_plan.md`](../../docs/planning/temporal_optimization_plan.md) 时序优化、[`cross_detection_reasoning_plan.md`](../../docs/planning/cross_detection_reasoning_plan.md) 跨检测推理）之外，系统性地识别能进一步增强交通灯检测的方法。
 >
 > **目的**：(1) 完整列出超出现有计划范围的候选方法（模型层 + 系统层）；(2) 用 R1 实测痛点对每条做契合度评估；(3) 给出进入 R2/R3 路线图的优先级建议。
 >
@@ -12,7 +12,7 @@
 
 ### 0.1 为什么做这次调研
 
-R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §视检结论）：远距小目标漏检、逆光 / 黄昏漏检、卡车遮挡瞬时丢失、非正面朝向漏检、稀有类（`redRight` / `greenRight` 各 10–20 样本）模型未学到、demo8 类背景误检（黄三角警示牌、绿色厂房墙）、demo10 类持续稳定的误分类（gantry 绿灯被一致误判）。
+R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1_report.md`](../../docs/reports/phase_2_round_1_report.md) §视检结论）：远距小目标漏检、逆光 / 黄昏漏检、卡车遮挡瞬时丢失、非正面朝向漏检、稀有类（`redRight` / `greenRight` 各 10–20 样本）模型未学到、demo8 类背景误检（黄三角警示牌、绿色厂房墙）、demo10 类持续稳定的误分类（gantry 绿灯被一致误判）。
 
 已有三条计划各自覆盖一部分失败模式，但**仍有几个清晰的缺口**：
 
@@ -42,7 +42,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 
 ### 0.4 与已有计划的关系
 
-本报告**不是**新计划。计划级别的承诺仍在 [`../planning/`](../planning/) 中。本报告的产出形式：
+本报告**不是**新计划。计划级别的承诺仍在 [`../planning/`](../../docs/planning/) 中。本报告的产出形式：
 
 1. 列出可入选项；
 2. 给出推荐排序；
@@ -54,9 +54,9 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 
 | 计划 | 覆盖维度 | 已落地 / 未落地 |
 |---|---|---|
-| [`development_plan.md`](../planning/development_plan.md) | 主检测器选型（YOLO26 / YOLOv13 / DEIM）、数据集、阶段目标 | R1 完成；R2 等数据 |
-| [`temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) | 时间维度（跨帧）：tracker+EMA、TSM、HMM、AdaEMA、GRU、Transformer、StreamYOLO | tracker+EMA 已落地；其余按 replay 失败模式启动 |
-| [`cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) | 空间维度（同帧）：贝叶斯共现 / CRF / Relation Network | 计划阶段；启动门待 R2 数据 |
+| [`development_plan.md`](../../docs/planning/development_plan.md) | 主检测器选型（YOLO26 / YOLOv13 / DEIM）、数据集、阶段目标 | R1 完成；R2 等数据 |
+| [`temporal_optimization_plan.md`](../../docs/planning/temporal_optimization_plan.md) | 时间维度（跨帧）：tracker+EMA、TSM、HMM、AdaEMA、GRU、Transformer、StreamYOLO | tracker+EMA 已落地；其余按 replay 失败模式启动 |
+| [`cross_detection_reasoning_plan.md`](../../docs/planning/cross_detection_reasoning_plan.md) | 空间维度（同帧）：贝叶斯共现 / CRF / Relation Network | 计划阶段；启动门待 R2 数据 |
 
 **不在三计划范围内的方向**（本报告调研对象）：
 
@@ -318,7 +318,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 - 远离路口 → 抑制 TL 检测（直接拒识），免除 demo8 警示牌等场景的 FP；
 - 路口模板携带"该路口存在哪种灯"（基础朝向 / 是否有左右转）— 进一步过滤极不合理输出。
 
-**文献**：Possatti 2019（HD 地图过滤候选）；Apollo perception 实践。被 [`cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) §5 排除是因为它解决"灯关联"而非"分类消歧"——但**作为门控信号**这条路被完全忽视。
+**文献**：Possatti 2019（HD 地图过滤候选）；Apollo perception 实践。被 [`cross_detection_reasoning_plan.md`](../../docs/planning/cross_detection_reasoning_plan.md) §5 排除是因为它解决"灯关联"而非"分类消歧"——但**作为门控信号**这条路被完全忽视。
 
 **契合痛点**：背景误检（缺口 ④，根治 demo8 类）+ 间接给 SAHI 提供启用时机。
 
@@ -403,7 +403,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 
 **工作量**：~1 周接口设计 + 实施。
 
-**关键观察**：[`cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) 的贝叶斯框架可以**直接吸收 planner-prior**作为先验来源 — 不需要单独写一套实现。同一套 mean-field / CRF 数学，输入换成 P(class | route_intent) 即可。
+**关键观察**：[`cross_detection_reasoning_plan.md`](../../docs/planning/cross_detection_reasoning_plan.md) 的贝叶斯框架可以**直接吸收 planner-prior**作为先验来源 — 不需要单独写一套实现。同一套 mean-field / CRF 数学，输入换成 P(class | route_intent) 即可。
 
 **推荐度**：⭐⭐⭐（**复用 cross-detection 计划框架**；如该计划启动，加个 prior 来源极便宜）。
 
@@ -537,10 +537,10 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 
 | 已有计划 / 提案 | 与本调研的关系 |
 |---|---|
-| [`yolo26_alternatives_survey.md`](yolo26_alternatives_survey.md) | 仅讨论检测器架构选型；本报告补充训练侧 / 推理侧 / 系统侧增强 |
-| [`depth_estimation_feasibility.md`](depth_estimation_feasibility.md) | 深度估计是另一个可选增强方向（已 on hold）；本报告未重复评估 |
-| [`temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) | 仅时间维度；本报告 §3.7 SAHI 提供单帧维度的小目标增强补充 |
-| [`cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) | 仅同帧空间维度；本报告 §4.7 planner-prior 是该框架的先验来源扩展 |
+| [`alt_detector_architectures.md`](alt_detector_architectures.md) | 仅讨论检测器架构选型；本报告补充训练侧 / 推理侧 / 系统侧增强 |
+| [`depth_estimation.md`](depth_estimation.md) | 深度估计是另一个可选增强方向（已 on hold）；本报告未重复评估 |
+| [`temporal_optimization_plan.md`](../../docs/planning/temporal_optimization_plan.md) | 仅时间维度；本报告 §3.7 SAHI 提供单帧维度的小目标增强补充 |
+| [`cross_detection_reasoning_plan.md`](../../docs/planning/cross_detection_reasoning_plan.md) | 仅同帧空间维度；本报告 §4.7 planner-prior 是该框架的先验来源扩展 |
 
 ---
 
@@ -573,7 +573,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 18. ATLAS Traffic Light Dataset, 2024, [arXiv:2504.19722](https://arxiv.org/abs/2504.19722) — pictogram 细粒度标签
 
 ### 项目内部
-19. [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) — R1 实测痛点来源
-20. [`../planning/development_plan.md`](../planning/development_plan.md) — 主路线图
-21. [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) — 时序优化轨道
-22. [`../planning/cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) — 跨检测共现推理
+19. [`../reports/phase_2_round_1_report.md`](../../docs/reports/phase_2_round_1_report.md) — R1 实测痛点来源
+20. [`../planning/development_plan.md`](../../docs/planning/development_plan.md) — 主路线图
+21. [`../planning/temporal_optimization_plan.md`](../../docs/planning/temporal_optimization_plan.md) — 时序优化轨道
+22. [`../planning/cross_detection_reasoning_plan.md`](../../docs/planning/cross_detection_reasoning_plan.md) — 跨检测共现推理

@@ -232,7 +232,7 @@ log p_i'(c) ∝ log p_i(c)                          # 检测器似然
 
 - [ ] C++ 端口（`inference/cpp/src/cooccurrence.cpp` ~150 行）
 - [ ] 端到端 demo 视频对比（开 / 关）
-- [ ] 文档化：`docs/integration/cooccurrence_guide.md`（参照 `tracker_voting_guide.md` 格式）
+- [ ] 文档化：`docs/integration/cooccurrence_guide.md`（参照 `tracker.md` 格式）
 
 ### 2.4 风险
 
@@ -328,7 +328,7 @@ argmax_{c_1, ..., c_K}  Σ_i log p_i(c_i) + Σ_{i<j} log π(c_i, c_j)
 | Plan A（tracker + EMA） | 本计划集成在 EMA 之**前**；不替代、不冲突 |
 | R2 数据采集 SOP | 本计划复用主线连续视频数据；不对采集提额外要求 |
 | 2026-05-15 截止 | 本计划**预期不在 5/15 前启动**——优先级低于主线 + 时序轨道 |
-| 检测增强调研（[`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md)） | §2.2(e) planner-prior / 几何 prior 是该调研 §4.7 的具体落地形式 —— 一旦规划模块在 ROS2 上发布"路径意图"主题，本计划框架可直接吸收（无需新写） |
+| 检测增强调研（[`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md)） | §2.2(e) planner-prior / 几何 prior 是该调研 §4.7 的具体落地形式 —— 一旦规划模块在 ROS2 上发布"路径意图"主题，本计划框架可直接吸收（无需新写） |
 
 ---
 
@@ -392,4 +392,4 @@ R2 自采数据到位
 
 ### 项目内部
 10. [`temporal_optimization_plan.md`](temporal_optimization_plan.md) —— 时序轨道；本计划在其之**后**启动
-11. [`../integration/tracker_voting_guide.md`](../integration/tracker_voting_guide.md) —— Plan A tracker + EMA；本计划在 EMA 之**前**集成
+11. [`../integration/tracker.md`](../integration/tracker.md) —— Plan A tracker + EMA；本计划在 EMA 之**前**集成

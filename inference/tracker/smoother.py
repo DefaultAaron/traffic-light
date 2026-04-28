@@ -5,7 +5,7 @@ objects (xyxy in source-image pixels, single argmax class + score). Output
 is a list of `TrackedDetection` with a persistent `tracking_id` and a
 smoothed per-class probability vector.
 
-Design notes in `docs/integration/tracker_voting_guide.md`.
+Design notes in `docs/integration/tracker.md`.
 """
 
 from __future__ import annotations

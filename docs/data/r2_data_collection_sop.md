@@ -17,7 +17,7 @@
 
 1. **一次采集，多路复用**：不为单一任务定制采集；同一份 ROS 2 bag 同时支持检测训练、replay 评测、时序实验、跨模态预训练。
 2. **Raw 永远保留**：原始连续视频 + 原始 LiDAR 帧不得丢弃。压缩允许，但不得抽帧或裁切。最少留存 6 个月，建议归档保留 ≥24 个月。
-3. **失败先证据后实验**：龙门抖动滤波、Bulb-first 双重标注、NWD/P2 head 等 SOTA 候选项，**不**作为 R2 必备，仅当 replay 暴露对应失败模式时再启动；启动决策依据 §10 + §7.2（抖动）+ [`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md) §3。
+3. **失败先证据后实验**：龙门抖动滤波、Bulb-first 双重标注、NWD/P2 head 等 SOTA 候选项，**不**作为 R2 必备，仅当 replay 暴露对应失败模式时再启动；启动决策依据 §10 + §7.2（抖动）+ [`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md) §3。
 4. **按站点 / 视频切分，不按帧切分**：避免 train / val 时序泄漏（GPT 评审强调）。
 5. **稀有类与硬负样本同等优先**：稀有箭头方向类与背景假阳性（警示牌 / 绿色墙面 / 厂房 LED）在采集阶段就有显式覆盖任务，而不是事后补救。
 6. **可发布性预留**：采集即按可发布标准记录（隐私脱敏链路、授权条款、设备元数据），即便最终不发布，成本也极低。
@@ -552,8 +552,8 @@ Tier 1 点数 < 3 时启用：
 | [`../planning/development_plan.md`](../planning/development_plan.md) §三 R2 | §1, §6（类别）, §10（时间轴） |
 | [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) | §3.3（连续视频要求）, §7.2（抖动诊断 → 滤波启动条件） |
 | [`../planning/cross_detection_reasoning_plan.md`](../planning/cross_detection_reasoning_plan.md) | §6.2 `lane_relevance` + planner-prior 数据基础 |
-| [`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md) | §3.3（hard-negative 主动采集）, §6.3（负样本标注） |
-| [`../proposals/external_contribution_research.md`](../proposals/external_contribution_research.md) | §11（发布预备） |
+| [`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md) | §3.3（hard-negative 主动采集）, §6.3（负样本标注） |
+| [`../../research/contributions/field_gaps_and_contributions.md`](../../research/contributions/field_gaps_and_contributions.md) | §11（发布预备） |
 
 ---
 

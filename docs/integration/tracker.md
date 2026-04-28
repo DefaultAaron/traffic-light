@@ -64,7 +64,7 @@ tests/
 ├── fixtures/tracker/*.json      → 合成序列金标（Python 与 C++ 共享）
 └── test_tracker.py              → 合成序列 + 单元测试（pytest）
 docs/integration/
-└── tracker_voting_guide.md      (本文)
+└── tracker.md      (本文)
 ```
 
 > **说明**：C++ 端未单独拆出 `byte_tracker.cpp` —— Kalman / Hungarian / STrack / BYTETracker 全部藏在 `tracker.cpp` 的匿名命名空间内，只通过 `tl::TrackSmoother` 暴露。依赖仅 OpenCV（`cv::Mat` 用作 Kalman 线性代数）+ STL；没有 Eigen，没有 lapjv，没有 cython_bbox。Mac 开发机可用 `-DTL_BUILD_TRACKER_ONLY=ON` 仅构建 tracker 库 + 单测，跳过 CUDA/TensorRT。
@@ -431,14 +431,14 @@ C++ 端额外烟测（不依赖 fixture）：`reset()` 后 ID 从 1 重开、`nu
 
 - Python：`TrackedDetection.to_ros_msg()` 填 `det.tracking_id = str(self.tracking_id)`
 - C++：在 Orin ROS2 节点的 publisher 层完成同样转换（本仓库暂不落 ROS2 节点）
-- Topic 与 QoS 不变（见 [`ros2_integration_guide.md`](./ros2_integration_guide.md)）
+- Topic 与 QoS 不变（见 [`ros2_contract.md`](./ros2_contract.md)）
 
 ---
 
 ## 参考
 
 - 时序优化集成计划（后续路径）：[`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md)
-- TRT 流水线：[`./trt_pipeline_guide.md`](./trt_pipeline_guide.md)
-- ROS2 集成：[`./ros2_integration_guide.md`](./ros2_integration_guide.md)
+- TRT 流水线：[`./trt_deployment.md`](./trt_deployment.md)
+- ROS2 集成：[`./ros2_contract.md`](./ros2_contract.md)
 - ByteTrack, ECCV 2022: https://arxiv.org/abs/2110.06864
 - ByteTrack-cpp（推荐上游）：https://github.com/Vertical-Beach/ByteTrack-cpp

@@ -5,7 +5,7 @@
 // Wraps a ByteTrack-style association over detections coming out of the TRT
 // pipeline and maintains a per-track EMA class probability vector. Public API
 // is intentionally minimal and matches the Python side 1:1 (same fixtures
-// drive both test suites — see docs/integration/tracker_voting_guide.md §7).
+// drive both test suites — see docs/integration/tracker.md §7).
 //
 // Thread safety: TrackSmoother is NOT thread-safe. It owns the Kalman state
 // of every live track. Construct and call update() on the same thread.

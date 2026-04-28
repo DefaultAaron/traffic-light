@@ -6,7 +6,7 @@
 //
 // Semantic parity with the Python version is enforced by the shared JSON
 // fixtures under tests/fixtures/tracker/. See docs/integration/
-// tracker_voting_guide.md §7 for the test strategy.
+// tracker.md §7 for the test strategy.
 
 #include "tracker.hpp"
 

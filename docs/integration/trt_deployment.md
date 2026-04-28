@@ -138,7 +138,7 @@ YOLO26 的 head 恰好产生这种模式。图内的 `TopK` 是一个 GPU 侧预
 ./build/tl_demo --source /path/to/video.mp4 --model weights/best.engine
 ./build/tl_demo --source 0 --model weights/best.engine --no-show --save out.mp4
 
-# 启用跟踪（flicker mitigation；细节见 ./tracker_voting_guide.md）
+# 启用跟踪（flicker mitigation；细节见 ./tracker.md）
 ./build/tl_demo --source video.mp4 --model best.engine \
     --track --alpha 0.3 --min-hits 3 --track-json runs/out.jsonl
 ```

@@ -107,7 +107,7 @@ Outputs: `runs/detect/yolov13s/`. Weights expected at `weights/yolov13s.pt`.
 
 ## Training — Alternative Track 2: DEIM-D-FINE
 
-Apache-2.0 detector as commercial-license hedge and precision ceiling probe. See [`docs/proposals/yolo26_alternatives_survey.md`](docs/proposals/yolo26_alternatives_survey.md) for rationale and size selection (S + M; N skipped).
+Apache-2.0 detector as commercial-license hedge and precision ceiling probe. See [`research/surveys/alt_detector_architectures.md`](research/surveys/alt_detector_architectures.md) for rationale and size selection (S + M; N skipped).
 
 **Download pretrained COCO checkpoints** to `weights/`:
 
@@ -136,13 +136,13 @@ Target: **NVIDIA Jetson AGX Orin 64GB**. Two equivalent backends under `inferenc
 - **Python** — `inference/demo.py`, quick dev / JSON telemetry
 - **C++** — `inference/cpp/`, production on Orin (Orin-measured: ~25 ms/frame at 1280 FP16)
 
-End-to-end Orin workflow (source sync, environment, CMake upgrade, ONNX head stripping, `trtexec`, run): **[`docs/integration/trt_pipeline_guide.md`](docs/integration/trt_pipeline_guide.md)**.
+End-to-end Orin workflow (source sync, environment, CMake upgrade, ONNX head stripping, `trtexec`, run): **[`docs/integration/trt_deployment.md`](docs/integration/trt_deployment.md)**.
 
-ROS 2 message contract for the planning module: **[`docs/integration/ros2_integration_guide.md`](docs/integration/ros2_integration_guide.md)**.
+ROS 2 message contract for the planning module: **[`docs/integration/ros2_contract.md`](docs/integration/ros2_contract.md)**.
 
 ### Tracker (flicker mitigation)
 
-Both backends accept `--track` to enable ByteTrack + per-track EMA class voting. Python and C++ share JSON fixtures for parity (`tests/fixtures/tracker/`). Design and tuning knobs: **[`docs/integration/tracker_voting_guide.md`](docs/integration/tracker_voting_guide.md)**.
+Both backends accept `--track` to enable ByteTrack + per-track EMA class voting. Python and C++ share JSON fixtures for parity (`tests/fixtures/tracker/`). Design and tuning knobs: **[`docs/integration/tracker.md`](docs/integration/tracker.md)**.
 
 ```bash
 ./inference/cpp/build/tl_demo --source video.mp4 --model best.engine \
@@ -163,9 +163,9 @@ nohup ./scripts/run_demos_all_engines.sh \
 ## Documentation
 
 - [`docs/planning/development_plan.md`](docs/planning/development_plan.md) — candidate models, dataset licensing, milestones
-- [`docs/proposals/yolo26_alternatives_survey.md`](docs/proposals/yolo26_alternatives_survey.md) — YOLOv13 + DEIM-D-FINE rationale and setup
-- [`docs/proposals/detection_enhancement_survey.md`](docs/proposals/detection_enhancement_survey.md) — model + system level enhancement methods beyond the three core plans (training aug, hard-neg mining, KD, SAHI, map-prior, HDR camera, multi-camera, planner-prior)
-- [`docs/proposals/external_contribution_research.md`](docs/proposals/external_contribution_research.md) — external research view: TL field-wide failure modes + public-dataset coverage gaps + contribution candidates from R2 self-collected data (CN-gantry benchmark, TL × barrier joint, hard-condition slice, engineering refs)
+- [`research/surveys/alt_detector_architectures.md`](research/surveys/alt_detector_architectures.md) — YOLOv13 + DEIM-D-FINE rationale and setup
+- [`research/surveys/detection_enhancements.md`](research/surveys/detection_enhancements.md) — model + system level enhancement methods beyond the three core plans (training aug, hard-neg mining, KD, SAHI, map-prior, HDR camera, multi-camera, planner-prior)
+- [`research/contributions/field_gaps_and_contributions.md`](research/contributions/field_gaps_and_contributions.md) — external research view: TL field-wide failure modes + public-dataset coverage gaps + contribution candidates from R2 self-collected data (CN-gantry benchmark, TL × barrier joint, hard-condition slice, engineering refs)
 - [`docs/data/r2_data_collection_sop.md`](docs/data/r2_data_collection_sop.md) — **R2 multimodal data collection + annotation SOP** — dual 8MP cameras (normal + wide) + LiDAR; sync/calibration, site coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics, site-based splits, release prep
 - [`docs/planning/temporal_optimization_plan.md`](docs/planning/temporal_optimization_plan.md) — temporal optimization track (TSM detector-level + post-detector smoothers); R2/R3 optional, parallel to main detector selection
 - [`docs/planning/cross_detection_reasoning_plan.md`](docs/planning/cross_detection_reasoning_plan.md) — same-frame multi-light co-occurrence reasoning (Bayesian post-processing → CRF → Relation Network); R3 candidate, gated on R2 self-collected data validation

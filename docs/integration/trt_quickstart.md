@@ -1,6 +1,6 @@
 # TensorRT × ROS2 集成速查
 
-感知端发布 `vision_msgs/Detection2DArray`，下游节点订阅。完整部署细节见 [`trt_pipeline_guide.md`](./trt_pipeline_guide.md)；完整消息契约与 API 稳定性承诺见 [`ros2_integration_guide.md`](./ros2_integration_guide.md)。
+感知端发布 `vision_msgs/Detection2DArray`，下游节点订阅。完整部署细节见 [`trt_deployment.md`](./trt_deployment.md)；完整消息契约与 API 稳定性承诺见 [`ros2_contract.md`](./ros2_contract.md)。
 
 ---
 
@@ -118,4 +118,4 @@ ament_target_dependencies(your_node rclcpp vision_msgs)
 | 引擎在另一台机器报错 | TRT 引擎不跨 GPU 架构 / TRT 版本，须在目标机重建 |
 | 框位置明显错（全屏大框 / 偏移） | 预处理不一致；参考 `trt_pipeline.cpp` 的 preprocess；`bbox` 已还原到原始像素 |
 | 引擎加载慢（>10 s） | 首次反序列化正常，进程常驻即可 |
-| `tracking_id` 为空字符串 | 感知端未启用 `--track`；跟踪细节见 [`tracker_voting_guide.md`](./tracker_voting_guide.md) |
+| `tracking_id` 为空字符串 | 感知端未启用 `--track`；跟踪细节见 [`tracker.md`](./tracker.md) |

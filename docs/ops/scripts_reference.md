@@ -258,7 +258,7 @@ demo footage is too clean to exercise the reduction path.
 ## Network / ops
 
 These are workarounds for an unstable campus network — see
-[`tailscale_campus_network_issue.md`](tailscale_campus_network_issue.md)
+[`tailscale_runbook.md`](tailscale_runbook.md)
 for the underlying incident.
 
 ### `setup_reverse_tunnel.sh`

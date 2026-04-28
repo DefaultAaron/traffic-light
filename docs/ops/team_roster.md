@@ -93,7 +93,7 @@
 | **何时调用** | 在做出结构性决定之前：单一联合 TL+barrier 模型、检测后时序轨道（TSM 还是 GRU 还是 ByteTrack+EMA）、决策规则结构变更、与 AGV 栈的集成边界 |
 | **预期输入** | 拟议设计（文字 + 图示如有）、现有约束、已考虑过的备选方案 |
 | **预期输出** | 评判结论 + 2-3 个备选设计排名 + 风险点 + 建议的决策准则 |
-| **项目关联文件** | `docs/proposals/`, 方法论计划, R2 范围扩展记忆 |
+| **项目关联文件** | `research/surveys/`, `research/contributions/`, 方法论计划, R2 范围扩展记忆 |
 
 ### B2. superpowers:code-reviewer（已安装，无需新装）
 
@@ -201,7 +201,7 @@
 | **何时调用** | 考虑某架构选择 → "前人怎么做？"；设计消融 → "覆盖完整吗？"；写论文章节 → "起草并附引用"；投稿前 → "引用是否完整" |
 | **预期输入** | 主题 / 问题 / 草稿章节 + 拟投会刊风格（如 CVPR vs IROS vs IV） |
 | **预期输出** | 加注释的参考文献（尽量带 BibTeX）、带行内引用的章节草稿、消融表批评、缺口分析 |
-| **项目关联文件** | `docs/proposals/yolo26_alternatives_survey.md`（既有的调研体例 — paper-researcher 沿用）；未来的 `docs/paper/` |
+| **项目关联文件** | `research/surveys/alt_detector_architectures.md`（既有的调研体例 — paper-researcher 沿用）；未来的 `docs/paper/` |
 | **关键约束** | paper-researcher 是 **协作伙伴**，不是预言机。它读不到没给它的论文；它必须引用 **具体的论文**（带年份 + 会刊），不能编造结果。该角色最大的风险是幻觉，需要在提示词中明确约束。 |
 | **写权限** | **无**。frontmatter 仅授予 `Read` / `WebSearch` / `WebFetch` / `Glob` / `Grep`，未授予 `Write` / `Edit` / `Bash`。所有产出以响应文本形式返回，由主会话决定是否落盘以及落盘到哪个路径。这是工具网关层的强制约束，不是 prose 层面的"请勿"。 |
 

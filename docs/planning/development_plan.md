@@ -27,7 +27,7 @@
 - **YOLOv13-s**（R1 备选）：HyperACE / DSC3k2 为 YOLO26 的增量改动，作为"YOLO26 出 bug 时的快速替换"。与 YOLO26 同属 AGPL-3.0，替换不改变合规策略。集成风险最低。
 - **DEIM-D-FINE-S / M**（R1 备选）：Apache-2.0，从根本上规避 Ultralytics 企业许可费用；FDR（Fine-grained Distribution Refinement）回归头对交通灯这种 bbox 宽度 < 3% 的目标有 paper 级优势。部署前提是在 Orin JetPack 5.1 / TRT 8.5 上从 OSS 构建 `MultiscaleDeformableAttnPlugin_TRT`（一次性投入，~1 天；见 §五.4）。DEIM-N 按性价比评估不训练。
 
-选型依据详见 [`../proposals/yolo26_alternatives_survey.md`](../proposals/yolo26_alternatives_survey.md)。三条 R1 轨道共用同一合并数据集与 80/20 切分，指标可直接横向对比。
+选型依据详见 [`../../research/surveys/alt_detector_architectures.md`](../../research/surveys/alt_detector_architectures.md)。三条 R1 轨道共用同一合并数据集与 80/20 切分，指标可直接横向对比。
 
 ---
 
@@ -123,7 +123,7 @@
 
 **范围（2026-04-21 PM 例会锁定）**：R1（7 类）基础上扩展为**联合检测模型**，同时输出交通灯与道路栏杆；**下限 10 类锁定**，上限 14 类取决于现场采集结果与 PM 增补清单。
 
-**R2 训练增强**（基于 R1 实测痛点 + 增强调研——详见 [`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md)）：
+**R2 训练增强**（基于 R1 实测痛点 + 增强调研——详见 [`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md)）：
 
 | 增强 | 目标痛点 | 说明 |
 |---|---|---|
@@ -167,7 +167,7 @@ R2 阶段开发分为**两条独立轨道**，互不阻塞：
 | 边缘类别跳变 / 非法状态转移 | **Post-detector smoother** | **HMM**（< 1 天，TL 状态本身接近一阶 Markov） | < 1 天起，阶梯升级到 GRU 1.5–2 周 |
 | 同时存在 | **§1 + §2 组合** | TSM 在底层 + HMM/GRU 在上层 | 串联工作量 |
 
-**Plan A（tracker + EMA）已在 R1 落地**（见 [`../integration/tracker_voting_guide.md`](../integration/tracker_voting_guide.md)），是 post-detector 路径的基线。
+**Plan A（tracker + EMA）已在 R1 落地**（见 [`../integration/tracker.md`](../integration/tracker.md)），是 post-detector 路径的基线。
 
 数据准备、训练流程、ONNX/TRT 导出、ROS2 状态管理、决策门细节见 [`temporal_optimization_plan.md`](temporal_optimization_plan.md)。
 
@@ -175,7 +175,7 @@ R2 阶段开发分为**两条独立轨道**，互不阻塞：
 
 ### R2 推理 / 集成增强（与 Track 1 训练并行，不阻塞主线）
 
-来自 [`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md) 的推荐项。按 5/15 截止前必须 / 截止后启动分组：
+来自 [`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md) 的推荐项。按 5/15 截止前必须 / 截止后启动分组：
 
 **5/15 前必须落地**：
 
@@ -296,5 +296,5 @@ R2 阶段开发分为**两条独立轨道**，互不阻塞：
 | R2-集成增强 | 地图先验门控（5/15 前） | ⏳ 与定位团队对齐 GPS / OSM / ROS2 信号；门控逻辑 ~1 周 |
 | 5/15-实车 | 实车测试通过 | ⏳ 截止日期 2026-05-15 |
 | R2-时序优化（可选） | TSM detector-level 或 post-detector 平滑器 | ⏳ 仅在 baseline replay 暴露具体失败模式后启动；详见 [`temporal_optimization_plan.md`](temporal_optimization_plan.md) |
-| R2-推理增强（可选） | SAHI 切片（远距小目标）/ INT8 QAT（预算解放）/ 自适应推理频率 | ⏳ 5/15 后 replay 驱动启动；详见 [`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md) §3.7 / §3.10 / §4.5 |
-| 生产化 | 商用许可 + 数据 + 部署 + 主动学习闭环 | 未启动 — 需 Ultralytics 企业许可或 Apache-2.0 替代；商用授权数据集；主动学习闭环作为长期 ROI 路径（见 [`../proposals/detection_enhancement_survey.md`](../proposals/detection_enhancement_survey.md) §4.3）|
+| R2-推理增强（可选） | SAHI 切片（远距小目标）/ INT8 QAT（预算解放）/ 自适应推理频率 | ⏳ 5/15 后 replay 驱动启动；详见 [`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md) §3.7 / §3.10 / §4.5 |
+| 生产化 | 商用许可 + 数据 + 部署 + 主动学习闭环 | 未启动 — 需 Ultralytics 企业许可或 Apache-2.0 替代；商用授权数据集；主动学习闭环作为长期 ROI 路径（见 [`../../research/surveys/detection_enhancements.md`](../../research/surveys/detection_enhancements.md) §4.3）|

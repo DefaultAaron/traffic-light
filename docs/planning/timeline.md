@@ -62,7 +62,7 @@
 | `main.py` 更新 | 新增 `infer` 子命令：`--source`、`--model`、`--imgsz`、`--json` |
 | ROS2 集成接口 | `Detection.to_ros_msg()` → `vision_msgs/Detection2D`，多目标输出 |
 | 高分辨率适配 | 默认 `imgsz=1280`，适配 8MP 摄像头（3840×2160） |
-| 规划组对接文档 | [`../integration/ros2_integration_guide.md`](../integration/ros2_integration_guide.md)：节点模板 + 订阅示例 |
+| 规划组对接文档 | [`../integration/ros2_contract.md`](../integration/ros2_contract.md)：节点模板 + 订阅示例 |
 
 **数据采集（4/17 开始，与流水线工作并行）**
 - 规划目标路线，覆盖多样化红绿灯类型（重点：箭头灯）

@@ -7,9 +7,11 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 | [`planning/`](planning/) | Living plans and schedule — what we're doing and when | Updated frequently |
 | [`data/`](data/) | Dataset design, conversion, annotation | Updated per data round |
 | [`reports/`](reports/) | Frozen snapshots at end of each phase / round | Append-only after phase end |
-| [`proposals/`](proposals/) | Research / feasibility investigations | Revisited if / when promoted to a plan |
 | [`integration/`](integration/) | External-facing contracts: ROS 2 messages, TRT pipeline | API-stable, revise only on breaking changes |
-| [`ops/`](ops/) | Operations: scripts reference, network workarounds | Updated when scripts/tooling change |
+| [`ops/`](ops/) | Operations: scripts reference, team roster, runbooks | Updated when scripts/tooling change |
+| [`templates/`](templates/) | Shared per-round / per-deliverable shells | Stable; bump version when shape changes |
+
+> Academic / paper-track material lives **outside** `docs/` under [`../research/`](../research/) — surveys, contribution candidates, feasibility studies. `docs/` is reserved for project execution; `research/` is reserved for paper writing source material.
 
 ---
 
@@ -28,8 +30,8 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 | File | Contents |
 |---|---|
 | [`class_distribution.md`](data/class_distribution.md) | R1 7-class sample counts per dataset; R2 scope-change banner |
-| [`data_conversion_plan.md`](data/data_conversion_plan.md) | S2TLD / BSTLD / LISA → unified YOLO format conversion |
-| [`annotation_tool_guide.md`](data/annotation_tool_guide.md) | How to use the project's XML review / edit tools |
+| [`data_conversion.md`](data/data_conversion.md) | S2TLD / BSTLD / LISA → unified YOLO format conversion |
+| [`annotation_tool.md`](data/annotation_tool.md) | How to use the project's XML review / edit tools |
 | [`r2_data_collection_sop.md`](data/r2_data_collection_sop.md) | **R2 multimodal data collection + annotation SOP** — dual 8MP cameras (normal + wide) + LiDAR; sync, calibration, site/time coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics + cross-modal hard-neg mining, site-based splits, release prep |
 
 ## reports/
@@ -41,27 +43,26 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 | [`phase_2_round_1_report.md`](reports/phase_2_round_1_report.md) | R1 7-class: YOLO26 n/s/m training + Orin deployment (25 ms/frame @ 1280 FP16) + demo diagnosis (engine imgsz + xyxy postprocess fixes) + alt-track launch + R2 scope lock (10–14 classes) — **living doc** |
 | [`phase_2_round_1_results.md`](reports/phase_2_round_1_results.md) | Raw eval tables for R1 (YOLO26 n/s/m populated; YOLOv13-s and DEIM-D-FINE-S/M pending) |
 
-## proposals/
-
-| File | Status |
-|---|---|
-| [`yolo26_alternatives_survey.md`](proposals/yolo26_alternatives_survey.md) | **In training** — YOLOv13-s + DEIM-D-FINE-S/M as R1 alt tracks (since 2026-04-22) |
-| [`detection_enhancement_survey.md`](proposals/detection_enhancement_survey.md) | **Research** (2026-04-27) — model + system level enhancements beyond the three core plans (training augmentation, hard-neg mining, KD, SAHI, map-prior gating, HDR camera, multi-camera, planner-prior). Recommended items already integrated into the three planning docs |
-| [`external_contribution_research.md`](proposals/external_contribution_research.md) | **Research** (2026-04-27) — external view: TL-detection field-wide failure modes + public-dataset coverage gaps + this project's contribution candidates (CN-gantry benchmark, TL × barrier joint, hard-condition slice, engineering refs). Identifies "preserve contribution space" actions for R2 SOP without main-line cost |
-| [`depth_estimation_feasibility.md`](proposals/depth_estimation_feasibility.md) | **On hold**, awaiting team leader approval |
-
 ## integration/
 
 | File | Contents |
 |---|---|
-| [`ros2_integration_guide.md`](integration/ros2_integration_guide.md) | `Detection2DArray` contract, topic name, class_id strings, for planning-module consumers |
+| [`ros2_contract.md`](integration/ros2_contract.md) | `Detection2DArray` contract, topic name, class_id strings, for planning-module consumers |
 | [`trt_quickstart.md`](integration/trt_quickstart.md) | **Start here if you're integrating** — minimal Orin setup, three integration modes, common gotchas |
-| [`trt_pipeline_guide.md`](integration/trt_pipeline_guide.md) | End-to-end Orin deployment: sync → environment → CMake → build → ONNX strip → trtexec → run |
-| [`tracker_voting_guide.md`](integration/tracker_voting_guide.md) | ByteTrack + per-track EMA voting (Python + C++ parity); landed as flicker P0 mitigation |
+| [`trt_deployment.md`](integration/trt_deployment.md) | End-to-end Orin deployment: sync → environment → CMake → build → ONNX strip → trtexec → run |
+| [`tracker.md`](integration/tracker.md) | ByteTrack + per-track EMA voting (Python + C++ parity); landed as flicker P0 mitigation |
 
 ## ops/
 
 | File | Contents |
 |---|---|
 | [`scripts_reference.md`](ops/scripts_reference.md) | Index + flag reference for everything under `scripts/` (demo sweep, training, dataset prep, model export, flicker validation, network workarounds) |
-| [`tailscale_campus_network_issue.md`](ops/tailscale_campus_network_issue.md) | Incident write-up: control-plane long-poll failures on the campus network, and which `scripts/tailscale_*.sh` workaround applies |
+| [`team_roster.md`](ops/team_roster.md) | 12-specialist roster (4 clusters) + dispatch protocol; read before delegating non-trivial work |
+| [`tailscale_runbook.md`](ops/tailscale_runbook.md) | Quick runbook: campus-network long-poll failures + which `scripts/tailscale_*.sh` workaround applies |
+
+---
+
+## See also
+
+- [`../research/`](../research/) — surveys, contribution candidates, feasibility studies (paper-track)
+- [`../README.md`](../README.md) — top-level project overview

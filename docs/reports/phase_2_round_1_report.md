@@ -84,7 +84,7 @@
 
 ### R1 备选架构（并行训练）
 
-为降低单一架构风险 + 探明精度上限，R1 期间并行训练两条备选轨道。选型依据与环境配置见 [`../proposals/yolo26_alternatives_survey.md`](../proposals/yolo26_alternatives_survey.md)。
+为降低单一架构风险 + 探明精度上限，R1 期间并行训练两条备选轨道。选型依据与环境配置见 [`../../research/surveys/alt_detector_architectures.md`](../../research/surveys/alt_detector_architectures.md)。
 
 | 模型 | 许可证 | 角色 | 训练轮次 | 最佳 mAP50 | 最佳 mAP50-95 | Precision | Recall | 状态 |
 |------|-------|------|---------|-----------|--------------|-----------|--------|------|
@@ -95,7 +95,7 @@
 **三条轨道的分工**：
 - **主力（YOLO26 s/m）**：部署路径最成熟，Orin TRT 管线已打通 — 即便备选轨道胜出，数据处理 / 部署流程可复用。
 - **YOLOv13-s**：`HyperACE` / `DSC3k2` 自定义模块相对 YOLO26 为增量改动，作为"YOLO26 出 bug 时的快速替换"。与 YOLO26 同属 AGPL，替换不改变合规策略。
-- **DEIM-D-FINE-S/M**：Apache-2.0 从根本上解决 AGPL 商用问题；同时 D-FINE 的 FDR（Fine-grained Distribution Refinement）回归头在小目标定位上有 paper 级优势，对交通灯这种 bbox 宽度 < 3% 的目标理论收益大。N 规格按 `yolo26_alternatives_survey.md §六` 评估不具备数据性价比，R1 不训。
+- **DEIM-D-FINE-S/M**：Apache-2.0 从根本上解决 AGPL 商用问题；同时 D-FINE 的 FDR（Fine-grained Distribution Refinement）回归头在小目标定位上有 paper 级优势，对交通灯这种 bbox 宽度 < 3% 的目标理论收益大。N 规格按 `research/surveys/alt_detector_architectures.md §六` 评估不具备数据性价比，R1 不训。
 
 **评估口径统一**：三条轨道共用同一合并数据集 `data/merged/`（YOLO 格式 + COCO JSON 双出）、同一 80/20 分层切分、同一 7 类定义 — 所有指标可直接横向对比。YOLOv13 走独立 venv（`yolov13/.venv`），DEIM 走主 `uv` 的 `--extra deim` 可选组，均不污染主力训练环境。
 
@@ -262,7 +262,7 @@ R1 首次完成端到端部署链路：训练 → ONNX 导出 → Head 裁剪（
 - `imgsz=1280` → ~25 ms/帧（~39 FPS）
 - `imgsz=1536` → ~28 ms/帧（~34.5 FPS）
 
-均远低于 50 ms 预算上限。部署和引擎构建的全流程见 [`../integration/trt_pipeline_guide.md`](../integration/trt_pipeline_guide.md)。
+均远低于 50 ms 预算上限。部署和引擎构建的全流程见 [`../integration/trt_deployment.md`](../integration/trt_deployment.md)。
 
 ---
 
@@ -419,7 +419,7 @@ R2 启动前只需 PM 提供**最终类别清单**，以上 6 处改动 <0.5 天
 | Demo 回放 | `runs/diagnose/{n,s}-pt-{640,1280,1536}/demo.mp4`、`demo/s-r1-{1280,1536}.mp4` | 诊断用；批量扫描脚本 `scripts/run_demos_all_engines.sh` |
 | 训练指标 | `runs/detect/yolo26{n,s,m}-r1/results.csv` | 逐轮记录 |
 | 跟踪库 | `inference/tracker/*.py`、`inference/cpp/{include,src}/tracker.{hpp,cpp}` | Python + C++ 两端；fixtures 驱动的 parity 单测 |
-| 部署文档 | [`../integration/trt_pipeline_guide.md`](../integration/trt_pipeline_guide.md)、[`../integration/tracker_voting_guide.md`](../integration/tracker_voting_guide.md) | |
+| 部署文档 | [`../integration/trt_deployment.md`](../integration/trt_deployment.md)、[`../integration/tracker.md`](../integration/tracker.md) | |
 
 ---
 
@@ -433,7 +433,7 @@ R2 启动前只需 PM 提供**最终类别清单**，以上 6 处改动 <0.5 天
 | 2026-04-21 | Zhengri Wu | Orin 端延迟实测：s-r1 @ 1280 → ~25 ms/帧，@ 1536 → ~28 ms/帧，均远低于 50 ms 预算。R2 锁定 `imgsz=1280` 训练，1536 作为 OOD 诊断备选 |
 | 2026-04-21 | Zhengri Wu | R2 范围扩展：PM 确认交通灯 +2 类（`forwardGreen` / `forwardRed`），总交通灯最少 9 类、最多 12 类；栏杆 MVP 单类 `barrier`，最佳实践 `armOn` / `armOff`。联合模型总 `nc` 范围 **10–14** |
 | 2026-04-22 | Zhengri Wu | YOLO26m-r1 训练完成：72 轮早停，best@21 mAP50=0.869 / mAP50-95=0.635 / P=0.934 / R=0.712。相对 s-r1 提升有限（+2.0 / +2.7 pp），Orin 部署仍首选 s |
-| 2026-04-22 | Zhengri Wu | R1 范围扩展：并行训练 YOLOv13-s（AGPL 低风险对照）+ DEIM-D-FINE-S/M（Apache-2.0 商用备选 + 精度上限）。选型依据 `yolo26_alternatives_survey.md`；DEIM-N 按性价比评估不训练。三轨同数据、同切分，指标可直接横向对比。R1 决策点写入 §R1 备选架构 |
+| 2026-04-22 | Zhengri Wu | R1 范围扩展：并行训练 YOLOv13-s（AGPL 低风险对照）+ DEIM-D-FINE-S/M（Apache-2.0 商用备选 + 精度上限）。选型依据 `research/surveys/alt_detector_architectures.md`；DEIM-N 按性价比评估不训练。三轨同数据、同切分，指标可直接横向对比。R1 决策点写入 §R1 备选架构 |
 | 2026-04-23 | Zhengri Wu | DEIM-S/M 训练配置修正：`deim_hgnetv2_{s,m}_traffic_light.yml` 显式覆盖 `train_dataloader.dataset.transforms.ops`，剔除 `base/dataloader.yml` 继承的 `RandomHorizontalFlip`（否则 `redLeft↔redRight` / `greenLeft↔greenRight` 语义反转）。Mosaic / 光学 / IoU-crop / mixup 保留，`stop_epoch` 调度不变。优化器 / LR / 调度器未调整 — 已按单卡 4090 + COCO fine-tune 正确缩放 |
 | 2026-04-26 | Zhengri Wu | YOLOv13-s 训练完成：100/100 epoch 全程跑完未触发早停，best mAP50=0.815 / mAP50-95=0.580 / P=0.836 / R=0.767。对比 YOLO26s-r1 **mAP50 低 3.4 pp / mAP50-95 低 2.8 pp / Recall 高 9.8 pp / Precision 低 9.4 pp** — 未达决策规则 2 的 +3 pp 切换阈值，**主力维持 YOLO26s**。但 YOLOv13-s 是唯一在 greenRight 类有非零召回（R=0.655）的模型 — 留作监控组，候选"宁可误报不漏检"安全策略下的备选。新增 §R1 跨架构综合分析 与 §Demo 视频实际表现观察 两节，整合训练曲线 / 混淆矩阵 / 逐类 PR / demo 输出文件层面的所有 R1 证据 |
 | 2026-04-26 | Zhengri Wu | Demo 视频人工视检（s-r1 / m-r1）：对 demo{1..15}.mp4 抽 9 帧 montage + demo4/10/12/15 抽 8 帧 0.25s 突击 + demo8/10/11/13 加 m-r1 同时间戳对照。结论：(1) 漏检主因为远距离 + 弱光 / 逆光 + 非正面朝向，s/m 均无能为力；唯一例外是 demo10 横向龙门，m 显著优于 s；(2) 误检分两类——demo10 / 15 是稳定的类别 / 语义偏置（属模型 bias），demo8 警示三角 / 厂房绿墙是背景假阳（s 严重，m 大幅缓解但未根除）；(3) 稳定性：单体大目标稳定，遮挡恢复 ≤ 1 帧；持续误分类是"稳定地错误"；小目标抖动严重，需 tracker + 多帧投票（与 temporal encoder deferred 决策一致）。**部署仍选 s** — m 仅在特定场景有提升，整体不抵 1.5× 时延代价。视检产物缓存于 `/tmp/demo_inspect/`，关键样本应在 R2 启动时提取为 `data/r2_hard_examples/` 永久回灌 |
