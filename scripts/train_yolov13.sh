@@ -55,8 +55,29 @@ source "$ROOT/yolov13/.venv/bin/activate"
 
 WEIGHTS="$ROOT/weights/yolov13${SIZE}.pt"
 DATA="$ROOT/data/traffic_light.yaml"
+SEED="${SEED:-0}"        # override with: SEED=42 scripts/train_yolov13.sh s
+RUN_NAME="yolov13${SIZE}"
+PROJECT_DIR="$ROOT/runs/detect"
 
-# YOLOv13 uses stock Ultralytics CLI conventions via its fork.
+# Predict the dir Ultralytics will pick (it auto-increments on conflict:
+# yolov13s, yolov13s2, yolov13s3, …) so we can pre-write SEED.txt BEFORE
+# training. Markers written at training END vanish on interrupted runs.
+PREDICTED_NAME="$RUN_NAME"
+if [[ -d "$PROJECT_DIR/$RUN_NAME" ]]; then
+    n=2
+    while [[ -d "$PROJECT_DIR/${RUN_NAME}${n}" ]]; do
+        n=$((n+1))
+    done
+    PREDICTED_NAME="${RUN_NAME}${n}"
+fi
+RUN_DIR="$PROJECT_DIR/$PREDICTED_NAME"
+mkdir -p "$RUN_DIR"
+echo "$SEED" > "$RUN_DIR/SEED.txt"
+echo "pre-created $RUN_DIR with SEED.txt (seed=$SEED)"
+
+# exist_ok=True tells Ultralytics not to auto-increment again — write into the
+# dir we just prepared. `exec` replaces the shell, so yolo's exit code IS the
+# script's exit code (no risk of trailing commands masking a failed training).
 exec yolo train \
     model="$WEIGHTS" \
     data="$DATA" \
@@ -66,6 +87,8 @@ exec yolo train \
     flipud=0.0 \
     fliplr=0.0 \
     patience=20 \
-    project="$ROOT/runs/detect" \
-    name="yolov13${SIZE}" \
+    seed="$SEED" \
+    project="$PROJECT_DIR" \
+    name="$PREDICTED_NAME" \
+    exist_ok=True \
     "$@"

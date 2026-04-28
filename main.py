@@ -30,6 +30,30 @@ def build_model(config: dict):
         return YOLO(model_path)
 
 
+def _write_seed_marker(model, seed: int) -> None:
+    """Write SEED.txt next to args.yaml in the run directory.
+
+    Ultralytics already writes args.yaml; SEED.txt makes the seed prominent and
+    decouples reproducibility-checking from YAML parsing.
+    """
+    save_dir = getattr(getattr(model, "trainer", None), "save_dir", None)
+    if save_dir is None:
+        return
+    Path(save_dir, "SEED.txt").write_text(f"{seed}\n")
+
+
+def _register_seed_marker(model, seed: int) -> None:
+    """Register a callback so SEED.txt is written at training start, not after.
+
+    A run dir created at start survives interrupted training; a marker written
+    only at end vanishes whenever training crashes.
+    """
+    def _cb(trainer):
+        Path(trainer.save_dir).mkdir(parents=True, exist_ok=True)
+        Path(trainer.save_dir, "SEED.txt").write_text(f"{seed}\n")
+    model.add_callback("on_pretrain_routine_start", _cb)
+
+
 def train(args):
     if args.resume:
         ckpt = Path(args.resume)
@@ -37,6 +61,10 @@ def train(args):
             raise FileNotFoundError(f"Resume checkpoint not found: {ckpt}")
         model_cls = RTDETR if "rtdetr" in str(ckpt).lower() else YOLO
         model = model_cls(str(ckpt))
+        # Resume preserves the original run dir + its existing SEED.txt /
+        # args.yaml. Do NOT register or write a SEED marker — args.seed here
+        # is the CLI default (0), not the seed the original run used, so
+        # overwriting would corrupt the reproducibility metadata.
         model.train(resume=True)
         return
 
@@ -52,10 +80,13 @@ def train(args):
         config["device"] = args.device
     if args.imgsz:
         config["imgsz"] = args.imgsz
+    config["seed"] = args.seed
 
     model = build_model(config)
     config.pop("model")  # already loaded, don't pass twice
+    _register_seed_marker(model, args.seed)
     model.train(**config)
+    _write_seed_marker(model, args.seed)
 
 
 def val(args):
@@ -164,10 +195,13 @@ def train_all(args):
             config["device"] = args.device
         if args.imgsz:
             config["imgsz"] = args.imgsz
+        config["seed"] = args.seed
 
         model = build_model(config)
         config.pop("model")
+        _register_seed_marker(model, args.seed)
         model.train(**config)
+        _write_seed_marker(model, args.seed)
 
 
 def main():
@@ -184,6 +218,8 @@ def main():
     p_train.add_argument("--device", type=str, help="e.g. 0, cpu, mps")
     p_train.add_argument("--resume", type=str, metavar="CKPT",
                          help="Resume from checkpoint (e.g. runs/yolo26n/weights/last.pt)")
+    p_train.add_argument("--seed", type=int, default=0,
+                         help="Random seed for reproducibility (default: 0)")
     p_train.set_defaults(func=train)
 
     # train-all
@@ -193,6 +229,8 @@ def main():
     p_all.add_argument("--batch", type=int)
     p_all.add_argument("--imgsz", type=int, help="Override training image size (default: config value)")
     p_all.add_argument("--device", type=str)
+    p_all.add_argument("--seed", type=int, default=0,
+                       help="Random seed for reproducibility (default: 0)")
     p_all.set_defaults(func=train_all)
 
     # val
