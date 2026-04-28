@@ -3,8 +3,16 @@
 #
 # Goal: scope graphify to first-party project signal only —
 #   main.py, configs/, scripts/, inference/, tests/, docs/,
-#   pyproject.toml, README.md, CLAUDE.md, AGENTS.md, GEMINI.md
+#   pyproject.toml, README.md
 # Everything below is third-party, binary, generated, or dataset noise.
+
+# ── agent-tool configs (per-machine local context, mirror .gitignore) ─
+.claude
+.codex
+.gemini
+CLAUDE.md
+AGENTS.md
+GEMINI.md
 
 # ── third-party forks (vendored, not first-party code) ────────────────
 DEIM
