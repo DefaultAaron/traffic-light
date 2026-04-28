@@ -63,6 +63,45 @@ if [[ ! -x "$TL_DEMO" ]]; then
     exit 1
 fi
 
+# In-flight target paths: the trap below removes these on SIGINT/SIGTERM so a
+# signal-killed tl_demo can't leave a truncated .mp4 (which the default
+# SKIP_EXIST=1 would later mistake for a finished run). Set right before we
+# launch tl_demo, cleared right after it returns.
+CURRENT_OUT=""
+CURRENT_TRACK_JSON=""
+
+on_signal() {
+    local sig=$1
+    if [[ -n "$CURRENT_OUT" ]]; then
+        echo "  [signal:$sig] removing in-flight $CURRENT_OUT" >&2
+        rm -f "$CURRENT_OUT"
+        if [[ -n "$CURRENT_TRACK_JSON" ]]; then
+            rm -f "$CURRENT_TRACK_JSON"
+        fi
+    fi
+    # Re-raise the signal so the parent shell sees the standard exit status
+    # (130 for INT, 143 for TERM) instead of an arbitrary numeric `exit`.
+    trap - INT TERM
+    kill -s "$sig" $$
+}
+trap 'on_signal INT'  INT
+trap 'on_signal TERM' TERM
+
+# Skip predicate: when TRACK=1 && SAVE_TRACK_JSON=1, both the .mp4 AND the
+# companion .tracks.jsonl must be present and non-empty. Skipping on .mp4
+# alone would silently drop the JSON when an earlier sweep ran without
+# SAVE_TRACK_JSON=1 — the rerun must converge to the advertised state.
+should_skip() {
+    local mp4=$1
+    local trk=$2
+    [[ "$SKIP_EXIST" != "1" ]] && return 1
+    [[ -s "$mp4" ]] || return 1
+    if [[ "$TRACK" == "1" && "$SAVE_TRACK_JSON" == "1" ]]; then
+        [[ -s "$trk" ]] || return 1
+    fi
+    return 0
+}
+
 # Engine resolution: filename-based — `*1536* → 1536`, `*1280* → 1280`, else 640.
 imgsz_for() {
     local name=$1
@@ -133,7 +172,7 @@ for run_path in "${runs[@]}"; do
             track_json_path="${out%.mp4}.tracks.jsonl"
             total=$((total + 1))
 
-            if [[ "$SKIP_EXIST" == "1" && -s "$out" ]]; then
+            if should_skip "$out" "$track_json_path"; then
                 echo "  [skip] $out (already exists)"
                 skipped=$((skipped + 1))
                 continue
@@ -167,6 +206,15 @@ for run_path in "${runs[@]}"; do
             fi
 
             echo "  -> $demo_name"
+            # Mark the in-flight target so the INT/TERM trap can clean up if
+            # the user Ctrl+C's mid-write. Only the .tracks.jsonl path is
+            # tracked when we actually requested one (TRACK=1 && SAVE_TRACK_JSON=1).
+            CURRENT_OUT="$out"
+            if [[ "$TRACK" == "1" && "$SAVE_TRACK_JSON" == "1" ]]; then
+                CURRENT_TRACK_JSON="$track_json_path"
+            else
+                CURRENT_TRACK_JSON=""
+            fi
             if "${cmd[@]}"; then
                 done_count=$((done_count + 1))
             else
@@ -176,6 +224,8 @@ for run_path in "${runs[@]}"; do
                 # Remove a partial/empty output so a re-run picks it up cleanly.
                 [[ -f "$out" && ! -s "$out" ]] && rm -f "$out"
             fi
+            CURRENT_OUT=""
+            CURRENT_TRACK_JSON=""
         done
     done
 done

@@ -122,7 +122,7 @@
 
 ---
 
-## 集群 C — Codex 反对者（3 名包装专家）
+## 集群 C — Codex 反对者 + PM 分解器（4 名包装专家）
 
 来自 codex 插件（GPT 系列模型）的对抗式第二意见。它们的职责是 **质疑** 计划、
 报告、代码评审，对冲主会话的确认偏误。每位都是对 codex-rescue 运行时的薄包装，
@@ -158,21 +158,37 @@
 | **预期输出** | 按章节的批评：claim → evidence-on-disk reference → counter-evidence → verdict；标注 "无依据" 段落 |
 | **项目关联文件** | `docs/reports/phase_2_round_1_report.md`（既有样例） |
 
-### C3. codex-review-conflictor
+### C3. codex-review-conflictor（含脚本评审）
 
 | | |
 |---|---|
 | **来源** | 新建 — 包装 codex-rescue 运行时 |
 | **领域** | 关键变更的代码评审第二意见 |
 | **职责** | 抓出 `code-reviewer`（B2）漏掉的问题；起到决断 / 复核作用 |
-| **何时调用** | B2 完成评审后，如果变更涉及：后处理（xyxy decode、NMS）、追踪器集成（ByteTrack + EMA voting）、决策规则应用逻辑、hook 网关逻辑 |
+| **何时调用** | B2 完成评审后，如果变更涉及：后处理（xyxy decode、NMS）、追踪器集成（ByteTrack + EMA voting）、决策规则应用逻辑、hook 网关逻辑、**以及 `scripts/` 下的训练 wrapper / demo sweep / 脚本合并**（2026-04-28 起明确入域）|
 | **预期输入** | diff + B2 的评审发现 + 复现或测试用例 |
 | **预期输出** | 独立结论（同意 / 不同意 / 补充发现）+ 具体例子 |
 | **项目关联文件** | 同 B2；尤其是 inference + tracker 代码路径 |
 
+### C4. codex-pm-planner（新建，2026-04-28）
+
+| | |
+|---|---|
+| **来源** | 新建自定义 agent — `.claude/agents/codex-pm-planner.md` |
+| **领域** | PM 侧的请求分解 — 把用户原始请求转换为"专家管线"调度方案 |
+| **职责** | 在主会话碰任何团队成员之前，读取请求 + 项目上下文（CLAUDE.md / team_roster / 当前 plan / `git log`），输出结构化方案：目标 / 约束 / 证据收集 / 调度顺序 / 对抗回路触发点 / 范围围栏 / 验收门 |
+| **何时调用** | 非平凡请求触发 ≥2 个专家域 / 单域但高利害（训练、导出、推理 / 后处理 / tracker 改动、hook gating、决策规则改动）/ 含模糊范围词（"清理"、"重构"、"审查全部"）/ 触发对抗回路（plan → C1；report → C2；critical code → B2 + C3）|
+| **何时跳过** | 平凡请求（commit / 状态查询 / 单文件明确改动）；用户已显式指定 agent 与顺序；纯信息查询无落盘副作用 |
+| **预期输入** | 用户原始请求（逐字）、当前 plan 路径（如有，由 dispatcher 显式传入而非硬编码）、最近 commit 概览、用户当轮显式约束 |
+| **预期输出** | FULL schema（≥3 调度 / 触发对抗回路 / 多领域）：Goal / Constraints / Evidence / Pipeline / Adversarial fires / Out-of-scope / Verification；COMPACT schema（≤2 调度且单域无对抗）：Goal / Dispatches / Out-of-scope / Verification |
+| **项目关联文件** | `CLAUDE.md`, `docs/ops/team_roster.md`, 当前 `~/.claude/plans/<id>.md`, 既有 codex-* conflictor 体例 |
+| **关键约束** | 1) 不递归调度自己；不在生成的 pipeline 里调度 C4；2) 不杜撰事实 / 不发明 agent / 不分配越权写权限；3) 不扩展用户的 deliverable；4) 输出仅作主会话顾问参考，不作为 plan 走 C1 二次评审；5) round/phase report 走 C2（仅当报告引用代码时才追加 B2），别把 B2 默认拉进来 |
+| **写权限** | **无**。frontmatter 仅 `tools: Bash`；通过 `codex-companion.mjs` 转发，禁用 `--write`。所有方案以响应文本形式返回，由主会话决定是否执行 |
+
 **关于 codex agents 的说明**：它们通过 `codex-rescue` 运行时调用 `codex-companion.mjs`。
 输出风格和推理强度（effort）是路由控制；包装器会强制把模式钉在 "评审 / 只读"
-（不带 `--write`），这样反对者绝不可能改文件，只能批评。
+（不带 `--write`），这样反对者绝不可能改文件，只能批评。C4 codex-pm-planner 同样
+read-only，但角色不同：它在主会话**调度团队之前**做请求分解，不在事后做对抗式评审。
 
 ---
 
