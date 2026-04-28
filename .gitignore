@@ -9,7 +9,17 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Agent tool configs (per-machine local context, not project content)
 .claude
+.codex
+.gemini
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
+# Graphify knowledge graph output (regenerated; .graphifyignore is committed)
+graphify-out/
 
 # Pretrained & trained weights
 weights/

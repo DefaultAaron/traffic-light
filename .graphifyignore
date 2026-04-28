@@ -1,0 +1,117 @@
+# .graphifyignore — fnmatch globs (matched against rel path, filename, and
+# each path component). Keep this in sync with .gitignore where it makes sense.
+#
+# Goal: scope graphify to first-party project signal only —
+#   main.py, configs/, scripts/, inference/, tests/, docs/,
+#   pyproject.toml, README.md, CLAUDE.md, AGENTS.md, GEMINI.md
+# Everything below is third-party, binary, generated, or dataset noise.
+
+# ── third-party forks (vendored, not first-party code) ────────────────
+DEIM
+yolov13
+ByteTrack
+
+# ── datasets (~250k image / label files would dominate) ───────────────
+data
+
+# ── training outputs, model weights, demo media, logs ─────────────────
+weights
+runs
+demo
+logs
+
+# ── Python toolchain / virtualenv / build / cache ─────────────────────
+.venv
+.pytest_cache
+__pycache__
+*.egg-info
+*.egg
+build
+dist
+wheels
+.ipynb_checkpoints
+
+# ── lockfiles & auto-generated dep resolution (not informative) ───────
+uv.lock
+package-lock.json
+yarn.lock
+poetry.lock
+Pipfile.lock
+
+# ── graphify's own outputs (don't graph the graph) ────────────────────
+graphify-out
+
+# ── git internals (graphify already skips .git but be explicit) ───────
+.git
+
+# ── OS / editor cruft ─────────────────────────────────────────────────
+.DS_Store
+._*
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── compiled Python ──────────────────────────────────────────────────
+*.pyc
+*.pyo
+*.pyd
+
+# ── model / engine binaries (may live outside weights/, runs/) ────────
+*.pt
+*.pth
+*.onnx
+*.engine
+*.trt
+*.plan
+*.bin
+*.safetensors
+
+# ── compiled native libs ─────────────────────────────────────────────
+*.so
+*.dylib
+*.a
+*.o
+*.lib
+*.dll
+
+# ── archives ─────────────────────────────────────────────────────────
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bz2
+*.7z
+*.rar
+
+# ── media (project demos / dataset frames are noise, not graph signal) ─
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.mp3
+*.wav
+*.flac
+*.ogg
+# Bitmap images — re-enable selectively if a docs/figures/ dir is added
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.tiff
+*.tif
+*.webp
+*.heic
+*.ico
+
+# ── personal tracker (binary xlsx, Chinese filename) ─────────────────
+任务计划-吴正日.xlsx
+*.xlsx
+*.docx
+*.pptx
+*.pdf
