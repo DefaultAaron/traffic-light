@@ -185,7 +185,7 @@
 | **来源** | 已存在 — `.claude/agents/demo-reviewer.md` |
 | **领域** | 生成的 demo 视频的定性评审 |
 | **职责** | Q1-Q4 质量轴（正确性 / 漏检 / 平滑性 / 其他）、单视频笔记、滚动汇总、持久化 ledger |
-| **何时调用** | 跑完 `scripts/run_demos_all_engines.sh` 后；以及每次写阶段报告前由 `.claude/hooks/check_demo_coverage.py` 自动触发 |
+| **何时调用** | 跑完 `scripts/run_demos.sh` 后；以及每次写阶段报告前由 `.claude/hooks/check_demo_coverage.py` 自动触发 |
 | **预期输入** | 待评审的具体 (run × engine) 组（由主会话根据覆盖率网关传入） |
 | **预期输出** | 每视频笔记、ledger 更新、汇总增量 |
 | **项目关联文件** | `demo/`, `demo/_review/`, `.claude/hooks/check_demo_coverage.py` |

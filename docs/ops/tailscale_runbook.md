@@ -45,14 +45,15 @@ VPS requirement: any cheap server with public IP and outbound port 22 reachable 
 
 ## Scripts in `scripts/`
 
-All write a timestamped log to `/tmp/<name>_<ts>.log`.
-
 | Script | Purpose |
 |---|---|
-| `tailscale_diagnose.sh` | Full snapshot: daemon, DNS, L3/L4 reachability, MTU probe, traceroute, long-poll soak. Run first when symptom recurs. |
-| `setup_reverse_tunnel.sh` | Install systemd-managed autossh reverse tunnel — the actual workaround. |
-| `tailscale_fix_ipv4.sh` | Pin Tailscale endpoints to IPv4 in `/etc/hosts`. Did NOT solve the campus-DPI case but useful when IPv6 path is the only problem. `--revert` to undo. |
-| `tailscale_disable_ipv6.sh` | Disable IPv6 system-wide via sysctl. Did NOT solve the campus-DPI case. `--revert` to undo. |
+| `setup_reverse_tunnel.sh` | Install systemd-managed autossh reverse tunnel — the actual workaround. Writes a timestamped log to `/tmp/<name>_<ts>.log`. |
+
+Earlier diagnostic / fix-IPv4 / disable-IPv6 scripts have been removed:
+the diagnostic was a one-off snapshot, and the IPv4 pin / IPv6 disable
+both verifiably failed against the campus-DPI case (root cause is
+network-level interference with long-lived HTTPS streams, not IPv6 path
+quality). The `setup_reverse_tunnel.sh` workaround is sufficient.
 
 ## Root cause (high confidence, won't fix from inside Tailscale)
 

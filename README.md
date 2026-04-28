@@ -151,13 +151,13 @@ Both backends accept `--track` to enable ByteTrack + per-track EMA class voting.
 
 ### Demo sweep across engines
 
-`scripts/run_demos_all_engines.sh` runs `tl_demo` sequentially across every `runs/<run>/*.engine` × `demo/demo*.mp4` pair, writing to `demo/<run>/<engine_stem>/<demo_name>.mp4`. Resume-friendly (`SKIP_EXIST=1`) and single-engine-at-a-time by design (TRT contexts are not safe to share).
+`scripts/run_demos.sh` runs `tl_demo` sequentially across every `runs/<run>/*.engine` × `demo/demo*.mp4` pair, writing to `demo/<run>/<engine_stem>/<demo_name>.mp4`. Resume-friendly (`SKIP_EXIST=1`) and single-engine-at-a-time by design (TRT contexts are not safe to share).
 
 ```bash
-./scripts/run_demos_all_engines.sh                              # defaults
-CONF=0.3 TRACK=1 ./scripts/run_demos_all_engines.sh             # override
-nohup ./scripts/run_demos_all_engines.sh \
-    > logs/run_demos_all_engines.log 2>&1 &                     # long-running sweep
+./scripts/run_demos.sh                              # defaults
+CONF=0.3 TRACK=1 ./scripts/run_demos.sh             # override
+nohup ./scripts/run_demos.sh \
+    > logs/run_demos.log 2>&1 &                     # long-running sweep
 ```
 
 ## Documentation

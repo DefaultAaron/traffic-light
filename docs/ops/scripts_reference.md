@@ -7,86 +7,83 @@ Quick map:
 
 | Area | Scripts |
 |---|---|
-| [Demo sweep (Orin TRT)](#demo-sweep-orin-trt) | `run_demos_all_engines.sh`, `run_demos_all_engines_tracker.sh` |
+| [Demo sweep (Orin TRT)](#demo-sweep-orin-trt) | `run_demos.sh` |
 | [Training](#training) | `train_deim.sh`, `train_yolov13.sh` |
 | [Dataset conversion + merge](#dataset-conversion--merge) | `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py`, `yolo_to_coco.py` |
 | [Manual annotation](#manual-annotation) | `annotate_bstld.py`, `annotate_s2tld.py` |
 | [Model export](#model-export) | `strip_yolo26_head.py` |
 | [Flicker / tracker validation](#flicker--tracker-validation) | `measure_flicker.py`, `validate_flicker_reduction.py` |
-| [Network / ops](#network--ops) | `setup_reverse_tunnel.sh`, `tailscale_diagnose.sh`, `tailscale_disable_ipv6.sh`, `tailscale_fix_ipv4.sh` |
+| [Network / ops](#network--ops) | `setup_reverse_tunnel.sh` |
 
 ---
 
 ## Demo sweep (Orin TRT)
 
-Runs every `(run × engine × demo)` triple through `tl_demo` and writes the
-annotated `.mp4` outputs to `demo/<run>/<engine>/<demo>.mp4` (or
-`demo/<run>_tracker/<engine>/<demo>.mp4` for the tracker variant).
-Sequential by design — each call holds the GPU/TRT context.
-
-### `run_demos_all_engines.sh` (detector-only)
+`run_demos.sh` runs every `(run × engine × demo)` triple through `tl_demo`
+and writes annotated `.mp4` outputs. Detector-only and tracker modes
+coexist under the same `OUT_DIR` because tracker mode auto-suffixes the
+run dir with `_tracker`. Sequential by design — each call holds the
+GPU/TRT context.
 
 ```bash
-./scripts/run_demos_all_engines.sh
+./scripts/run_demos.sh                    # detector-only → demo/<run>/<engine>/<demo>.mp4
+TRACK=1 ./scripts/run_demos.sh            # tracker     → demo/<run>_tracker/<engine>/<demo>.mp4
 ```
+
+### Env overrides (always available)
 
 | Env var | Default | Effect |
 |---|---|---|
 | `TL_DEMO` | `inference/cpp/build/tl_demo` | Path to the `tl_demo` binary |
 | `RUNS_DIR` | `runs` | Root containing `<run>/*.engine` |
 | `DEMOS_DIR` | `demo` | Root containing `demo*.mp4` clips |
-| `OUT_DIR` | `$DEMOS_DIR` | Output root: `<OUT_DIR>/<run>/<engine>/<demo>.mp4` |
+| `OUT_DIR` | `$DEMOS_DIR` | Output root |
 | `CONF` | `0.25` | Detector confidence threshold |
-| `TRACK` | `0` | `1` to enable `--track` |
+| `TRACK` | `0` | `1` enables `--track` and the `_tracker` suffix |
 | `SKIP_EXIST` | `1` | `1` skips outputs already on disk (resume-friendly) |
-| `OVERWRITE` | `0` | `1` deletes stale output before re-running (forces `SKIP_EXIST=0`) |
+| `OVERWRITE` | `0` | `1` deletes stale output (and any companion `.tracks.jsonl`) before re-running; forces `SKIP_EXIST=0` |
+
+### Tracker tuning (`TRACK=1` only)
+
+Unset env vars fall through to the `tl_demo` built-in defaults.
+
+| Env var | Effect |
+|---|---|
+| `ALPHA` | Tracker EMA alpha |
+| `MIN_HITS` | Min hits before a track is confirmed |
+| `HIGH_THRESH` | First-pass IoU/score threshold |
+| `MATCH_THRESH` | Match cost cutoff |
+| `TRACK_BUFFER` | Frames a lost track survives |
+| `SAVE_TRACK_JSON` | `1` writes `<demo>.tracks.jsonl` next to the mp4 |
 
 Resolution is inferred from engine filename: `*1536* → 1536`, `*1280* →
 1280`, otherwise `640`.
-
-### `run_demos_all_engines_tracker.sh` (always `--track`)
-
-Same sweep, always tracker-on, outputs land under `<run>_tracker/`.
-
-| Env var | Default | Effect |
-|---|---|---|
-| (`TL_DEMO`, `RUNS_DIR`, `DEMOS_DIR`, `OUT_DIR`, `CONF`, `SKIP_EXIST`, `OVERWRITE` as above) | | |
-| `ALPHA` | `tl_demo` built-in | Tracker EMA alpha |
-| `MIN_HITS` | `tl_demo` built-in | Min hits before track confirmed |
-| `HIGH_THRESH` | `tl_demo` built-in | First-pass IoU/score threshold |
-| `MATCH_THRESH` | `tl_demo` built-in | Match cost cutoff |
-| `TRACK_BUFFER` | `tl_demo` built-in | Frames a lost track survives |
-| `SAVE_TRACK_JSON` | `0` | `1` writes `<demo>.tracks.jsonl` next to the mp4 |
-
-`OVERWRITE=1` removes both the stale `.mp4` and the matching
-`.tracks.jsonl`.
 
 ### Common combinations
 
 ```bash
 # Resume — only fills in missing outputs.
-./scripts/run_demos_all_engines.sh
+./scripts/run_demos.sh
 
-# Force regenerate everything (e.g., after retraining).
-OVERWRITE=1 ./scripts/run_demos_all_engines.sh
+# Force regenerate everything (e.g. after retraining).
+OVERWRITE=1 ./scripts/run_demos.sh
 
-# One run, tracker + JSONL, fresh output dir.
-RUNS_DIR=runs/yolo26m-r1 OUT_DIR=demo_v2 \
-    SAVE_TRACK_JSON=1 \
-    ./scripts/run_demos_all_engines_tracker.sh
+# Tracker sweep, dump parity JSONL alongside each mp4, fresh output dir.
+TRACK=1 SAVE_TRACK_JSON=1 \
+    RUNS_DIR=runs/yolo26m-r1 OUT_DIR=demo_v2 \
+    ./scripts/run_demos.sh
 
-# Higher confidence sweep, regenerate.
-CONF=0.35 OVERWRITE=1 \
-    ./scripts/run_demos_all_engines_tracker.sh
+# Higher confidence tracker sweep, regenerate.
+TRACK=1 CONF=0.35 OVERWRITE=1 \
+    ./scripts/run_demos.sh
 ```
 
 ### Output formats
 
-The sweep scripts emit annotated `.mp4` videos via `tl_demo --save`, and
-optionally a parity-format `<demo>.tracks.jsonl` next to each video when
-`SAVE_TRACK_JSON=1`. The JSONL schema (`{"frame": N, "tracks": [...]}`)
-matches `inference/demo.py --track-json`, so Python and C++ outputs are
-diffable for parity.
+`tl_demo --save` writes the annotated `.mp4`. With `TRACK=1
+SAVE_TRACK_JSON=1`, a parity `<demo>.tracks.jsonl` is also written. The
+JSONL schema (`{"frame": N, "tracks": [...]}`) matches `inference/demo.py
+--track-json`, so Python and C++ outputs are diffable for parity.
 
 For flicker analysis, see [`measure_flicker.py`](#flicker--tracker-validation)
 below — it reads a different schema (`--json`, not `--track-json`), so
@@ -257,14 +254,15 @@ demo footage is too clean to exercise the reduction path.
 
 ## Network / ops
 
-These are workarounds for an unstable campus network — see
-[`tailscale_runbook.md`](tailscale_runbook.md)
-for the underlying incident.
+Workaround for the unstable campus network — see
+[`tailscale_runbook.md`](tailscale_runbook.md) for the underlying root
+cause and triage.
 
 ### `setup_reverse_tunnel.sh`
 
-Sets up an `autossh` reverse tunnel from the host (`jun`) to a public
-VPS, so SSH still works when Tailscale is being throttled.
+Installs an `autossh` reverse tunnel (systemd-managed) from this host to
+a public VPS, so SSH still works when Tailscale's control plane is being
+throttled. This is the production workaround.
 
 ```bash
 sudo VPS_HOST=vps.example.com VPS_USER=ubuntu VPS_PORT=22 \
@@ -277,42 +275,6 @@ sudo bash scripts/setup_reverse_tunnel.sh --disable
 
 After setup: `ssh -p 2222 jun-user@vps.example.com`. VPS sshd needs
 `GatewayPorts yes`.
-
-### `tailscale_diagnose.sh`
-
-3-minute snapshot to distinguish (a) local daemon issue, (b)
-network/middlebox interference, (c) Tailscale server-side, (d) DNS, (e)
-firewall.
-
-```bash
-bash scripts/tailscale_diagnose.sh                 # ~3 min
-DURATION=600 bash scripts/tailscale_diagnose.sh    # 10-min soak
-```
-
-Output: `/tmp/tailscale_diagnose_<host>_<ts>.log`.
-
-### `tailscale_fix_ipv4.sh`
-
-Pins Tailscale control-plane to IPv4 via `/etc/hosts` when IPv6 path is
-broken (502 Bad Gateway / EOF on long-poll). Idempotent, with a managed
-block + auto-revert.
-
-```bash
-sudo bash scripts/tailscale_fix_ipv4.sh           # apply + verify
-sudo bash scripts/tailscale_fix_ipv4.sh --revert
-```
-
-### `tailscale_disable_ipv6.sh`
-
-Heavier hammer: disables IPv6 system-wide via
-`/etc/sysctl.d/99-disable-ipv6.conf`, restarts `tailscaled`, soaks the
-journal. Use only when the IPv4 pin doesn't take effect (resolver still
-finding AAAA records).
-
-```bash
-sudo bash scripts/tailscale_disable_ipv6.sh           # apply + verify
-sudo bash scripts/tailscale_disable_ipv6.sh --revert
-```
 
 ---
 
