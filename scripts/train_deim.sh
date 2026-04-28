@@ -31,6 +31,15 @@ NPROC="${NPROC:-1}"
 PORT="${PORT:-7777}"
 SEED="${SEED:-0}"        # override with: SEED=42 scripts/train_deim.sh s
 
+# Lift any seed override from passthrough args into SEED so SEED.txt agrees
+# with the actual training seed. DEIM accepts both `--seed=42` and `--seed 42`.
+prev=""
+for arg in "$@"; do
+    case "$prev" in --seed) SEED="$arg" ;; esac
+    case "$arg" in --seed=*) SEED="${arg#--seed=}" ;; esac
+    prev="$arg"
+done
+
 # DEIM's output_dir is fixed per config (no auto-increment), so we can
 # pre-create the dir + write SEED.txt BEFORE training. This survives
 # interrupted runs — a marker written only at the end vanishes on crash.

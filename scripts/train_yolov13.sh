@@ -59,6 +59,13 @@ SEED="${SEED:-0}"        # override with: SEED=42 scripts/train_yolov13.sh s
 RUN_NAME="yolov13${SIZE}"
 PROJECT_DIR="$ROOT/runs/detect"
 
+# Lift any seed override from passthrough args into SEED so SEED.txt agrees
+# with the actual training seed (yolo CLI: `scripts/train_yolov13.sh s seed=42`
+# would otherwise let "$@" override the trainer while SEED.txt records 0).
+for arg in "$@"; do
+    case "$arg" in seed=*) SEED="${arg#seed=}" ;; esac
+done
+
 # Predict the dir Ultralytics will pick (it auto-increments on conflict:
 # yolov13s, yolov13s2, yolov13s3, …) so we can pre-write SEED.txt BEFORE
 # training. Markers written at training END vanish on interrupted runs.

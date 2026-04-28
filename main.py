@@ -30,27 +30,46 @@ def build_model(config: dict):
         return YOLO(model_path)
 
 
+def _resolve_trainer_seed(trainer, fallback: int) -> int:
+    """Return the seed Ultralytics actually resolved for this trainer.
+
+    Reading from trainer.args.seed is more robust than the closure value: if
+    Ultralytics ever overrides config["seed"] during arg-merging (yaml ↔ kwargs
+    ↔ defaults), the trainer's view is authoritative. Falls back to the value
+    we passed in if the attr is somehow missing.
+    """
+    args = getattr(trainer, "args", None)
+    if args is None:
+        return fallback
+    return getattr(args, "seed", fallback)
+
+
 def _write_seed_marker(model, seed: int) -> None:
     """Write SEED.txt next to args.yaml in the run directory.
 
     Ultralytics already writes args.yaml; SEED.txt makes the seed prominent and
     decouples reproducibility-checking from YAML parsing.
     """
-    save_dir = getattr(getattr(model, "trainer", None), "save_dir", None)
+    trainer = getattr(model, "trainer", None)
+    save_dir = getattr(trainer, "save_dir", None)
     if save_dir is None:
         return
-    Path(save_dir, "SEED.txt").write_text(f"{seed}\n")
+    actual = _resolve_trainer_seed(trainer, seed)
+    Path(save_dir, "SEED.txt").write_text(f"{actual}\n")
 
 
 def _register_seed_marker(model, seed: int) -> None:
     """Register a callback so SEED.txt is written at training start, not after.
 
     A run dir created at start survives interrupted training; a marker written
-    only at end vanishes whenever training crashes.
+    only at end vanishes whenever training crashes. The seed written reflects
+    what Ultralytics actually resolved (trainer.args.seed), not just what we
+    passed in.
     """
     def _cb(trainer):
+        actual = _resolve_trainer_seed(trainer, seed)
         Path(trainer.save_dir).mkdir(parents=True, exist_ok=True)
-        Path(trainer.save_dir, "SEED.txt").write_text(f"{seed}\n")
+        Path(trainer.save_dir, "SEED.txt").write_text(f"{actual}\n")
     model.add_callback("on_pretrain_routine_start", _cb)
 
 
