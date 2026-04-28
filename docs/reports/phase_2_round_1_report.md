@@ -235,13 +235,13 @@ R2 用于这两组的修复手段不同：
 - 单体大目标（demo4） → 稳定。
 - 单体中目标且有正确特征（demo12 红灯靠近过程） → 稳定。
 - 持续误分类（demo10） → "稳定地错误"，反而比抖动更难自动识别为问题。
-- 小目标 / 弱信号（demo15） → 抖动严重，部署侧需要 tracker + 多帧投票才能稳态化（与 R2 §temporal encoder 备选方案一致）。
+- 小目标 / 弱信号（demo15） → 抖动严重；Plan A（tracker + EMA 投票）在分类边缘场景已落地缓解，若 baseline 仍漏检（小目标 recall 低）则按 [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) §1 上 detector-level TSM。
 
 ### 视检结论（对部署 / R2 的指导）
 
 1. **部署模型选 s（不变）**：m 在 demo10 类型场景（横向龙门）上有可见提升，但其他场景与 s 接近，且 demo8 的背景误检 m 也未根除。在 +2 pp mAP50 / +1.5× 推理时延的代价下，s 仍是 R1 部署最佳折衷。
 2. **R2 需补的训练样本**：远距离龙门信号 / 黄昏 + 弱光 / 逆光强光斑 / 卡车密集队列 + 龙门 — 这些场景在当前训练集中覆盖不足，是漏检的主因。
-3. **R2 需要 tracker + 多帧投票**：demo15 类小目标抖动靠提升模型容量解决性价比低，部署侧的时序聚合更高效（与已记录的 temporal encoder 决策一致 — 先靠 tracker，post-5/15 再考虑 LSTM）。
+3. **R2 时序聚合双轨**：demo15 类小目标抖动靠提升模型容量解决性价比低 —— 部署侧时序聚合分两条互不阻塞的路径（详见 [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md)）：(a) 分类抖动 → Plan A（tracker + EMA，已落地）→ HMM / GRU；(b) 漏检（小目标 / 遮挡） → detector-level TSM（推荐）。两路径均 5/15 后实测启动判定。
 4. **demo8 假阳的根因可能在数据**：警示三角 / 厂房绿墙这类硬负样本若未在训练集出现，模型当然学不到拒识。R2 应主动从 demo 中挖出这些误报帧补回训练集做硬负学习。
 
 ### 视检材料路径

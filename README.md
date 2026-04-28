@@ -164,7 +164,11 @@ nohup ./scripts/run_demos_all_engines.sh \
 
 - [`docs/planning/development_plan.md`](docs/planning/development_plan.md) — candidate models, dataset licensing, milestones
 - [`docs/proposals/yolo26_alternatives_survey.md`](docs/proposals/yolo26_alternatives_survey.md) — YOLOv13 + DEIM-D-FINE rationale and setup
-- [`docs/proposals/temporal_encoder_feasibility.md`](docs/proposals/temporal_encoder_feasibility.md) — LSTM/GRU/tracker analysis (deferred post-5/15)
+- [`docs/proposals/detection_enhancement_survey.md`](docs/proposals/detection_enhancement_survey.md) — model + system level enhancement methods beyond the three core plans (training aug, hard-neg mining, KD, SAHI, map-prior, HDR camera, multi-camera, planner-prior)
+- [`docs/proposals/external_contribution_research.md`](docs/proposals/external_contribution_research.md) — external research view: TL field-wide failure modes + public-dataset coverage gaps + contribution candidates from R2 self-collected data (CN-gantry benchmark, TL × barrier joint, hard-condition slice, engineering refs)
+- [`docs/data/r2_data_collection_sop.md`](docs/data/r2_data_collection_sop.md) — **R2 multimodal data collection + annotation SOP** — dual 8MP cameras (normal + wide) + LiDAR; sync/calibration, site coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics, site-based splits, release prep
+- [`docs/planning/temporal_optimization_plan.md`](docs/planning/temporal_optimization_plan.md) — temporal optimization track (TSM detector-level + post-detector smoothers); R2/R3 optional, parallel to main detector selection
+- [`docs/planning/cross_detection_reasoning_plan.md`](docs/planning/cross_detection_reasoning_plan.md) — same-frame multi-light co-occurrence reasoning (Bayesian post-processing → CRF → Relation Network); R3 candidate, gated on R2 self-collected data validation
 - [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) — R1 7-class results, Orin deployment, alt-track launch, R2 scope lock (living doc)
 - [`docs/reports/phase_2_round_1_results.md`](docs/reports/phase_2_round_1_results.md) — raw R1 eval tables
 - [`docs/reports/phase_1_report.md`](docs/reports/phase_1_report.md) — Phase 1 3-class baseline (historical)

@@ -1,6 +1,6 @@
 # 跟踪 + EMA 投票集成指南（Plan A）
 
-> **状态（2026-04-23）**：**Python 与 C++ 两端已落地并通过终审**。R1 备选架构训练并行推进；两端共享同一份 JSON fixtures 与语义断言，余下为 Orin 构建 + fixture 单测上线。背景与权衡见 [`../proposals/temporal_encoder_feasibility.md`](../proposals/temporal_encoder_feasibility.md)，延后策略已更新为"并行而非门控"。
+> **状态（2026-04-23）**：**Python 与 C++ 两端已落地并通过终审**。R1 备选架构训练并行推进；两端共享同一份 JSON fixtures 与语义断言，余下为 Orin 构建 + fixture 单测上线。本指南覆盖 Plan A（tracker + EMA）；后续可选时序优化（TSM detector-level / GRU post-detector 等）见 [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md)。
 
 本指南规定在现有逐帧 `TRTDetector` 之上叠加 ByteTrack 关联 + 每轨迹 EMA 类别投票的实现计划。**Python 与 C++ 语义对等**：Python 用于快速验证与离线指标，**C++ 为 Orin 生产部署**。
 
@@ -406,7 +406,7 @@ C++ 端额外烟测（不依赖 fixture）：`reset()` 后 ID 从 1 重开、`nu
 
 **R2 数据就绪后**：用真实连续视频重跑 §5.1 P5 与 §5.2 延迟验证，**按结果重新调优 α / `min_hits` / `track_buffer`**，再定版写入默认值。
 
-不满足则按可行性文档 Plan B（per-track GRU）排入 R3；`TrackedDetection.class_probs` 即为 GRU 的 soft 输入接口。
+不满足则按 [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md) §0.2 决策门选择后续路径（detector-level TSM 或 post-detector HMM/GRU）；`TrackedDetection.class_probs` 即为下游平滑器的 soft 输入接口。
 
 ---
 
@@ -437,7 +437,7 @@ C++ 端额外烟测（不依赖 fixture）：`reset()` 后 ID 从 1 重开、`nu
 
 ## 参考
 
-- 可行性分析：[`../proposals/temporal_encoder_feasibility.md`](../proposals/temporal_encoder_feasibility.md)
+- 时序优化集成计划（后续路径）：[`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md)
 - TRT 流水线：[`./trt_pipeline_guide.md`](./trt_pipeline_guide.md)
 - ROS2 集成：[`./ros2_integration_guide.md`](./ros2_integration_guide.md)
 - ByteTrack, ECCV 2022: https://arxiv.org/abs/2110.06864
