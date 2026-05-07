@@ -386,6 +386,14 @@ class _TRTBackend:
                         f"DEIM 'orig_target_sizes' has unsupported dtype "
                         f"{np.dtype(ots['dtype'])} (expected int64 or int32)"
                     )
+                # Shape gate: detect() writes np.array([[imgsz, imgsz]]) so the
+                # buffer must be exactly (1, 2). Catches the overflow at
+                # construction instead of at np.copyto.
+                ots_shape = tuple(ots["shape"])
+                if ots_shape != (1, 2):
+                    raise ValueError(
+                        f"DEIM 'orig_target_sizes' has shape {ots_shape}; expected (1, 2)"
+                    )
                 # Top-K shape contract: labels=(1, K), boxes=(1, K, 4),
                 # scores=(1, K), with K consistent across all three.
                 l_shape = labels["shape"]
@@ -633,6 +641,16 @@ class _ONNXBackend:
                 raise ValueError(
                     f"DEIM 'orig_target_sizes' has unsupported type "
                     f"{ots.type} (expected int32 or int64)"
+                )
+            # Shape gate (concrete dims only — ONNX may have dynamic batch).
+            ots_shape = ots.shape
+            if (
+                len(ots_shape) != 2
+                or (isinstance(ots_shape[0], int) and ots_shape[0] != 1)
+                or (isinstance(ots_shape[1], int) and ots_shape[1] != 2)
+            ):
+                raise ValueError(
+                    f"DEIM 'orig_target_sizes' has shape {ots_shape}; expected (1, 2)"
                 )
             # Top-K shape contract: labels=(1, K), boxes=(1, K, 4),
             # scores=(1, K). ONNX shape entries are int|str (dynamic axes);

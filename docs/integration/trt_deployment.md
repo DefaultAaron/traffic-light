@@ -150,7 +150,7 @@ YOLO26 的 head 恰好产生这种模式。图内的 `TopK` 是一个 GPU 侧预
 
 ### 5.5.3 DEIM 架构输出契约
 
-- `orig_target_sizes` 输入必须是 int32 或 int64；`labels` 输出必须是 int32 或 int64；`boxes` / `scores` 输出必须是 FP32 或 FP16。
+- `orig_target_sizes` 输入必须是 int32 或 int64，shape 必须为 `(1, 2)`（C++ `fillOrigTargetSizes()` 会写 `host[0]` / `host[1]`，元素数 < 2 会越界）；`labels` 输出必须是 int32 或 int64；`boxes` / `scores` 输出必须是 FP32 或 FP16。
 - 输出形状契约（构造期硬校验，按 axis 逐项检查 — 仅校验 elem_count 比例无法识破 batch=3 或 rank-1 扁平化等异常导出）：
   - `labels`：rank=2，shape `(1, K)`
   - `scores`：rank=2，shape `(1, K)`
@@ -178,6 +178,7 @@ YOLO26 的 head 恰好产生这种模式。图内的 `TopK` 是一个 GPU 侧预
 | `YOLO ... has no 11-wide axis` | 类别数 / 头结构与项目 7-class 契约不符 | 确认 `data/traffic_light.yaml` 与训练 nc 一致 |
 | `TensorRT X.Y is too old for the Python pipeline (requires >= 10.0). For Jetson / TRT 8.x deployment, use the C++ pipeline at inference/cpp/.` | 在 TRT 8.5 上跑 Python 流水线 | Orin 走 C++ 流水线；开发机 fallback 走 ONNX-Runtime |
 | `DEIM 'orig_target_sizes' has unsupported dtype ... (expected int64 or int32)` / `DEIM 'labels' has unsupported dtype ...` / `DEIM 'boxes' has unsupported dtype ...` | DEIM 引擎 / ONNX 与标准导出脚本的 dtype 约定不一致 | 用 `scripts/export_deim.sh` 重新导出，或检查 `model.deploy()` 是否被改 |
+| `DEIM 'orig_target_sizes' has shape ...; expected (1, 2)` | DEIM 引擎 / ONNX 的 `orig_target_sizes` 不是 `(1, 2)`（如被改成 `(2,)` 扁平、`(B, 2)` batch≠1 等）| 重新按标准 deploy 脚本导出；C++ 的 `fillOrigTargetSizes()` 假定 elem_count=2，否则会越界 |
 | `DEIM 'labels' has shape ...; expected (1, K)` / `DEIM 'boxes' has shape ...; expected (1, K, 4)` / `DEIM K mismatch` | DEIM 输出 rank、batch 或最后一轴异常（如 batch=3、boxes 转置成 `(1, 4, K)`、labels/scores/boxes 的 K 不一致）| 检查 `scripts/_export_deim_onnx.py` deploy 阶段的 reshape 是否被改；按标准导出脚本重建 |
 
 > **参考实现**：`inference/trt_pipeline.py`（Python 三类后端：TRT / ONNX / 自动选择）；`inference/cpp/src/trt_pipeline.cpp` + `inference/cpp/include/trt_pipeline.hpp`（C++ 生产路径）。校验点的具体位置由 `findImageInput()`（C++）与 `_image_name` / Pass-1 dynamic-shape 选择器（Python）承担。

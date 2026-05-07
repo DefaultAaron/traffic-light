@@ -253,6 +253,17 @@ void TRTDetector::detectArch() {
                 "DEIM 'orig_target_sizes' has unsupported dtype "
                 "(expected int64 or int32)");
         }
+        // Shape gate: fillOrigTargetSizes() writes host[0] and host[1]
+        // unconditionally. Anything other than (1, 2) would overflow the
+        // pinned buffer at first detect().
+        if (size_in &&
+            (size_in->shape.size() != 2 ||
+             size_in->shape[0] != 1 ||
+             size_in->shape[1] != 2)) {
+            throw std::runtime_error(
+                "DEIM 'orig_target_sizes' has shape " + shape_str(*size_in) +
+                "; expected (1, 2)");
+        }
 
         arch_ = DetectorArch::kDEIM;
         std::cerr << "[TRTDetector] arch detected: DEIM-D-FINE (3 outputs: labels/boxes/scores)"
