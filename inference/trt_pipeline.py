@@ -883,7 +883,18 @@ class TRTDetector:
                 f"({list(outputs.keys())}) — arch dispatch fall-through?"
             )
         raw = next(iter(outputs.values()))
-        output = np.squeeze(raw)
+        # Strip the batch axis explicitly — np.squeeze() strips ALL singletons
+        # and would collapse a valid (1, 1, 11) shape (single-detection
+        # rank-3 export) to rank 1. C++ accepts (1, 1, 11) at construction.
+        if raw.ndim == 3 and raw.shape[0] == 1:
+            output = raw[0]
+        elif raw.ndim == 2:
+            output = raw
+        else:
+            raise RuntimeError(
+                f"YOLO postprocess: output has rank {raw.ndim}, shape {raw.shape} "
+                "(expected rank 2 or 3-with-batch=1)"
+            )
 
         expected_row_len = 4 + len(CLASS_NAMES)
         if output.ndim != 2 or expected_row_len not in output.shape:

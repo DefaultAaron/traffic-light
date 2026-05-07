@@ -443,7 +443,13 @@ void TRTDetector::allocateBuffers() {
         const size_t dev_bytes = buf.elem_count * buf.elem_size;
 
         CUDA_CHECK(cudaMalloc(&buf.device, dev_bytes));
-        CUDA_CHECK(cudaMallocHost(&buf.host, dev_bytes));
+        try {
+            CUDA_CHECK(cudaMallocHost(&buf.host, dev_bytes));
+        } catch (...) {
+            cudaFree(buf.device);  // device leak guard — buf isn't in inputs_/outputs_ yet
+            buf.device = nullptr;
+            throw;
+        }
 
         context_->setTensorAddress(name, buf.device);
 
@@ -508,7 +514,13 @@ void TRTDetector::allocateBuffers() {
         const size_t dev_bytes = buf.elem_count * buf.elem_size;
 
         CUDA_CHECK(cudaMalloc(&buf.device, dev_bytes));
-        CUDA_CHECK(cudaMallocHost(&buf.host, dev_bytes));
+        try {
+            CUDA_CHECK(cudaMallocHost(&buf.host, dev_bytes));
+        } catch (...) {
+            cudaFree(buf.device);  // device leak guard — buf isn't in inputs_/outputs_ yet
+            buf.device = nullptr;
+            throw;
+        }
         binding_ptrs_[i] = buf.device;
 
         if (is_input) inputs_.push_back(std::move(buf));
