@@ -49,8 +49,24 @@ size_t dtypeSize(nvinfer1::DataType dt) {
         case nvinfer1::DataType::kINT32: return 4;
         case nvinfer1::DataType::kBOOL:  return 1;
         case nvinfer1::DataType::kUINT8: return 1;
+#if defined(NV_TENSORRT_MAJOR) && NV_TENSORRT_MAJOR >= 9
+        case nvinfer1::DataType::kINT64: return 8;
+#endif
         default: return 4;
     }
+}
+
+bool isInt64Dtype(nvinfer1::DataType dt) {
+#if defined(NV_TENSORRT_MAJOR) && NV_TENSORRT_MAJOR >= 9
+    return dt == nvinfer1::DataType::kINT64;
+#else
+    (void)dt;
+    return false;
+#endif
+}
+
+bool isInt32Dtype(nvinfer1::DataType dt) {
+    return dt == nvinfer1::DataType::kINT32;
 }
 
 // IEEE-754 float32 → float16 with round-to-nearest-even. Handles normal,
@@ -152,10 +168,44 @@ TRTDetector::TRTDetector(const std::string& model_path, float conf_thresh, int i
         CUDA_CHECK(cudaStreamCreate(&stream_));
         loadEngine(model_path);
         allocateBuffers();
+        detectArch();
     } catch (...) {
         freeAll();
         throw;
     }
+}
+
+void TRTDetector::detectArch() {
+    // Pattern-match by tensor names: DEIM-D-FINE deploy graph has a second
+    // input "orig_target_sizes" plus three named outputs labels/boxes/scores.
+    // Anything else (single image input + single concat output) is treated
+    // as YOLO26 — that's the historical default and matches the stripped
+    // ONNX produced by scripts/strip_yolo26_head.py.
+    bool has_orig_size_input = false;
+    for (const auto& in : inputs_) {
+        if (in.name == "orig_target_sizes") {
+            has_orig_size_input = true;
+            break;
+        }
+    }
+    bool has_deim_outputs =
+        findOutput("labels") && findOutput("boxes") && findOutput("scores");
+
+    if (has_orig_size_input && has_deim_outputs) {
+        arch_ = DetectorArch::kDEIM;
+        std::cerr << "[TRT] arch detected: DEIM-D-FINE (3 outputs: labels/boxes/scores)"
+                  << std::endl;
+    } else {
+        arch_ = DetectorArch::kYOLO;
+        std::cerr << "[TRT] arch detected: YOLO26 (single concat output)" << std::endl;
+    }
+}
+
+const TRTDetector::TensorBuf* TRTDetector::findOutput(const char* name) const {
+    for (const auto& o : outputs_) {
+        if (o.name == name) return &o;
+    }
+    return nullptr;
 }
 
 TRTDetector::~TRTDetector() {
@@ -198,14 +248,33 @@ void TRTDetector::allocateBuffers() {
 #if NV_TENSORRT_MAJOR >= 10
     const int n = engine_->getNbIOTensors();
 
-    // Pass 1: set all input shapes (replacing any dynamic dim with 1) so
-    // output shapes resolve correctly via the context.
+    // Identify the image input by name (or by 4-D NCHW shape with 3 channels)
+    // so dynamic spatial dims get bound to imgsz_ instead of 1 — otherwise a
+    // spatially-dynamic engine allocates 1×3×1×1 input buffer and overflows
+    // on the first H×W feed.
+    std::string image_input_name;
+    for (int i = 0; i < n; ++i) {
+        const char* name = engine_->getIOTensorName(i);
+        if (engine_->getTensorIOMode(name) != nvinfer1::TensorIOMode::kINPUT) continue;
+        if (std::string(name) == "images") { image_input_name = name; break; }
+        nvinfer1::Dims d = engine_->getTensorShape(name);
+        if (d.nbDims == 4 && d.d[1] == 3 && image_input_name.empty()) {
+            image_input_name = name;
+        }
+    }
+
+    // Pass 1: bind input shapes so output shapes resolve and pass-2 buffers
+    // are sized correctly. Substitution: dynamic spatial dims of the image
+    // input → imgsz_; any other dynamic dim → 1.
     for (int i = 0; i < n; ++i) {
         const char* name = engine_->getIOTensorName(i);
         if (engine_->getTensorIOMode(name) != nvinfer1::TensorIOMode::kINPUT) continue;
         nvinfer1::Dims dims = engine_->getTensorShape(name);
+        const bool is_image = (std::string(name) == image_input_name);
         for (int k = 0; k < dims.nbDims; ++k) {
-            if (dims.d[k] < 0) dims.d[k] = 1;
+            if (dims.d[k] < 0) {
+                dims.d[k] = (is_image && dims.nbDims == 4 && k >= 2) ? imgsz_ : 1;
+            }
         }
         if (!context_->setInputShape(name, dims)) {
             throw std::runtime_error(std::string("setInputShape failed for ") + name);
@@ -228,6 +297,8 @@ void TRTDetector::allocateBuffers() {
                                          std::multiplies<size_t>());
         buf.elem_size = dtypeSize(dtype);
         buf.is_fp16 = (dtype == nvinfer1::DataType::kHALF);
+        buf.is_int64 = isInt64Dtype(dtype);
+        buf.is_int32 = isInt32Dtype(dtype);
         const size_t dev_bytes = buf.elem_count * buf.elem_size;
 
         CUDA_CHECK(cudaMalloc(&buf.device, dev_bytes));
@@ -242,12 +313,28 @@ void TRTDetector::allocateBuffers() {
     // TRT 8.x: index-based bindings API + enqueueV2.
     const int n = engine_->getNbBindings();
 
-    // Pass 1: resolve dynamic input dims to 1 via the context.
+    // Identify the image input — same intent as the TRT-10 branch above.
+    int image_binding = -1;
+    for (int i = 0; i < n; ++i) {
+        if (!engine_->bindingIsInput(i)) continue;
+        const char* name = engine_->getBindingName(i);
+        if (name && std::string(name) == "images") { image_binding = i; break; }
+        nvinfer1::Dims d = engine_->getBindingDimensions(i);
+        if (d.nbDims == 4 && d.d[1] == 3 && image_binding < 0) {
+            image_binding = i;
+        }
+    }
+
+    // Pass 1: bind dynamic spatial dims of the image input to imgsz_; every
+    // other dynamic dim falls back to 1. Mirrors the TRT-10 branch.
     for (int i = 0; i < n; ++i) {
         if (!engine_->bindingIsInput(i)) continue;
         nvinfer1::Dims dims = engine_->getBindingDimensions(i);
+        const bool is_image = (i == image_binding);
         for (int k = 0; k < dims.nbDims; ++k) {
-            if (dims.d[k] < 0) dims.d[k] = 1;
+            if (dims.d[k] < 0) {
+                dims.d[k] = (is_image && dims.nbDims == 4 && k >= 2) ? imgsz_ : 1;
+            }
         }
         if (!context_->setBindingDimensions(i, dims)) {
             throw std::runtime_error("setBindingDimensions failed for binding " +
@@ -273,6 +360,8 @@ void TRTDetector::allocateBuffers() {
                                          std::multiplies<size_t>());
         buf.elem_size = dtypeSize(dtype);
         buf.is_fp16 = (dtype == nvinfer1::DataType::kHALF);
+        buf.is_int64 = isInt64Dtype(dtype);
+        buf.is_int32 = isInt32Dtype(dtype);
         const size_t dev_bytes = buf.elem_count * buf.elem_size;
 
         CUDA_CHECK(cudaMalloc(&buf.device, dev_bytes));
@@ -288,8 +377,16 @@ void TRTDetector::allocateBuffers() {
         throw std::runtime_error("Engine has no input or output tensors");
     }
 
-    // Sanity check: input must be NCHW with 3 channels matching imgsz.
-    const auto& in_shape = inputs_[0].shape;
+    // Sanity check: the image input ("images" if named, else first input)
+    // must be NCHW with 3 channels matching imgsz. DEIM engines have a
+    // second int64 "orig_target_sizes" input which is *not* NCHW — skip it.
+    const TensorBuf* image_in = nullptr;
+    for (const auto& in : inputs_) {
+        if (in.name == "images") { image_in = &in; break; }
+    }
+    if (image_in == nullptr) image_in = &inputs_[0];
+
+    const auto& in_shape = image_in->shape;
     if (in_shape.size() == 4) {
         int h = static_cast<int>(in_shape[2]);
         int w = static_cast<int>(in_shape[3]);
@@ -300,18 +397,8 @@ void TRTDetector::allocateBuffers() {
         }
     }
 
-    // Sanity check: primary output row length must be 4 + num_classes.
-    const auto& out_shape = outputs_[0].shape;
-    if (out_shape.size() >= 2) {
-        int64_t d0 = out_shape.size() >= 3 ? out_shape[1] : out_shape[0];
-        int64_t d1 = out_shape.size() >= 3 ? out_shape[2] : out_shape[1];
-        const int64_t expected = 4 + static_cast<int64_t>(kClassNames.size());
-        if (d0 != expected && d1 != expected) {
-            std::cerr << "[TRT] warning: output shape has no dim equal to "
-                      << expected << " (got " << d0 << "x" << d1
-                      << "); decoder may misinterpret rows." << std::endl;
-        }
-    }
+    // YOLO sanity check is moved to detectArch()/postprocessYolo so DEIM
+    // (which has 3 outputs of disparate shape) doesn't trip it.
 }
 
 void TRTDetector::preprocess(const cv::Mat& frame, float& scale, float& pad_w, float& pad_h) {
@@ -322,7 +409,15 @@ void TRTDetector::preprocess(const cv::Mat& frame, float& scale, float& pad_w, f
     cv::Mat lb_f32;
     lb.convertTo(lb_f32, CV_32FC3, 1.0 / 255.0);
 
-    auto& in = inputs_[0];
+    // Image input is "images" by export convention; the first input is the
+    // image input on YOLO (single-input) and on DEIM (export_onnx.py emits
+    // images first, then orig_target_sizes). Look up by name to be safe.
+    TensorBuf* image_in = nullptr;
+    for (auto& in : inputs_) {
+        if (in.name == "images") { image_in = &in; break; }
+    }
+    if (image_in == nullptr) image_in = &inputs_[0];
+    auto& in = *image_in;
     const int chw_plane = imgsz_ * imgsz_;
 
     if (in.is_fp16) {
@@ -348,9 +443,52 @@ void TRTDetector::preprocess(const cv::Mat& frame, float& scale, float& pad_w, f
                                cudaMemcpyHostToDevice, stream_));
 }
 
+void TRTDetector::fillOrigTargetSizes() {
+    // RT-DETR/D-FINE convention (verified in DEIM/engine/deim/postprocessor.py:
+    // `bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)` after a
+    // box_convert(in='cxcywh', out='xyxy')). The repeat-by-2 broadcast pairs
+    // (s0, s1, s0, s1) onto (x1, y1, x2, y2), so passing `[H_lb, W_lb]`
+    // would scale x by H — wrong. Training/eval feed `(width, height)`
+    // (mirroring `T.Compose` PIL `(W, H)` ordering), so we feed
+    // `[imgsz, imgsz]` here which is correct since we letterbox to a square.
+    TensorBuf* size_in = nullptr;
+    for (auto& in : inputs_) {
+        if (in.name == "orig_target_sizes") { size_in = &in; break; }
+    }
+    if (size_in == nullptr) {
+        throw std::runtime_error(
+            "DEIM detector missing 'orig_target_sizes' input — engine misnamed?");
+    }
+
+    if (size_in->is_int64) {
+        auto* host = static_cast<int64_t*>(size_in->host);
+        host[0] = static_cast<int64_t>(imgsz_);
+        host[1] = static_cast<int64_t>(imgsz_);
+    } else if (size_in->is_int32) {
+        auto* host = static_cast<int32_t*>(size_in->host);
+        host[0] = static_cast<int32_t>(imgsz_);
+        host[1] = static_cast<int32_t>(imgsz_);
+    } else {
+        // Float fallback — DEIM upstream is int64, but trtexec on some
+        // older converters has been observed to widen to float32. Both work
+        // arithmetically since the postprocessor multiplies elementwise.
+        auto* host = static_cast<float*>(size_in->host);
+        host[0] = static_cast<float>(imgsz_);
+        host[1] = static_cast<float>(imgsz_);
+    }
+
+    CUDA_CHECK(cudaMemcpyAsync(size_in->device, size_in->host,
+                               size_in->elem_count * size_in->elem_size,
+                               cudaMemcpyHostToDevice, stream_));
+}
+
 std::vector<Detection> TRTDetector::detect(const cv::Mat& frame) {
     float scale = 1.f, pad_w = 0.f, pad_h = 0.f;
     preprocess(frame, scale, pad_w, pad_h);
+
+    if (arch_ == DetectorArch::kDEIM) {
+        fillOrigTargetSizes();
+    }
 
 #if NV_TENSORRT_MAJOR >= 10
     if (!context_->enqueueV3(stream_)) {
@@ -368,11 +506,14 @@ std::vector<Detection> TRTDetector::detect(const cv::Mat& frame) {
     }
     CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-    return postprocess(frame, scale, pad_w, pad_h);
+    if (arch_ == DetectorArch::kDEIM) {
+        return postprocessDeim(frame, scale, pad_w, pad_h);
+    }
+    return postprocessYolo(frame, scale, pad_w, pad_h);
 }
 
-std::vector<Detection> TRTDetector::postprocess(const cv::Mat& orig,
-                                                float scale, float pad_w, float pad_h) {
+std::vector<Detection> TRTDetector::postprocessYolo(const cv::Mat& orig,
+                                                    float scale, float pad_w, float pad_h) {
     const auto& out = outputs_[0];
     const auto& shape = out.shape;
 
@@ -449,6 +590,91 @@ std::vector<Detection> TRTDetector::postprocess(const cv::Mat& orig,
         y2 = std::max(0.f, std::min(y2, static_cast<float>(orig_h)));
 
         dets.push_back({cls_id, best, x1, y1, x2, y2});
+    }
+
+    return dets;
+}
+
+// Helper: read an output tensor (FP32 or FP16) into a contiguous float
+// buffer. Returns a pointer to either the original FP32 data (no copy) or
+// into the supplied scratch vector (FP16 expanded). Lives at namespace
+// scope but takes primitives so it doesn't need access to the private
+// TensorBuf type.
+static const float* readFloatOutput(const void* host, size_t elem_count,
+                                    bool is_fp16, std::vector<float>& scratch) {
+    if (is_fp16) {
+        scratch.resize(elem_count);
+        const uint16_t* src = static_cast<const uint16_t*>(host);
+        for (size_t i = 0; i < elem_count; ++i) scratch[i] = halfToFloat32(src[i]);
+        return scratch.data();
+    }
+    return static_cast<const float*>(host);
+}
+
+std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
+                                                    float scale,
+                                                    float pad_w,
+                                                    float pad_h) {
+    const TensorBuf* labels_buf = findOutput("labels");
+    const TensorBuf* boxes_buf  = findOutput("boxes");
+    const TensorBuf* scores_buf = findOutput("scores");
+    if (!labels_buf || !boxes_buf || !scores_buf) {
+        throw std::runtime_error("DEIM postprocess: missing labels/boxes/scores outputs");
+    }
+
+    // Top-K = labels.elem_count (after batch=1).
+    const size_t K = labels_buf->elem_count;
+    if (boxes_buf->elem_count != K * 4 || scores_buf->elem_count != K) {
+        std::cerr << "[TRT] DEIM output shape mismatch: labels=" << K
+                  << " boxes=" << boxes_buf->elem_count
+                  << " scores=" << scores_buf->elem_count << std::endl;
+    }
+
+    const float* boxes  = readFloatOutput(boxes_buf->host,  boxes_buf->elem_count,
+                                          boxes_buf->is_fp16, deim_boxes_scratch_);
+    const float* scores = readFloatOutput(scores_buf->host, scores_buf->elem_count,
+                                          scores_buf->is_fp16, deim_scores_scratch_);
+
+    const int orig_w = orig.cols;
+    const int orig_h = orig.rows;
+    const int nc = static_cast<int>(kClassNames.size());
+
+    std::vector<Detection> dets;
+    dets.reserve(32);
+
+    for (size_t i = 0; i < K; ++i) {
+        float conf = scores[i];
+        if (conf < conf_thresh_) continue;
+
+        // Labels can be int64 (modern TRT) or int32 (older / coerced
+        // exports); never float on a published DEIM checkpoint.
+        int cls_id = -1;
+        if (labels_buf->is_int64) {
+            const int64_t* lab = static_cast<const int64_t*>(labels_buf->host);
+            cls_id = static_cast<int>(lab[i]);
+        } else if (labels_buf->is_int32) {
+            const int32_t* lab = static_cast<const int32_t*>(labels_buf->host);
+            cls_id = static_cast<int>(lab[i]);
+        } else {
+            const float* lab = static_cast<const float*>(labels_buf->host);
+            cls_id = static_cast<int>(lab[i]);
+        }
+        if (cls_id < 0 || cls_id >= nc) continue;  // drop padded "no-object" slots
+
+        const float* bb = boxes + i * 4;
+        float lx1 = bb[0], ly1 = bb[1], lx2 = bb[2], ly2 = bb[3];
+
+        float x1 = (lx1 - pad_w) / scale;
+        float y1 = (ly1 - pad_h) / scale;
+        float x2 = (lx2 - pad_w) / scale;
+        float y2 = (ly2 - pad_h) / scale;
+
+        x1 = std::max(0.f, std::min(x1, static_cast<float>(orig_w)));
+        y1 = std::max(0.f, std::min(y1, static_cast<float>(orig_h)));
+        x2 = std::max(0.f, std::min(x2, static_cast<float>(orig_w)));
+        y2 = std::max(0.f, std::min(y2, static_cast<float>(orig_h)));
+
+        dets.push_back({cls_id, conf, x1, y1, x2, y2});
     }
 
     return dets;

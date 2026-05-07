@@ -11,7 +11,7 @@ Quick map:
 | [Training](#training) | `train_deim.sh`, `train_yolov13.sh` |
 | [Dataset conversion + merge](#dataset-conversion--merge) | `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py`, `yolo_to_coco.py` |
 | [Manual annotation](#manual-annotation) | `annotate_bstld.py`, `annotate_s2tld.py` |
-| [Model export](#model-export) | `strip_yolo26_head.py` |
+| [Model export](#model-export) | `strip_yolo26_head.py`, `export_deim.sh` |
 | [Flicker / tracker validation](#flicker--tracker-validation) | `measure_flicker.py`, `validate_flicker_reduction.py` |
 | [Network / ops](#network--ops) | `setup_reverse_tunnel.sh` |
 
@@ -210,6 +210,48 @@ uv run python scripts/strip_yolo26_head.py best.onnx best_stripped.onnx --num-cl
 
 Then on the Orin: `trtexec --onnx=best_stripped.onnx --saveEngine=...
 --fp16`.
+
+### `export_deim.sh`
+
+将训练好的 DEIM-D-FINE 检查点导出为 ONNX，并可选在 Orin 上调用 `trtexec`
+生成 `.engine`。导出图包含 `model.deploy() + postprocessor.deploy()`，
+推理时直接吐出 `labels / boxes / scores`，下游 `inference/trt_pipeline.{py,cpp}`
+通过张量名自动识别 DEIM 路径，无需额外 flag。
+
+```bash
+# Step 1（DEIM venv，CPU 即可）：导出 ONNX
+scripts/export_deim.sh s runs/detect/deim_dfine_s-r1/best_stg2.pth
+
+# Step 2（Orin 上）：在同一台机器一并构建 engine
+scripts/export_deim.sh s runs/detect/deim_dfine_s-r1/best_stg2.pth --build-engine
+```
+
+输出（与输入 `.pth` 同目录）：
+
+| 文件 | 何时产出 | 用途 |
+|---|---|---|
+| `best_stg2.onnx`    | 总是产出 | Python ONNXRuntime / 跨主机搬运 |
+| `best_stg2.engine`  | 仅 `--build-engine` | Orin TRT 推理（demo + 部署） |
+
+环境变量：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PYTHON`        | `python` | DEIM venv 解释器（GPU 服务器上需先 `source DEIM/.venv/bin/activate` 或显式传 `PYTHON=...`） |
+| `FP16`          | `1`      | `--build-engine` 时给 `trtexec` 加 `--fp16` |
+| `WORKSPACE_MB`  | `4096`   | `trtexec --memPoolSize=workspace:N` |
+| `TRTEXEC`       | `trtexec` | 自定义 `trtexec` 路径 |
+
+> **没有 `IMGSZ` 覆盖项**：DEIM traffic_light 配置链 (`base/dfine_hgnetv2.yml`)
+> 已经声明 `eval_spatial_size`；输入尺寸由内嵌 Python 包装脚本
+> `scripts/_export_deim_onnx.py` 读取该字段并写入 `<ckpt>.onnx.imgsz` sidecar，
+> bash 段再据此构造 `trtexec --shapes`，确保两端口径一致。如需切换到 1280
+> 等更大尺寸，需要先按 config 注释（`deim_hgnetv2_s_traffic_light.yml`
+> 第 13–18 行）改训练流水线并重训，单纯改导出尺寸会得到一个精度崩坏的模型。
+>
+> 另注：DEIM 默认 `dynamic_axes` 把 batch 标记为动态。本脚本在 `trtexec` 阶段把
+> min/opt/max 都钉死成 1，避免动态 shape 的 kernel 选择代价；多 batch 部署
+> 需要时再展开 opt/max。
 
 ---
 
