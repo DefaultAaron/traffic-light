@@ -69,9 +69,8 @@ bool isInt32Dtype(nvinfer1::DataType dt) {
     return dt == nvinfer1::DataType::kINT32;
 }
 
-// IEEE-754 float32 → float16 with round-to-nearest-even. Handles normal,
-// inf, and NaN; flushes subnormals (both directions) to zero — adequate
-// for image-range inputs in [0, 1].
+// float32 → float16, IEEE-754 round-to-nearest-even. Subnormals flush to
+// zero (adequate for [0, 1] image input).
 uint16_t float32ToHalf(float f) {
     uint32_t x;
     std::memcpy(&x, &f, sizeof(x));
@@ -176,11 +175,8 @@ TRTDetector::TRTDetector(const std::string& model_path, float conf_thresh, int i
 }
 
 void TRTDetector::detectArch() {
-    // Pattern-match by tensor names: DEIM-D-FINE deploy graph has a second
-    // input "orig_target_sizes" plus three named outputs labels/boxes/scores.
-    // Anything else (single image input + single concat output) is treated
-    // as YOLO26 — that's the historical default and matches the stripped
-    // ONNX produced by scripts/strip_yolo26_head.py.
+    // DEIM-D-FINE deploy graph signature: input "orig_target_sizes" + outputs
+    // labels/boxes/scores. Anything else falls through to YOLO.
     bool has_orig_size_input = false;
     for (const auto& in : inputs_) {
         if (in.name == "orig_target_sizes") {
@@ -191,19 +187,148 @@ void TRTDetector::detectArch() {
     bool has_deim_outputs =
         findOutput("labels") && findOutput("boxes") && findOutput("scores");
 
+    // Reject INT32 (also 4 bytes) and any other non-float output dtype, which
+    // postprocess would reinterpret as float and silently corrupt.
+    auto ensure_float_output = [](const TensorBuf& o, const char* role) {
+        if (!o.is_fp32 && !o.is_fp16) {
+            throw std::runtime_error(
+                std::string(role) + " output '" + o.name +
+                "' has unsupported dtype "
+                "(only FP32 or FP16 are supported)");
+        }
+    };
+
     if (has_orig_size_input && has_deim_outputs) {
+        const TensorBuf* labels = findOutput("labels");
+        const TensorBuf* boxes  = findOutput("boxes");
+        const TensorBuf* scores = findOutput("scores");
+        if (!labels->is_int64 && !labels->is_int32) {
+            throw std::runtime_error(
+                "DEIM 'labels' has unsupported dtype "
+                "(expected int64 or int32)");
+        }
+        ensure_float_output(*boxes,  "DEIM 'boxes'");
+        ensure_float_output(*scores, "DEIM 'scores'");
+
+        // Top-K shape contract: labels=(1, K), boxes=(1, K, 4), scores=(1, K)
+        // with K consistent. Plain element-count parity is not enough — e.g.
+        // labels=(3,100)+boxes=(3,100,4) has the right ratio but batch=3.
+        auto shape_str = [](const TensorBuf& t) {
+            std::string s;
+            for (size_t i = 0; i < t.shape.size(); ++i) {
+                if (i) s += "x";
+                s += std::to_string(t.shape[i]);
+            }
+            return s;
+        };
+        if (labels->shape.size() != 2 || labels->shape[0] != 1) {
+            throw std::runtime_error(
+                "DEIM 'labels' has shape " + shape_str(*labels) +
+                "; expected (1, K)");
+        }
+        if (scores->shape.size() != 2 || scores->shape[0] != 1) {
+            throw std::runtime_error(
+                "DEIM 'scores' has shape " + shape_str(*scores) +
+                "; expected (1, K)");
+        }
+        if (boxes->shape.size() != 3 || boxes->shape[0] != 1 || boxes->shape[2] != 4) {
+            throw std::runtime_error(
+                "DEIM 'boxes' has shape " + shape_str(*boxes) +
+                "; expected (1, K, 4)");
+        }
+        const int64_t K = labels->shape[1];
+        if (scores->shape[1] != K || boxes->shape[1] != K) {
+            throw std::runtime_error(
+                "DEIM K mismatch: labels K=" + std::to_string(K) +
+                " scores K=" + std::to_string(scores->shape[1]) +
+                " boxes K=" + std::to_string(boxes->shape[1]));
+        }
+
+        const TensorBuf* size_in = nullptr;
+        for (const auto& in : inputs_) {
+            if (in.name == "orig_target_sizes") { size_in = &in; break; }
+        }
+        if (size_in && !size_in->is_int64 && !size_in->is_int32) {
+            throw std::runtime_error(
+                "DEIM 'orig_target_sizes' has unsupported dtype "
+                "(expected int64 or int32)");
+        }
+
         arch_ = DetectorArch::kDEIM;
-        std::cerr << "[TRT] arch detected: DEIM-D-FINE (3 outputs: labels/boxes/scores)"
+        std::cerr << "[TRTDetector] arch detected: DEIM-D-FINE (3 outputs: labels/boxes/scores)"
                   << std::endl;
-    } else {
-        arch_ = DetectorArch::kYOLO;
-        std::cerr << "[TRT] arch detected: YOLO26 (single concat output)" << std::endl;
+        return;
     }
+
+    // YOLO contract: exactly 1 output, rank 2 or 3 (batch=1 if rank 3),
+    // shape has a (4 + nc) axis, not orientation-ambiguous.
+    if (outputs_.size() != 1) {
+        throw std::runtime_error(
+            "YOLO arch dispatched but engine has " +
+            std::to_string(outputs_.size()) + " outputs (expected 1)");
+    }
+    const auto& shape = outputs_[0].shape;
+    const int64_t expected_row = 4 + static_cast<int64_t>(kClassNames.size());
+    auto shape_str = [&shape]() {
+        std::string s;
+        for (size_t i = 0; i < shape.size(); ++i) {
+            if (i) s += "x";
+            s += std::to_string(shape[i]);
+        }
+        return s;
+    };
+    if (shape.size() != 2 && shape.size() != 3) {
+        throw std::runtime_error(
+            "YOLO arch dispatched but output rank is " +
+            std::to_string(shape.size()) + " (expected 2 or 3); shape=" +
+            shape_str());
+    }
+    if (shape.size() == 3 && shape[0] != 1) {
+        throw std::runtime_error(
+            "YOLO output batch dim is " + std::to_string(shape[0]) +
+            " (expected 1); shape=" + shape_str());
+    }
+    bool found = false;
+    for (auto d : shape) if (d == expected_row) { found = true; break; }
+    if (!found) {
+        throw std::runtime_error(
+            "YOLO arch dispatched but output shape " + shape_str() +
+            " has no " + std::to_string(expected_row) + "-wide axis");
+    }
+    if (shape.size() == 3 && shape[1] == expected_row && shape[2] == expected_row) {
+        throw std::runtime_error(
+            "YOLO output shape (1, " + std::to_string(expected_row) + ", " +
+            std::to_string(expected_row) + ") is orientation-ambiguous");
+    }
+    if (shape.size() == 2 && shape[0] == expected_row && shape[1] == expected_row) {
+        throw std::runtime_error(
+            "YOLO output shape (" + std::to_string(expected_row) + ", " +
+            std::to_string(expected_row) + ") is orientation-ambiguous");
+    }
+    ensure_float_output(outputs_[0], "YOLO");
+
+    arch_ = DetectorArch::kYOLO;
+    std::cerr << "[TRTDetector] arch detected: YOLO26 (single concat output)" << std::endl;
 }
 
 const TRTDetector::TensorBuf* TRTDetector::findOutput(const char* name) const {
     for (const auto& o : outputs_) {
         if (o.name == name) return &o;
+    }
+    return nullptr;
+}
+
+TRTDetector::TensorBuf* TRTDetector::findImageInput() noexcept {
+    // Both branches require NCHW with C=3 — the name preference is only a
+    // hint, not a structural override.
+    auto looks_like_image = [](const TensorBuf& in) {
+        return in.shape.size() == 4 && in.shape[1] == 3;
+    };
+    for (auto& in : inputs_) {
+        if (in.name == "images" && looks_like_image(in)) return &in;
+    }
+    for (auto& in : inputs_) {
+        if (looks_like_image(in)) return &in;
     }
     return nullptr;
 }
@@ -221,8 +346,13 @@ void TRTDetector::freeAll() noexcept {
     for (auto& b : outputs_) free_buf(b);
     inputs_.clear();
     outputs_.clear();
+    binding_ptrs_.clear();
+    // TRT objects must release before the CUDA stream — TRT 8.x destructors
+    // can touch the stream during teardown.
+    context_.reset();
+    engine_.reset();
+    runtime_.reset();
     if (stream_) { cudaStreamDestroy(stream_); stream_ = nullptr; }
-    // context_, engine_, runtime_ released via unique_ptr (TRT 10 uses standard delete).
 }
 
 void TRTDetector::loadEngine(const std::string& path) {
@@ -248,24 +378,25 @@ void TRTDetector::allocateBuffers() {
 #if NV_TENSORRT_MAJOR >= 10
     const int n = engine_->getNbIOTensors();
 
-    // Identify the image input by name (or by 4-D NCHW shape with 3 channels)
-    // so dynamic spatial dims get bound to imgsz_ instead of 1 — otherwise a
-    // spatially-dynamic engine allocates 1×3×1×1 input buffer and overflows
-    // on the first H×W feed.
+    // Image input: dynamic spatial dims bind to imgsz_; other dynamic dims
+    // bind to 1. Same rank-4/C=3 predicate as findImageInput().
     std::string image_input_name;
+    std::string fallback_image_name;
     for (int i = 0; i < n; ++i) {
         const char* name = engine_->getIOTensorName(i);
         if (engine_->getTensorIOMode(name) != nvinfer1::TensorIOMode::kINPUT) continue;
-        if (std::string(name) == "images") { image_input_name = name; break; }
         nvinfer1::Dims d = engine_->getTensorShape(name);
-        if (d.nbDims == 4 && d.d[1] == 3 && image_input_name.empty()) {
+        const bool looks_like_image = (d.nbDims == 4 && d.d[1] == 3);
+        if (std::string(name) == "images" && looks_like_image) {
             image_input_name = name;
+            break;
+        }
+        if (looks_like_image && fallback_image_name.empty()) {
+            fallback_image_name = name;
         }
     }
+    if (image_input_name.empty()) image_input_name = fallback_image_name;
 
-    // Pass 1: bind input shapes so output shapes resolve and pass-2 buffers
-    // are sized correctly. Substitution: dynamic spatial dims of the image
-    // input → imgsz_; any other dynamic dim → 1.
     for (int i = 0; i < n; ++i) {
         const char* name = engine_->getIOTensorName(i);
         if (engine_->getTensorIOMode(name) != nvinfer1::TensorIOMode::kINPUT) continue;
@@ -281,8 +412,6 @@ void TRTDetector::allocateBuffers() {
         }
     }
 
-    // Pass 2: allocate device + pinned host for every I/O tensor using the
-    // context-resolved shapes.
     for (int i = 0; i < n; ++i) {
         const char* name = engine_->getIOTensorName(i);
         auto mode = engine_->getTensorIOMode(name);
@@ -296,6 +425,7 @@ void TRTDetector::allocateBuffers() {
         buf.elem_count = std::accumulate(buf.shape.begin(), buf.shape.end(), size_t{1},
                                          std::multiplies<size_t>());
         buf.elem_size = dtypeSize(dtype);
+        buf.is_fp32 = (dtype == nvinfer1::DataType::kFLOAT);
         buf.is_fp16 = (dtype == nvinfer1::DataType::kHALF);
         buf.is_int64 = isInt64Dtype(dtype);
         buf.is_int32 = isInt32Dtype(dtype);
@@ -313,20 +443,23 @@ void TRTDetector::allocateBuffers() {
     // TRT 8.x: index-based bindings API + enqueueV2.
     const int n = engine_->getNbBindings();
 
-    // Identify the image input — same intent as the TRT-10 branch above.
     int image_binding = -1;
+    int fallback_binding = -1;
     for (int i = 0; i < n; ++i) {
         if (!engine_->bindingIsInput(i)) continue;
         const char* name = engine_->getBindingName(i);
-        if (name && std::string(name) == "images") { image_binding = i; break; }
         nvinfer1::Dims d = engine_->getBindingDimensions(i);
-        if (d.nbDims == 4 && d.d[1] == 3 && image_binding < 0) {
+        const bool looks_like_image = (d.nbDims == 4 && d.d[1] == 3);
+        if (name && std::string(name) == "images" && looks_like_image) {
             image_binding = i;
+            break;
+        }
+        if (looks_like_image && fallback_binding < 0) {
+            fallback_binding = i;
         }
     }
+    if (image_binding < 0) image_binding = fallback_binding;
 
-    // Pass 1: bind dynamic spatial dims of the image input to imgsz_; every
-    // other dynamic dim falls back to 1. Mirrors the TRT-10 branch.
     for (int i = 0; i < n; ++i) {
         if (!engine_->bindingIsInput(i)) continue;
         nvinfer1::Dims dims = engine_->getBindingDimensions(i);
@@ -342,8 +475,6 @@ void TRTDetector::allocateBuffers() {
         }
     }
 
-    // Pass 2: allocate every binding; cache device pointers by binding index
-    // for enqueueV2.
     binding_ptrs_.assign(n, nullptr);
     for (int i = 0; i < n; ++i) {
         const char* name = engine_->getBindingName(i);
@@ -359,6 +490,7 @@ void TRTDetector::allocateBuffers() {
         buf.elem_count = std::accumulate(buf.shape.begin(), buf.shape.end(), size_t{1},
                                          std::multiplies<size_t>());
         buf.elem_size = dtypeSize(dtype);
+        buf.is_fp32 = (dtype == nvinfer1::DataType::kFLOAT);
         buf.is_fp16 = (dtype == nvinfer1::DataType::kHALF);
         buf.is_int64 = isInt64Dtype(dtype);
         buf.is_int32 = isInt32Dtype(dtype);
@@ -377,28 +509,44 @@ void TRTDetector::allocateBuffers() {
         throw std::runtime_error("Engine has no input or output tensors");
     }
 
-    // Sanity check: the image input ("images" if named, else first input)
-    // must be NCHW with 3 channels matching imgsz. DEIM engines have a
-    // second int64 "orig_target_sizes" input which is *not* NCHW — skip it.
-    const TensorBuf* image_in = nullptr;
-    for (const auto& in : inputs_) {
-        if (in.name == "images") { image_in = &in; break; }
+    // Image input must be NCHW, batch=1, square. orig_target_sizes=
+    // [imgsz, imgsz] assumes a square letterbox.
+    const TensorBuf* image_in = findImageInput();
+    if (image_in == nullptr) {
+        throw std::runtime_error(
+            "engine has no NCHW 3-channel image input "
+            "(expected a tensor named 'images' or a 4-D input with C=3)");
     }
-    if (image_in == nullptr) image_in = &inputs_[0];
 
     const auto& in_shape = image_in->shape;
-    if (in_shape.size() == 4) {
-        int h = static_cast<int>(in_shape[2]);
-        int w = static_cast<int>(in_shape[3]);
-        if (h != imgsz_ || w != imgsz_) {
-            std::cerr << "[TRT] warning: engine input " << w << "x" << h
-                      << " differs from imgsz=" << imgsz_ << "; using engine size." << std::endl;
-            imgsz_ = std::min(h, w);
-        }
+    int n = static_cast<int>(in_shape[0]);
+    int h = static_cast<int>(in_shape[2]);
+    int w = static_cast<int>(in_shape[3]);
+    if (n != 1) {
+        throw std::runtime_error(
+            "engine image input has batch=" + std::to_string(n) +
+            "; only batch=1 is supported");
+    }
+    if (h != w) {
+        throw std::runtime_error(
+            "engine image input is rectangular (" + std::to_string(w) + "x" +
+            std::to_string(h) + "); only square inputs are supported "
+            "(orig_target_sizes assumes square)");
+    }
+    if (h != imgsz_) {
+        std::cerr << "[TRT] warning: engine input " << w << "x" << h
+                  << " differs from imgsz=" << imgsz_
+                  << "; using engine size " << h << "." << std::endl;
+        imgsz_ = h;
     }
 
-    // YOLO sanity check is moved to detectArch()/postprocessYolo so DEIM
-    // (which has 3 outputs of disparate shape) doesn't trip it.
+    // Reject INT32/INT8/UINT8 image inputs — preprocess writes float bytes,
+    // an integer dtype would corrupt or overrun.
+    if (!image_in->is_fp32 && !image_in->is_fp16) {
+        throw std::runtime_error(
+            "engine image input has unsupported dtype "
+            "(only FP32 or FP16 are supported)");
+    }
 }
 
 void TRTDetector::preprocess(const cv::Mat& frame, float& scale, float& pad_w, float& pad_h) {
@@ -409,14 +557,10 @@ void TRTDetector::preprocess(const cv::Mat& frame, float& scale, float& pad_w, f
     cv::Mat lb_f32;
     lb.convertTo(lb_f32, CV_32FC3, 1.0 / 255.0);
 
-    // Image input is "images" by export convention; the first input is the
-    // image input on YOLO (single-input) and on DEIM (export_onnx.py emits
-    // images first, then orig_target_sizes). Look up by name to be safe.
-    TensorBuf* image_in = nullptr;
-    for (auto& in : inputs_) {
-        if (in.name == "images") { image_in = &in; break; }
+    TensorBuf* image_in = findImageInput();
+    if (image_in == nullptr) {
+        throw std::runtime_error("preprocess: image input lookup failed");
     }
-    if (image_in == nullptr) image_in = &inputs_[0];
     auto& in = *image_in;
     const int chw_plane = imgsz_ * imgsz_;
 
@@ -444,13 +588,9 @@ void TRTDetector::preprocess(const cv::Mat& frame, float& scale, float& pad_w, f
 }
 
 void TRTDetector::fillOrigTargetSizes() {
-    // RT-DETR/D-FINE convention (verified in DEIM/engine/deim/postprocessor.py:
-    // `bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)` after a
-    // box_convert(in='cxcywh', out='xyxy')). The repeat-by-2 broadcast pairs
-    // (s0, s1, s0, s1) onto (x1, y1, x2, y2), so passing `[H_lb, W_lb]`
-    // would scale x by H — wrong. Training/eval feed `(width, height)`
-    // (mirroring `T.Compose` PIL `(W, H)` ordering), so we feed
-    // `[imgsz, imgsz]` here which is correct since we letterbox to a square.
+    // DEIM postprocessor: `bbox_pred *= orig_target_sizes.repeat(1, 2)`
+    // broadcasts (s0, s1) onto (x1, y1, x2, y2). Square letterbox makes the
+    // order symmetric — `[imgsz, imgsz]` lands boxes in letterbox-pixel coords.
     TensorBuf* size_in = nullptr;
     for (auto& in : inputs_) {
         if (in.name == "orig_target_sizes") { size_in = &in; break; }
@@ -469,12 +609,10 @@ void TRTDetector::fillOrigTargetSizes() {
         host[0] = static_cast<int32_t>(imgsz_);
         host[1] = static_cast<int32_t>(imgsz_);
     } else {
-        // Float fallback — DEIM upstream is int64, but trtexec on some
-        // older converters has been observed to widen to float32. Both work
-        // arithmetically since the postprocessor multiplies elementwise.
-        auto* host = static_cast<float*>(size_in->host);
-        host[0] = static_cast<float>(imgsz_);
-        host[1] = static_cast<float>(imgsz_);
+        throw std::runtime_error(
+            "DEIM 'orig_target_sizes' has unsupported dtype "
+            "(expected int64 or int32); engine likely exported with a "
+            "non-standard postprocessor");
     }
 
     CUDA_CHECK(cudaMemcpyAsync(size_in->device, size_in->host,
@@ -527,23 +665,15 @@ std::vector<Detection> TRTDetector::postprocessYolo(const cv::Mat& orig,
         data = static_cast<const float*>(out.host);
     }
 
-    // YOLO26 emits (1, N, 4+nc); some exports transpose to (1, 4+nc, N).
-    // Pick orientation by matching against the known class count.
+    // YOLO26 emits (N, 4+nc) / (4+nc, N); detectArch() guarantees one axis
+    // equals 4+nc, so the orientation pick below is exact.
     int64_t d0 = shape.size() >= 3 ? shape[1] : shape[0];
     int64_t d1 = shape.size() >= 3 ? shape[2] : shape[1];
     const int64_t expected_row = 4 + static_cast<int64_t>(kClassNames.size());
 
-    bool transposed;
-    if (d1 == expected_row) {
-        transposed = false;
-    } else if (d0 == expected_row) {
-        transposed = true;
-    } else {
-        transposed = d0 < d1;  // fallback heuristic
-    }
+    const bool transposed = (d0 == expected_row);
     int64_t num_rows = transposed ? d1 : d0;
     int64_t row_len  = transposed ? d0 : d1;
-    if (row_len < 5) return {};
 
     const int num_classes = static_cast<int>(row_len) - 4;
     const int orig_w = orig.cols;
@@ -552,9 +682,7 @@ std::vector<Detection> TRTDetector::postprocessYolo(const cv::Mat& orig,
     std::vector<Detection> dets;
     dets.reserve(64);
 
-    // YOLO26 head (post-strip at Concat_3) emits boxes as xyxy in the
-    // letterboxed input frame — the in-graph Sub/Add_1 + stride-Mul produces
-    // (x1, y1, x2, y2) directly, not (cx, cy, w, h).
+    // Stripped YOLO26 head emits xyxy directly (NOT cxcywh).
     for (int64_t i = 0; i < num_rows; ++i) {
         float lx1, ly1, lx2, ly2;
         int cls_id = 0;
@@ -595,11 +723,8 @@ std::vector<Detection> TRTDetector::postprocessYolo(const cv::Mat& orig,
     return dets;
 }
 
-// Helper: read an output tensor (FP32 or FP16) into a contiguous float
-// buffer. Returns a pointer to either the original FP32 data (no copy) or
-// into the supplied scratch vector (FP16 expanded). Lives at namespace
-// scope but takes primitives so it doesn't need access to the private
-// TensorBuf type.
+// Read FP32/FP16 output into a contiguous float pointer (FP32 zero-copy,
+// FP16 expanded into scratch).
 static const float* readFloatOutput(const void* host, size_t elem_count,
                                     bool is_fp16, std::vector<float>& scratch) {
     if (is_fp16) {
@@ -622,13 +747,9 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
         throw std::runtime_error("DEIM postprocess: missing labels/boxes/scores outputs");
     }
 
-    // Top-K = labels.elem_count (after batch=1).
-    const size_t K = labels_buf->elem_count;
-    if (boxes_buf->elem_count != K * 4 || scores_buf->elem_count != K) {
-        std::cerr << "[TRT] DEIM output shape mismatch: labels=" << K
-                  << " boxes=" << boxes_buf->elem_count
-                  << " scores=" << scores_buf->elem_count << std::endl;
-    }
+    // Shapes (1, K) / (1, K, 4) / (1, K) verified at construction
+    // (detectArch DEIM gate).
+    const size_t K = static_cast<size_t>(labels_buf->shape[1]);
 
     const float* boxes  = readFloatOutput(boxes_buf->host,  boxes_buf->elem_count,
                                           boxes_buf->is_fp16, deim_boxes_scratch_);
@@ -646,8 +767,6 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
         float conf = scores[i];
         if (conf < conf_thresh_) continue;
 
-        // Labels can be int64 (modern TRT) or int32 (older / coerced
-        // exports); never float on a published DEIM checkpoint.
         int cls_id = -1;
         if (labels_buf->is_int64) {
             const int64_t* lab = static_cast<const int64_t*>(labels_buf->host);
@@ -656,10 +775,12 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
             const int32_t* lab = static_cast<const int32_t*>(labels_buf->host);
             cls_id = static_cast<int>(lab[i]);
         } else {
-            const float* lab = static_cast<const float*>(labels_buf->host);
-            cls_id = static_cast<int>(lab[i]);
+            throw std::runtime_error(
+                "DEIM 'labels' tensor has unsupported dtype "
+                "(expected int64 or int32)");
         }
-        if (cls_id < 0 || cls_id >= nc) continue;  // drop padded "no-object" slots
+        // DEIM may emit cls_id == nc for "no object"; drop instead of clamp.
+        if (cls_id < 0 || cls_id >= nc) continue;
 
         const float* bb = boxes + i * 4;
         float lx1 = bb[0], ly1 = bb[1], lx2 = bb[2], ly2 = bb[3];

@@ -67,13 +67,16 @@ private:
         std::string name;
         std::vector<int64_t> shape;
         size_t elem_count = 0;
-        size_t elem_size = 0;  // bytes per element (matches engine dtype)
+        size_t elem_size = 0;  // bytes per element
+        // Explicit dtype flags — postprocess uses these (not elem_size) so
+        // INT32 (4 bytes) doesn't get reinterpreted as FP32.
+        bool is_fp32 = false;
         bool is_fp16 = false;
         bool is_int64 = false;
         bool is_int32 = false;
-        void* device = nullptr;  // cudaMalloc'd
-        void* host = nullptr;    // pinned host buffer
-        int binding_index = -1;  // TRT 8.x enqueueV2 binding slot; unused on TRT 10+
+        void* device = nullptr;
+        void* host = nullptr;
+        int binding_index = -1;  // TRT 8.x only; -1 on TRT 10+
     };
 
     void loadEngine(const std::string& path);
@@ -87,8 +90,10 @@ private:
     std::vector<Detection> postprocessDeim(const cv::Mat& orig,
                                            float scale, float pad_w, float pad_h);
 
-    // Look up an output buffer by name; returns nullptr when missing.
     const TensorBuf* findOutput(const char* name) const;
+    // Prefers tensor named "images"; falls back to first 4-D input with C=3.
+    // Returns nullptr if no NCHW/C=3 candidate exists.
+    TensorBuf* findImageInput() noexcept;
 
     float conf_thresh_;
     int imgsz_;
@@ -103,11 +108,10 @@ private:
     std::vector<TensorBuf> inputs_;
     std::vector<TensorBuf> outputs_;
 
-    // TRT 8.x enqueueV2 needs a binding-indexed pointer array. Populated in
-    // allocateBuffers() and reused for every detect() call. Unused on TRT 10+.
+    // TRT 8.x enqueueV2 binding-indexed pointer array; unused on TRT 10+.
     std::vector<void*> binding_ptrs_;
 
-    // Reused per-frame buffer for FP16 → float32 expansion during postprocess.
+    // FP16 → float32 expansion scratch (reused per frame).
     std::vector<float> fp16_scratch_;
     std::vector<float> deim_boxes_scratch_;
     std::vector<float> deim_scores_scratch_;
