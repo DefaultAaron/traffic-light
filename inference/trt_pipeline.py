@@ -110,18 +110,22 @@ def _letterbox(
         (letterboxed_image, scale_ratio, (pad_w, pad_h))
     """
     h, w = img.shape[:2]
-    # float32 cast matches the C++ pipeline's letterbox math, avoiding ≤1 px
-    # drift on the --track-json parity comparison.
+    # float32 cast + half-away-from-zero rounding match the C++ pipeline's
+    # `static_cast<int>(std::round(...))`. Python's built-in round() does
+    # banker's rounding (half-to-even), which diverges on .5 cases.
+    def _round_haz(x: float) -> int:
+        return int(np.floor(x + 0.5)) if x >= 0 else -int(np.floor(-x + 0.5))
+
     r = float(np.float32(min(new_shape[0] / h, new_shape[1] / w)))
-    new_unpad = (int(round(w * r)), int(round(h * r)))
+    new_unpad = (_round_haz(w * r), _round_haz(h * r))
     dw = (new_shape[1] - new_unpad[0]) / 2
     dh = (new_shape[0] - new_unpad[1]) / 2
 
     if (w, h) != new_unpad:
         img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
 
-    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    top, bottom = _round_haz(dh - 0.1), _round_haz(dh + 0.1)
+    left, right = _round_haz(dw - 0.1), _round_haz(dw + 0.1)
     img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
     return img, r, (dw, dh)
 
