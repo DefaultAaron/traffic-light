@@ -303,17 +303,25 @@ restore_stripped_on_fail() {
     fi
 }
 
+# Decide whether to reuse or re-strip. SKIP_EXPORT=1 alone is NOT sufficient
+# to reuse — the stripped ONNX must also be (a) present, (b) at least as new
+# as the source .onnx, and (c) pass onnx.checker. Otherwise auto-re-strip
+# (it's a sub-second pass on a YOLO ONNX, far cheaper than building the
+# wrong engine off a stale graph). Codex stop-gate fix.
+NEED_RESTRIP=1
 if [[ "$SKIP_EXPORT" == "1" && -s "$STRIPPED_ABS" ]]; then
     if [[ "$ONNX_ABS" -nt "$STRIPPED_ABS" ]]; then
-        echo "WARNING: $ONNX_ABS is newer than $STRIPPED_ABS — SKIP_EXPORT may use a stale stripped ONNX." >&2
+        echo "SKIP_EXPORT=1: $STRIPPED_ABS is older than $ONNX_ABS — auto-re-stripping."
+    elif ! "$PYBIN" -c "import sys, onnx; onnx.checker.check_model(onnx.load(sys.argv[1]))" "$STRIPPED_ABS" 2>/dev/null; then
+        echo "SKIP_EXPORT=1: existing $STRIPPED_ABS failed onnx.checker (corrupt/truncated) — auto-re-stripping."
+    else
+        echo "SKIP_EXPORT=1 and existing stripped ONNX is valid + fresher than source — reusing $STRIPPED_ABS"
+        STRIPPED_VALIDATED=1
+        NEED_RESTRIP=0
     fi
-    if ! "$PYBIN" -c "import sys, onnx; onnx.checker.check_model(onnx.load(sys.argv[1]))" "$STRIPPED_ABS" 2>/dev/null; then
-        echo "SKIP_EXPORT=1 but $STRIPPED_ABS failed onnx.checker (corrupt/truncated)." >&2
-        exit 1
-    fi
-    echo "SKIP_EXPORT=1 and existing stripped ONNX validated — reusing $STRIPPED_ABS"
-    STRIPPED_VALIDATED=1
-else
+fi
+
+if (( NEED_RESTRIP == 1 )); then
     if [[ -f "$STRIPPED_ABS" ]]; then
         STRIPPED_BACKUP="${STRIPPED_ABS}.bak.$$"
         mv "$STRIPPED_ABS" "$STRIPPED_BACKUP"

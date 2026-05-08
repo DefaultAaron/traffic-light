@@ -234,7 +234,7 @@ Env overrides:
 | `PYTHON`                | auto-detect (`python` → `python3`) | Interpreter used for `onnx.checker`, `strip_yolo26_head.py`, and the JSON sidecar writer. Preflight asserts both `import onnx` and `import onnx_graphsurgeon` succeed before any expensive export. |
 | `TRTEXEC`               | `trtexec`  | Path to the `trtexec` binary. Required when `--build-engine` is passed. |
 | `FP16`                  | `1`        | `0` builds an `_fp32.engine` instead of overwriting the FP16 production engine |
-| `SKIP_EXPORT`           | `0`        | `1` reuses existing `.onnx` and `_stripped.onnx` if they validate. The engine itself is always rebuilt when `--build-engine` is set. |
+| `SKIP_EXPORT`           | `0`        | `1` reuses an existing `.onnx` if it validates. The stripped ONNX is reused only if it is **also at least as new as the `.onnx`**; if the `.onnx` was just refreshed (or the stripped artifact is stale / corrupt), the strip step re-runs automatically (sub-second cost). The engine itself is always rebuilt when `--build-engine` is set. |
 | `WORKSPACE_GB`          | `4`        | Converted to MB for `trtexec --memPoolSize=workspace:N`. **Note the unit difference: YOLO surface uses GB, DEIM surface uses MB.** |
 | `ALLOW_LARGE_WORKSPACE` | `0`        | `1` bypasses the 32 GB sanity cap on `WORKSPACE_GB` (defends against accidental MB→GB unit confusion). Recorded in the sidecar's `allow_large_workspace` field. |
 | `ALLOW_NON_YOLO26`      | `0`        | The script gates on a `/yolo26<…>` path segment in the checkpoint path. R2 only validated YOLO26. |
