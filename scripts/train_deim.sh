@@ -48,12 +48,17 @@ SEED="${SEED:-0}"        # override with: SEED=42 scripts/train_deim.sh s
 # Walk passthrough args ONCE to extract: resume flag, seed override, output-dir
 # override. Each parse is a separate guard so they compose cleanly.
 #
-# DEIM/train.py constructs ArgumentParser with `allow_abbrev=False` (primary
-# defense against argparse prefix-match desyncs of `--output-dir`/`--resume`/
-# `--seed` with the wrapper's exact-form parser). The wrapper ALSO rejects
-# abbreviated long-flag forms as defense-in-depth: a future DEIM upstream
-# pull that reverts allow_abbrev would otherwise silently re-introduce the
-# desync.
+# DEIM/ is gitignored (vendored upstream), so any local edit to
+# DEIM/train.py — including `allow_abbrev=False` on the ArgumentParser —
+# does NOT ship with this wrapper. A fresh clone gets the upstream
+# default `allow_abbrev=True`, which prefix-matches `--o`/`--r`/`--se`
+# etc. to one of `--output-dir`/`--resume`/`--seed`. The wrapper-side
+# rejection below is therefore the PRIMARY (not "defense-in-depth")
+# defense against the prefix-match desync, and must be exhaustive.
+#
+# Recommended local hardening (not required, not shipped): set
+# `allow_abbrev=False` on DEIM/train.py's ArgumentParser. The wrapper
+# behaves identically with or without that local edit.
 IS_RESUME=0
 OUTPUT_DIR_OVERRIDE=""
 prev=""
@@ -92,20 +97,23 @@ for arg in "$@"; do
         -r=*)          IS_RESUME=1 ;;
         -r?*)          IS_RESUME=1 ;;        # attached short form: -rfoo
     esac
-    # Defense-in-depth against argparse abbreviation: DEIM/train.py constructs
-    # ArgumentParser with `allow_abbrev=False`, but the wrapper still rejects
-    # the abbreviated long-flag forms that ambiguously prefix the three
-    # key options — a future DEIM upstream pull that reverts allow_abbrev
-    # would otherwise silently re-introduce the desync.
+    # Reject every argparse-unique abbreviation prefix that resolves to
+    # `--output-dir`/`--resume`/`--seed` under DEIM's default
+    # allow_abbrev=True. Enumerated against DEIM/train.py:64-81 long
+    # options: only `--output-dir` starts with `--o`, only `--resume`
+    # starts with `--r` (--print-rank/--local-rank don't), and only
+    # `--seed` matches `--se` (--summary-dir is ambiguous at `--s`
+    # alone, so `--s` is rejected by argparse already; `--se` resolves
+    # uniquely to --seed).
     case "$arg" in
         --output-dir|--output-dir=*) ;;
-        --output|--output=*|--outp|--outp=*|--outpu|--outpu=*|--output-d|--output-d=*|--output-di|--output-di=*|--ou|--ou=*|--out|--out=*|--o|--o=*)
+        --output|--output=*|--output-|--output-=*|--outp|--outp=*|--outpu|--outpu=*|--output-d|--output-d=*|--output-di|--output-di=*|--ou|--ou=*|--out|--out=*|--o|--o=*)
             echo "ERROR: abbreviated '$arg' is wrapper-blind. Use --output-dir or --output-dir=<dir> exactly." >&2
             exit 1 ;;
     esac
     case "$arg" in
         --resume|--resume=*) ;;
-        --re|--re=*|--res|--res=*|--resu|--resu=*|--resum|--resum=*)
+        --r|--r=*|--re|--re=*|--res|--res=*|--resu|--resu=*|--resum|--resum=*)
             echo "ERROR: abbreviated '$arg' is wrapper-blind. Use --resume or --resume=<ckpt> exactly." >&2
             exit 1 ;;
     esac
@@ -140,9 +148,19 @@ esac
 # passing it to DEIM. A `--seed=` with empty value or a `--seed` with no
 # following value would otherwise produce an invalid SEED.txt that survives
 # a subsequent argparse failure.
-if ! [[ "$SEED" =~ ^-?[0-9]+$ ]]; then
-    echo "ERROR: SEED='$SEED' is not a valid integer (env SEED or --seed argument)." >&2
-    exit 1
+#
+# On resume the env $SEED is intentionally ignored — the resume branch
+# (~30 lines below) sources $SEED from the existing run's SEED.txt and
+# strips any user `--seed` from the passthrough args. Validating env $SEED
+# here would reject an otherwise-valid resume invocation like
+# `SEED=abc scripts/train_deim.sh s --resume <ckpt>` whose SEED.txt is fine.
+# The resume branch performs its OWN integer check on the SEED.txt value;
+# fresh-run validation stays here.
+if [[ "$IS_RESUME" != "1" ]]; then
+    if ! [[ "$SEED" =~ ^-?[0-9]+$ ]]; then
+        echo "ERROR: SEED='$SEED' is not a valid integer (env SEED or --seed argument)." >&2
+        exit 1
+    fi
 fi
 
 # DEIM's `train.py` accepts `--output-dir <dir>` to override the config's
