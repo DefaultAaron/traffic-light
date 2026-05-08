@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "scripts/_tsm_activation_schema.json",
+  "title": "TSM Activation Gate Tripwire",
+  "description": "Required artifact at runs/_tsm_activation.json. Read-and-validated by every real TSM runner (concept_validation.py / full_dataset_train.py / streaming_engine_export.py) before invoking the trainer or exporter. Codifies docs/planning/temporal_optimization_plan.md §0.2 activation gate as a runtime tripwire — converts the comment-only policy into a runtime check that survives stub-replacement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "selected_detector_artifact_sha256",
+    "selected_detector_artifact_path",
+    "replay_evidence_path",
+    "approved_failure_mode_tags",
+    "activation_timestamp"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version pin. Bump on field-shape changes. Runners refuse files with unknown versions (exit 2)."
+    },
+    "selected_detector_artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA256 of the selected R2 detector's TRT engine .engine file (NOT best.pt — the engine is the deployment artifact whose backbone features TSM augments). Runner cross-checks this against the engine sidecar's engine_sha256 field; mismatch = exit 2."
+    },
+    "selected_detector_artifact_path": {
+      "type": "string",
+      "description": "Repo-relative path to the selected detector engine (e.g. runs/yolo26_s/best.engine). Runner asserts the file exists at this path AND its computed SHA256 equals selected_detector_artifact_sha256."
+    },
+    "replay_evidence_path": {
+      "type": "string",
+      "description": "Repo-relative path to the on-vehicle replay analysis artifact (markdown report, JSON, or directory) that surfaced the approved failure modes. Runner asserts the path exists; absolute paths are rejected (exit 2)."
+    },
+    "approved_failure_mode_tags": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "small_target_miss",
+          "occluded_miss",
+          "motion_blur"
+        ]
+      },
+      "description": "Subset of failure modes documented in plan §0.2 启动判定 row 1 / row 4 that this TSM phase claims to address. Runner cross-checks the chosen subset against the phase's documented scope (concept_validation.py docstring); mismatch = exit 2. Enum is closed — adding a new tag requires schema bump."
+    },
+    "activation_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when this activation record was written (e.g. 2026-05-09T14:30:00Z)."
+    },
+    "activation_author": {
+      "type": "string",
+      "description": "Optional. Person or system that approved the activation. Free-text."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional. Free-text rationale for the chosen failure-mode tags. Audited at phase report time, not enforced."
+    }
+  }
+}

@@ -61,8 +61,9 @@ Per-camera cache footprint:
 Headroom: §1.6 budget is 5 MB / camera. DEIM-S backbones with deeper stages
 (higher channel counts than YOLO26-s) sit at ~720 KB; YOLO26-s sits at ~90
 KB. Both cached in full stay comfortably under budget. If memory pressure
-surfaces post-Phase-1-C, drop P5 / HG_Stage 3 first (deepest stage; least
-helpful for small-target recall) — see §1.6 mitigation row 2.
+surfaces post-Phase-1-C, drop P5 / config `stage4` / `HGNetv2.stages[3]`
+first (deepest stage; least helpful for small-target recall) — see §1.6
+mitigation row 2.
 
 NOTE on size variants:
     DEIM-S currently maps to HGNetv2-B0 (per the traffic_light config). DEIM-M

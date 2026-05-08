@@ -1,10 +1,15 @@
-"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.1).
+"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.2).
 
 Authoritative spec: ``docs/planning/temporal_optimization_plan.md`` §1 (TSM
-recommended path) + §4 (data preparation) + §7 (file change list). The §2
-post-detector smoothers (HMM / AdaEMA / GRU / Transformer) are a SEPARATE
-optimization track and live under ``inference/temporal/`` per plan §7 — not in
-this package.
+recommended path; carries a 2026-05-09 v1.1 amendment in §1.1 noting the
+causal-end-to-end deviation applied here) + §4 (data preparation) + §7 (file
+change list). The §2 post-detector smoothers (HMM / AdaEMA / GRU / Transformer)
+are a SEPARATE optimization track and live under ``inference/temporal/`` per
+plan §7 — not in this package.
+
+Where this README diverges from the plan, this README wins (and the plan
+carries a dated amendment pointing at it). Ground-truth precedence:
+README §-anchors > plan §1.1 v1.1-amended sections > plan v1 prose.
 
 Mechanism (§1.1, with v1.1 causal-end-to-end hardening):
     YOLO neck (C3 / C2f / equivalent) BasicBlock.forward injects a 1/8-channel
@@ -155,15 +160,29 @@ Activation gate (§0.2):
 Deferred deliverables (NEW, not yet present):
     runs/_tsm_activation.json                  activation-gate tripwire
                                                (REQUIRED — see Activation gate
-                                               section below); contains
-                                               selected_detector_artifact_sha,
-                                               replay_evidence_path,
+                                               section below). Schema:
+                                               `scripts/_tsm_activation_schema.
+                                               json` (LANDED at v1.2). Required
+                                               fields: schema_version (=="1.0"),
+                                               selected_detector_artifact_
+                                               sha256 (64-hex; SHA256 of the
+                                               selected R2 detector .engine,
+                                               NOT best.pt), selected_detector_
+                                               artifact_path (repo-relative,
+                                               must exist; SHA cross-checked),
+                                               replay_evidence_path (repo-
+                                               relative, must exist; absolute
+                                               paths rejected),
                                                approved_failure_mode_tags
-                                               (subset of {small_target_miss,
-                                               occluded_miss, motion_blur});
-                                               every real runner reads-and-
-                                               validates before training, NOT
-                                               a comment-only rule.
+                                               (closed enum subset of
+                                               {small_target_miss,
+                                               occluded_miss, motion_blur},
+                                               minItems=1, uniqueItems),
+                                               activation_timestamp (ISO 8601
+                                               UTC). Every real runner
+                                               jsonschema-validates before
+                                               invoking the trainer/exporter
+                                               and exit 2 on any mismatch.
     runs/_tsm_decisions.json                   per-phase decision records
     scripts/_tsm_decision_schema.json          schema (fields parallel to
                                                _r2_decision_schema.json /
@@ -189,10 +208,25 @@ Engine sidecar carry-forward (§1.5 Phase 1-C, parallels KD §6#5):
       - tsm_feature_cache_stages: list[str] (e.g. ["P3", "P4"])
     Sidecar gap is the canonical pre-Phase-1-C blocker.
 
-Status v1.1:
+Status v1.2:
     Scaffold only — every runner / module / patch / gate stub raises
-    NotImplementedError. v1.1 hardens four MAJOR scaffold issues caught by
-    C3 review of v1.0:
+    NotImplementedError. v1.2 closes the C3 iter-2 ADDITIONAL-FINDINGS
+    against v1.1:
+      (a) Plan-authority conflict closed — plan §1.1 carries a dated
+          2026-05-09 v1.1 amendment supersesing the bidirectional `c2`
+          line; README header now declares precedence (README > amended
+          plan §1.1 > plan v1 prose).
+      (b) Activation tripwire is now schema-enforced via
+          `scripts/_tsm_activation_schema.json` (LANDED). SHA target
+          pinned to engine .engine; replay path required repo-relative
+          existing; failure-mode tags closed enum. Runner does
+          jsonschema validation, not shape-only validation.
+      (c) Residual `HG_Stage 3` wording in modules/__init__.py replaced
+          with `config stage4 / HGNetv2.stages[3]`.
+      (d) Stray `apples-to-\napples` line break in runners/__init__.py
+          rejoined.
+
+    v1.1 hardened four MAJOR scaffold issues caught by C3 iter-1:
       (1) c2 zeroed in both train and inference (causal end-to-end);
       (2) DEIM stage scope rewritten with three unambiguous identifiers
           (config stage2/3/4, self.stages[1]/[2]/[3], return_idx=[1,2,3]);
@@ -204,8 +238,7 @@ Status v1.1:
     Plus three MINOR: DEIM-S relabeled HGNetv2-B0 (per current configs);
     sidecar enforcement ownership clarified (export script writes,
     Phase 1-C runner validates post-export); activation gate gets a
-    tripwire artifact (`runs/_tsm_activation.json`).
+    tripwire artifact (`runs/_tsm_activation.json` — schema landed at v1.2).
 
-    No §-anchor renumbering coordinated with temporal_optimization_plan.md
-    yet — plan stays at v1; this README at v1.1.
+    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.2.
 """

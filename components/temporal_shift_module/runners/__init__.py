@@ -103,17 +103,25 @@ TSM-implementation contract (per v1.0 §1.4 + §1.5; classic mistakes pre-empted
   R1 DEIM-M reducer-crash precedent. Document the chosen path in the phase
   report.
 
-- Activation-gate tripwire (v1.1 hardening): every real runner MUST read
-  and validate `runs/_tsm_activation.json` BEFORE invoking the trainer.
-  Required fields: `selected_detector_artifact_sha`, `replay_evidence_path`,
-  `approved_failure_mode_tags` (a subset of {small_target_miss, occluded_
-  miss, motion_blur}). Exit 2 with a §0.2 reference if the file is missing,
-  malformed, or the failure-mode tags don't match the §0.2 启动判定 row that
-  this phase claims to address. This converts the activation gate from
-  comment-only policy to a runtime tripwire that survives stub-replacement —
-  i.e. a future commit that replaces `raise NotImplementedError` with real
-  trainer code MUST keep the activation-gate read; if it doesn't, code
-  review catches the missing call.
+- Activation-gate tripwire (v1.1 hardening, v1.2 schema-enforced): every
+  real runner MUST jsonschema-validate `runs/_tsm_activation.json` against
+  `scripts/_tsm_activation_schema.json` BEFORE invoking the trainer or
+  exporter. The schema (LANDED at v1.2) enforces: schema_version pin
+  (=="1.0"), selected_detector_artifact_sha256 (64-hex; SHA256 of the
+  selected R2 detector .engine — NOT best.pt; runner re-computes against
+  the file at selected_detector_artifact_path and exit 2 on mismatch),
+  selected_detector_artifact_path (repo-relative, must exist),
+  replay_evidence_path (repo-relative, must exist; absolute paths
+  rejected), approved_failure_mode_tags (closed enum subset of
+  {small_target_miss, occluded_miss, motion_blur}, minItems=1,
+  uniqueItems), activation_timestamp (ISO 8601 UTC). Runner exit 2 with a
+  §0.2 reference on any of: missing file, schema-validation failure, SHA
+  mismatch, replay path doesn't exist, failure-mode tag set doesn't
+  cover the phase's documented scope. This converts the activation gate
+  from comment-only policy to a runtime tripwire that survives stub-
+  replacement — a future commit replacing `raise NotImplementedError`
+  with real trainer code MUST keep the activation-gate validation; if
+  it doesn't, code review catches the missing import.
 
 ------------------------------------------------------------------------------
 DEIM-D-FINE-specific implementation notes (when --base-detector is deim_*)
@@ -137,8 +145,7 @@ DEIM-D-FINE-specific implementation notes (when --base-detector is deim_*)
 - GO-LSD wiring stays UNCHANGED — the runner does NOT toggle GO-LSD.
   Whatever the upstream DEIM config sets (GO-LSD on by default for D-FINE)
   is preserved. Comparing TSM-on vs TSM-off WITH GO-LSD on both sides is the
-  apples-to-
-  apples comparison.
+  apples-to-apples comparison.
 - Dataloader path is `DEIM/engine/data/coco_dataset.py` upstream + the
   components/temporal_shift_module/data/clip_collator.py wrapper. The
   collator MUST sample DEIM's RandomIoUCrop / RandomZoomOut / RandomHorizontal
