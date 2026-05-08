@@ -142,7 +142,16 @@ imgsz_for() {
     # iter-3 C2: require strict JSON int (not bool, not float, not string)
     # for the `imgsz` field; a stray `imgsz: 1280.0` would have coerced
     # successfully via int(...) under the prior code.
-    if [[ -e "$sidecar" ]]; then
+    # iter-4 C1: `-e` returns false for a BROKEN symlink (the link itself
+    # exists but its target doesn't). Such a sidecar is exactly the
+    # untrusted-artifact case the contract is meant to catch — must not
+    # fall through to the filename heuristic. `-L` catches symlinks
+    # regardless of target validity.
+    if [[ -e "$sidecar" || -L "$sidecar" ]]; then
+        if [[ -L "$sidecar" && ! -e "$sidecar" ]]; then
+            echo "ERROR: $sidecar is a broken symlink (target missing) — untrusted engine." >&2
+            return 1
+        fi
         if [[ ! -s "$sidecar" ]]; then
             echo "ERROR: $sidecar exists but is empty (0 bytes) — untrusted engine." >&2
             return 1
