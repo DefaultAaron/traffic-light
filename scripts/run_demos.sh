@@ -137,7 +137,20 @@ imgsz_for() {
     local engine_path=$1
     local name=$2
     local sidecar="${engine_path}.meta.json"
-    if [[ -s "$sidecar" ]]; then
+    # iter-3 C1: catch empty/unreadable sidecars too — `-s` misses 0-byte
+    # files, which would silently fall through to the filename heuristic.
+    # iter-3 C2: require strict JSON int (not bool, not float, not string)
+    # for the `imgsz` field; a stray `imgsz: 1280.0` would have coerced
+    # successfully via int(...) under the prior code.
+    if [[ -e "$sidecar" ]]; then
+        if [[ ! -s "$sidecar" ]]; then
+            echo "ERROR: $sidecar exists but is empty (0 bytes) — untrusted engine." >&2
+            return 1
+        fi
+        if [[ ! -r "$sidecar" ]]; then
+            echo "ERROR: $sidecar exists but is not readable — untrusted engine." >&2
+            return 1
+        fi
         local sidecar_imgsz
         sidecar_imgsz=$(python3 -c "
 import json, sys
@@ -145,8 +158,9 @@ try:
     with open(sys.argv[1]) as f:
         d = json.load(f)
     v = d.get('imgsz')
-    if v is not None:
-        print(int(v))
+    # bool is a subclass of int in Python; reject it explicitly.
+    if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+        print(v)
 except Exception:
     pass
 " "$sidecar" 2>/dev/null)
@@ -154,7 +168,7 @@ except Exception:
             echo "$sidecar_imgsz"
             return 0
         fi
-        echo "ERROR: $sidecar exists but does not yield a valid positive imgsz." >&2
+        echo "ERROR: $sidecar exists but does not yield a valid positive int imgsz." >&2
         echo "       The engine is untrusted per the sidecar contract; re-export to repair." >&2
         echo "       (Filename-heuristic fallback only applies when the sidecar is ABSENT.)" >&2
         return 1

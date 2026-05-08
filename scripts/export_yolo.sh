@@ -110,27 +110,33 @@ if [[ "$ALLOW_NON_YOLO26" != "1" ]]; then
     fi
 fi
 
-# C3 iter-2 C1 fix: cd+pwd does NOT follow symlinks (it preserves them in
-# $PWD). Use realpath when available (Linux coreutils + modern macOS 12+);
-# fall back to cd+pwd -P + readlink for the basename if realpath is
-# missing. This is the difference between catching `runs/yolo26_s/best.pt
-# -> /data/old_runs/yolov13_v2/best.pt` (now caught) vs accepting it
-# silently (prior bug).
-if command -v realpath >/dev/null 2>&1; then
-    CKPT_ABS=$(realpath "$CKPT")
-else
-    _ckpt_dir=$(cd "$(dirname "$CKPT")" && pwd -P)
-    _ckpt_base=$(basename "$CKPT")
-    if [[ -L "$_ckpt_dir/$_ckpt_base" ]] && command -v readlink >/dev/null 2>&1; then
-        _ckpt_target=$(readlink "$_ckpt_dir/$_ckpt_base")
-        if [[ "$_ckpt_target" = /* ]]; then
-            CKPT_ABS="$_ckpt_target"
-        else
-            CKPT_ABS="$_ckpt_dir/$_ckpt_target"
-        fi
+# Symlink-canonicalize $CKPT before the YOLO26 path-segment regex check.
+# Tries (in order): realpath (GNU coreutils + macOS 12+), `readlink -f`
+# (GNU readlink), then a Python fallback via `os.path.realpath`. The
+# previous fallback used `readlink` (no -f) which only follows ONE
+# symlink level and doesn't canonicalize `../` segments — chained or
+# relative-parent symlinks could bypass the gate. Python is always
+# available because the strip script + onnx.checker already require it.
+_resolve_ckpt() {
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$1"
+    elif readlink -f / >/dev/null 2>&1; then
+        readlink -f "$1"
     else
-        CKPT_ABS="$_ckpt_dir/$_ckpt_base"
+        local _py
+        if command -v python >/dev/null 2>&1; then _py=python
+        elif command -v python3 >/dev/null 2>&1; then _py=python3
+        else
+            echo "ERROR: cannot canonicalize symlinks — no realpath, readlink -f, or python on PATH." >&2
+            return 1
+        fi
+        "$_py" -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$1"
     fi
+}
+CKPT_ABS=$(_resolve_ckpt "$CKPT")
+if [[ -z "$CKPT_ABS" ]]; then
+    echo "ERROR: failed to resolve absolute path of '$CKPT'." >&2
+    exit 1
 fi
 # Re-check the YOLO26 path-segment regex against the symlink-resolved
 # absolute path. If $CKPT was a `runs/yolo26_s/best.pt` symlink pointing
