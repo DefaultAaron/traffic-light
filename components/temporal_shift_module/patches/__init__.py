@@ -16,15 +16,25 @@ Naming convention (when the patch lands):
                              `for layer in self.layers:` loop. Channel split
                              1/8 + 1/8 + 6/8 on `in_chs`.
 
-                             Patch scope (which HG_Stage instances get the
-                             monkey-patched HG_Block class):
-                                 patched:    HG_Stage 1, 2, 3 (mid + deep)
-                                 NOT patched: HGStem (`StemBlock`, line 125;
-                                              single-conv entry has no
-                                              temporal-context surface)
-                                 NOT patched: HG_Stage 0 (early features;
-                                              receptive field too small to
-                                              benefit from forward-shift)
+                             Patch scope — UNAMBIGUOUS, three equivalent forms:
+                                 config name:    stage2, stage3, stage4
+                                 code indexing:  HGNetv2.stages[1], [2], [3]
+                                 return mapping: return_idx = [1, 2, 3]
+                                                 (HGNetv2.__init__ default;
+                                                 matches DEIM-S traffic_light
+                                                 config line 32). These three
+                                                 are the stages whose features
+                                                 are returned to HybridEncoder.
+
+                                 patched:    HG_Block instances inside
+                                             stage2 / stage3 / stage4
+                                             (HGNetv2.stages[1..3])
+                                 NOT patched: StemBlock (line 125; single-conv
+                                              entry, no temporal surface)
+                                 NOT patched: stage1 (HGNetv2.stages[0]); its
+                                              output is not in return_idx and
+                                              receptive field is too small
+                                              for short-range temporal context
 
                              Strict OUT-OF-SCOPE on DEIM (do NOT add patch
                              files for these even if requested mid-cycle):

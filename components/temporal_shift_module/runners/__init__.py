@@ -24,6 +24,21 @@ and keeps the cross-phase decision JSON well-formed.
                                 mismatch). The flag exists for forward-compat
                                 only; passing any other value MUST exit 2 with
                                 a §1.4 reference.
+
+                                CRITICAL on DEIM (v1.1 hardening): the value
+                                "scratch" is NECESSARY but NOT SUFFICIENT.
+                                DEIM's HGNetv2 backbone defaults to
+                                `pretrained=True` (`DEIM/engine/backbone/
+                                hgnetv2.py:443`), which loads stage1
+                                pretrained weights from upstream HuggingFace
+                                regardless of the runner-level "scratch" flag.
+                                The runner MUST also resolve the loaded DEIM
+                                config and assert `HGNetv2.pretrained == False`
+                                (or override it to False before model init);
+                                exit 2 with a v1.1 hardening reference if the
+                                resolved config still loads pretrained backbone
+                                weights. Same guard for any Ultralytics
+                                upstream that auto-loads COCO weights.
     --output-dir runs/<phase_id>/
     --seed <int>                written to SEED.txt at run START (per project
                                 reproducibility contract; see CLAUDE.md +
@@ -80,10 +95,25 @@ TSM-implementation contract (per v1.0 §1.4 + §1.5; classic mistakes pre-empted
   ablation in a SINGLE training run (sharing the rest of the network with a
   conditional flag), then the un-shifted branch's parameters become unused on
   shift-on iterations and DDP's reducer crashes the same way R1 DEIM-M did at
-  ep40. Mitigation: run shift-on and shift-off as TWO SEPARATE jobs (planned
-  default per §1.4 "方案 1: A/B 对照" — two weights trained side by side, not
-  one weight with a runtime flag). Document the chosen path in the phase
+  ep40. Mitigation: run shift-on and shift-off as TWO SEPARATE jobs. This is
+  ALSO consistent with plan §1.4 方案 1 ("两个 weight 同时训练 (4090 同 GPU,
+  分时或分卡), 对比报告"), which mandates two separate weights side-by-side.
+  Plan §1.4 does not explicitly forbid a single-job runtime flag, but the
+  scaffold-time enforcement here forbids it on top of §1.4 because of the
+  R1 DEIM-M reducer-crash precedent. Document the chosen path in the phase
   report.
+
+- Activation-gate tripwire (v1.1 hardening): every real runner MUST read
+  and validate `runs/_tsm_activation.json` BEFORE invoking the trainer.
+  Required fields: `selected_detector_artifact_sha`, `replay_evidence_path`,
+  `approved_failure_mode_tags` (a subset of {small_target_miss, occluded_
+  miss, motion_blur}). Exit 2 with a §0.2 reference if the file is missing,
+  malformed, or the failure-mode tags don't match the §0.2 启动判定 row that
+  this phase claims to address. This converts the activation gate from
+  comment-only policy to a runtime tripwire that survives stub-replacement —
+  i.e. a future commit that replaces `raise NotImplementedError` with real
+  trainer code MUST keep the activation-gate read; if it doesn't, code
+  review catches the missing call.
 
 ------------------------------------------------------------------------------
 DEIM-D-FINE-specific implementation notes (when --base-detector is deim_*)
@@ -92,16 +122,22 @@ DEIM-D-FINE-specific implementation notes (when --base-detector is deim_*)
   NOT a YOLO BasicBlock. The runner MUST import the patch from
   `patches/deim_hg_block.py` and verify its `TARGET_DETECTOR == "deim_dfine"`
   before applying.
-- HGNetv2 stages 1, 2, 3 receive the patched HG_Block class; HGStem and
-  HG_Stage 0 do not. The runner asserts this before instantiating the model
-  and exits 2 if the patched-stage list disagrees with config.
+- Patched stage scope (UNAMBIGUOUS — three equivalent forms): config names
+  `stage2 / stage3 / stage4` = code indices `HGNetv2.stages[1] / [2] / [3]`
+  = the entries returned via `return_idx = [1, 2, 3]` in HGNetv2.__init__
+  (matching DEIM-S traffic_light config line 32). HG_Block instances inside
+  these three stages receive the patched class; StemBlock (line 125) and
+  stage1 (`HGNetv2.stages[0]`, NOT in return_idx) do not. The runner asserts
+  this before instantiating the model and exits 2 if the patched-stage list
+  disagrees with config.
 - HybridEncoder (`DEIM/engine/deim/hybrid_encoder.py`) and the D-FINE decoder
   are NEVER patched. The runner asserts the encoder and decoder modules are
   un-monkey-patched before training starts; if any encoder / decoder forward
   has been replaced, exit 2 with a §detector-applicability reference.
-- GO-LSD is orthogonal — the runner does NOT toggle GO-LSD. Whatever the
-  upstream DEIM config sets (GO-LSD on by default for D-FINE) is preserved.
-  Comparing TSM-on vs TSM-off WITH GO-LSD on both sides is the apples-to-
+- GO-LSD wiring stays UNCHANGED — the runner does NOT toggle GO-LSD.
+  Whatever the upstream DEIM config sets (GO-LSD on by default for D-FINE)
+  is preserved. Comparing TSM-on vs TSM-off WITH GO-LSD on both sides is the
+  apples-to-
   apples comparison.
 - Dataloader path is `DEIM/engine/data/coco_dataset.py` upstream + the
   components/temporal_shift_module/data/clip_collator.py wrapper. The
@@ -112,11 +148,19 @@ DEIM-D-FINE-specific implementation notes (when --base-detector is deim_*)
 - DEIM's `find_unused_parameters: True` (set in the existing M traffic_light
   config) is preserved. TSM adds zero learnable parameters so this flag's
   cost remains the existing reducer overhead — no new unused-param surface.
-- Engine sidecar: the DEIM export path (`scripts/export_deim.sh`) is the one
-  receiving the new TSM sidecar fields per the package init's "Engine sidecar
-  carry-forward" section. The runner does NOT write the sidecar — it writes
-  args.yaml and lets `export_deim.sh` (post-Phase-1-C) read those fields and
-  emit them to .meta.json.
+- Engine sidecar: ENFORCEMENT OWNERSHIP (v1.1 clarification).
+    write owner:    `scripts/export_yolo.sh` and `scripts/export_deim.sh`
+                    emit `.meta.json` (existing engine-sidecar contract).
+                    They will gain the four TSM fields when sidecar carry-
+                    forward lands (see top-level __init__.py).
+    validate owner: the Phase 1-C runner (`streaming_engine_export.py`)
+                    re-reads the sidecar AFTER `trtexec` returns and asserts
+                    the four TSM fields are present and match the training
+                    args.yaml. The Phase 1-C runner does NOT write the
+                    sidecar — only exports do — but the runner's exit-zero
+                    contract requires the post-export validation pass.
+  The training runners (Phase 1-A / 1-B) write only args.yaml; they don't
+  touch the sidecar at all.
 
 ------------------------------------------------------------------------------
 Phase-to-spec map (v1.0 §1.5)

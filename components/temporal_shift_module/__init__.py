@@ -1,4 +1,4 @@
-"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.0).
+"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.1).
 
 Authoritative spec: ``docs/planning/temporal_optimization_plan.md`` §1 (TSM
 recommended path) + §4 (data preparation) + §7 (file change list). The §2
@@ -6,15 +6,28 @@ post-detector smoothers (HMM / AdaEMA / GRU / Transformer) are a SEPARATE
 optimization track and live under ``inference/temporal/`` per plan §7 — not in
 this package.
 
-Mechanism (§1.1):
+Mechanism (§1.1, with v1.1 causal-end-to-end hardening):
     YOLO neck (C3 / C2f / equivalent) BasicBlock.forward injects a 1/8-channel
     forward shift along the time axis; remaining 7/8 channels keep the original
     spatial-only path. Streaming inference re-uses the previous frame's 1/8
     channel from a per-stage cache (no future frame access).
 
-    feat_t = Conv(concat(prev_feat_t.c1, feat_t.c2, feat_t.c3))
-        where split sizes = (1/8 C, 1/8 C reserved for offline bidirectional
-        training, 6/8 C residual). Online inference uses forward-shift only.
+    feat_t = Conv(concat(prev_feat_t.c1, zeros_like(c2), feat_t.c3))
+        where split sizes = (1/8 C, 1/8 C, 6/8 C residual).
+
+    v1.1 causal hardening (deviation from plan §1.1 explicit, applied here):
+        Plan §1.1 shows c2 ← next_feat_t.c2 (backward shift) for offline
+        bidirectional training, with the caveat "在线推理只用前向". Following
+        that literally would train with future-frame `c2` and zero-pad `c2`
+        in streaming inference — a 1/8-channel train/inference distribution
+        split that cleanly satisfies the project's highest-risk class:
+        Python ORT vs C++ TRT post/export parity divergence.
+
+        v1.1 enforces causal end-to-end: c2 is ZEROED in BOTH train and
+        inference. The slot is preserved for structural compatibility with
+        any future bidirectional-offline ablation, but DISABLED in v1.x.
+        This is original online-TSM design (Lin 2019); the ICCV-2019 paper
+        itself recommends single-direction shift for streaming deployment.
 
 Phases (§1.5):
     1-A  PoC, 1 week — small-data train (10% data, 20 epochs); gate on
@@ -67,13 +80,18 @@ Detector applicability (v1.0; spec gap vs plan §1 — added at scaffold time):
         `in_chs` of the block. HGNetv2 stage in_chs values (typically 64 /
         128 / 256 / 512 / 1024) are all 8-divisible.
 
-        Stages to patch: HG_Stage 1, 2, 3 (the deeper convolutional stages
-        of HGNetv2). HGStem (single-conv entry, line 125 `StemBlock`) and
-        HG_Stage 0 (very early features) are NOT patched — the small-target
-        / occluded recall benefit accrues at mid-to-deep stages where the
-        receptive field is still local enough for short-range temporal
-        context to matter. HG_Stage exact patching range is re-confirmed
-        per detector size at Phase 1-A scheduling.
+        Stages to patch (UNAMBIGUOUS identifiers — three equivalent forms):
+            config name:     stage2 / stage3 / stage4
+            code indexing:   HGNetv2.stages[1] / [2] / [3]
+            return mapping:  return_idx = [1, 2, 3] in HGNetv2.__init__,
+                             which is the DEIM-S traffic_light config default
+                             (`DEIM/configs/deim_dfine/
+                             deim_hgnetv2_s_traffic_light.yml:32`)
+        These are the three stages whose features are returned to the
+        HybridEncoder. The stem (`StemBlock`, line 125) and stage1
+        (`HGNetv2.stages[0]`, NOT a returned feature) are NOT patched — the
+        receptive field is too small for short-range temporal context to
+        matter, and stage1's output is not consumed downstream.
 
         OUT-OF-SCOPE for TSM injection on DEIM:
           - HybridEncoder (`DEIM/engine/deim/hybrid_encoder.py`) — the
@@ -85,12 +103,19 @@ Detector applicability (v1.0; spec gap vs plan §1 — added at scaffold time):
           - D-FINE decoder transformer layers — pure attention, not
             applicable.
 
-        ORTHOGONAL TO GO-LSD: GO-LSD is a decoder-side self-distillation
-        loss between adjacent decoder layers. TSM at backbone level does
-        not interact with GO-LSD at the loss or gradient path. Both can
-        stack without rewiring. (This also means: A0 ablation in the KD
-        plan's `deim_baseline_golsd_off.py` is independent of TSM
-        ablations; the two cells are addable.)
+        GO-LSD wiring stays UNCHANGED: GO-LSD is a decoder-side self-
+        distillation loss between adjacent decoder layers. TSM at backbone
+        level does NOT require any GO-LSD toggle, rewire, or hyperparam
+        change — keep GO-LSD fixed across TSM-on and TSM-off comparisons
+        for an apples-to-apples ablation.
+
+        IMPORTANT — TSM is not "loss-path independent" of GO-LSD: changing
+        backbone features changes the encoder/decoder activations that GO-LSD
+        consumes, and gradients from GO-LSD do flow back through the patched
+        backbone. The correct phrasing is "no separate wiring required",
+        NOT "they don't interact". Stacking with the KD A0 cell
+        (`deim_baseline_golsd_off.py`) is therefore a JOINT ablation, not a
+        sum of independent effects — design ablations accordingly.
 
         Dataloader: DEIM uses COCO-style (`DEIM/engine/data/coco_dataset.py`)
         with RandomIoUCrop / RandomZoomOut / RandomHorizontalFlip — different
@@ -128,6 +153,17 @@ Activation gate (§0.2):
     NOT auto-detect main-track readiness.
 
 Deferred deliverables (NEW, not yet present):
+    runs/_tsm_activation.json                  activation-gate tripwire
+                                               (REQUIRED — see Activation gate
+                                               section below); contains
+                                               selected_detector_artifact_sha,
+                                               replay_evidence_path,
+                                               approved_failure_mode_tags
+                                               (subset of {small_target_miss,
+                                               occluded_miss, motion_blur});
+                                               every real runner reads-and-
+                                               validates before training, NOT
+                                               a comment-only rule.
     runs/_tsm_decisions.json                   per-phase decision records
     scripts/_tsm_decision_schema.json          schema (fields parallel to
                                                _r2_decision_schema.json /
@@ -137,7 +173,11 @@ Deferred deliverables (NEW, not yet present):
     scripts/build_pseudo_labels.py             ByteTrack pseudo-label pipeline
                                                (§4.2; shared with §2 smoothers)
     inference/cpp/include/temporal_cache.hpp   C++ per-camera per-stage cache
+                                               (path TBC against plan §7
+                                               关键文件改动清单 at Phase 1-C
+                                               scheduling)
     inference/cpp/src/temporal_cache.cpp       cache implementation + lifecycle
+                                               (path TBC same as above)
     docs/integration/temporal_shift.md         deployment runbook (post-1-C)
 
 Engine sidecar carry-forward (§1.5 Phase 1-C, parallels KD §6#5):
@@ -149,8 +189,23 @@ Engine sidecar carry-forward (§1.5 Phase 1-C, parallels KD §6#5):
       - tsm_feature_cache_stages: list[str] (e.g. ["P3", "P4"])
     Sidecar gap is the canonical pre-Phase-1-C blocker.
 
-Status v1.0:
+Status v1.1:
     Scaffold only — every runner / module / patch / gate stub raises
-    NotImplementedError. Plan v1.0 of this README; no §-anchor renumbering
-    coordinated with temporal_optimization_plan.md yet.
+    NotImplementedError. v1.1 hardens four MAJOR scaffold issues caught by
+    C3 review of v1.0:
+      (1) c2 zeroed in both train and inference (causal end-to-end);
+      (2) DEIM stage scope rewritten with three unambiguous identifiers
+          (config stage2/3/4, self.stages[1]/[2]/[3], return_idx=[1,2,3]);
+      (3) GO-LSD claim rewritten — "no separate wiring required",
+          NOT "loss/gradient-path independent";
+      (4) DEIM `HGNetv2.pretrained=True` upstream default explicitly
+          countered in the runner contract — `--pretrained-init scratch`
+          alone is insufficient for DEIM TSM.
+    Plus three MINOR: DEIM-S relabeled HGNetv2-B0 (per current configs);
+    sidecar enforcement ownership clarified (export script writes,
+    Phase 1-C runner validates post-export); activation gate gets a
+    tripwire artifact (`runs/_tsm_activation.json`).
+
+    No §-anchor renumbering coordinated with temporal_optimization_plan.md
+    yet — plan stays at v1; this README at v1.1.
 """

@@ -23,7 +23,15 @@ Trigger condition:
 Sidecar fields (REQUIRED before this runner can ship — see
 components/temporal_shift_module/__init__.py "Engine sidecar carry-forward"):
     tsm_enabled, tsm_shift_fraction, tsm_clip_size_train, tsm_feature_cache_stages.
-The runner refuses to write to a sidecar that lacks these fields.
+
+Enforcement ownership (v1.1 clarification): the export script
+(`scripts/export_yolo.sh` or `scripts/export_deim.sh`) WRITES the sidecar
+including these fields; this runner VALIDATES the post-export sidecar
+content. If the sidecar is missing any of the four TSM fields, OR if any
+field disagrees with the training args.yaml, this runner exits 2 — it does
+NOT attempt to fix the sidecar. The export script is the canonical sidecar
+emitter per the existing engine-sidecar contract (see project memory and
+the KD scaffold's parallel sidecar carry-forward).
 
 Spec: docs/planning/temporal_optimization_plan.md §1.5 Phase 1-C + §1.6 risk
 row 2 (memory budget).
