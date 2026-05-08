@@ -1,0 +1,10 @@
+# YOLO26-l training config (KD A7 teacher candidate; v1.2 §2.4 capacity-allowed L tier).
+model: weights/yolo26l.pt
+data: data/traffic_light.yaml
+epochs: 100
+imgsz: 640
+batch: -1
+flipud: 0.0
+fliplr: 0.0
+name: yolo26l
+patience: 20

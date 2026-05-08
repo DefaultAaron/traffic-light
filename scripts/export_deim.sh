@@ -54,7 +54,7 @@ set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || $# -lt 2 ]]; then
     cat <<'EOF' >&2
-usage: scripts/export_deim.sh <n|s|m> <ckpt.pth> [--build-engine]
+usage: scripts/export_deim.sh <n|s|m|l> <ckpt.pth> [--build-engine]
 
 env: PYTHON, FP16, SKIP_EXPORT, WORKSPACE_MB, TRTEXEC
 EOF
@@ -67,8 +67,8 @@ BUILD_ENGINE=0
 [[ "${3:-}" == "--build-engine" ]] && BUILD_ENGINE=1
 
 case "$SIZE" in
-    n|s|m) ;;
-    *) echo "size must be one of: n s m" >&2; exit 1 ;;
+    n|s|m|l) ;;
+    *) echo "size must be one of: n s m l" >&2; exit 1 ;;
 esac
 
 if [[ ! -f "$CKPT" ]]; then
