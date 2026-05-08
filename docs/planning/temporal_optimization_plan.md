@@ -76,9 +76,6 @@ TSM: c1, c2, c3 = split(feat_t, [1/8, 1/8, 6/8])
 > **2026-05-09 v1.1 修订（与 `components/temporal_shift_module/__init__.py` 一致）**：
 > 上文"在线推理只用前向"会让 `c2` 在训练期吃 next_feat_t.c2、在流式推理期被零填，**1/8 channel 看到不同分布** —— 命中本项目最高风险类（Python ORT 与 C++ TRT 后处理 / 导出 parity 漂移）。本计划 v1 的位运算保留作为结构槽位，但 v1.1 起 **`c2` 在训练和推理两侧都置零**（causal end-to-end），与原始 online TSM (Lin 2019) 单向 shift 一致。受 v1.1 约束的实现细节以 `components/temporal_shift_module/__init__.py` 为准，本节落地时遵循 v1.1。
 
-```
-```
-
 ### 1.2 文献证据（VOD benchmarks）
 
 - **TSM (ICCV 2019)**：零参数、零 FLOPs。Jetson Nano 上视频识别 76 fps（13 ms），shift 模块本身 < 1 ms 开销。在 detection 任务上 "similar or higher performance than FGFA, much smaller latency per frame"。

@@ -103,25 +103,51 @@ TSM-implementation contract (per v1.0 §1.4 + §1.5; classic mistakes pre-empted
   R1 DEIM-M reducer-crash precedent. Document the chosen path in the phase
   report.
 
-- Activation-gate tripwire (v1.1 hardening, v1.2 schema-enforced): every
-  real runner MUST jsonschema-validate `runs/_tsm_activation.json` against
-  `scripts/_tsm_activation_schema.json` BEFORE invoking the trainer or
-  exporter. The schema (LANDED at v1.2) enforces: schema_version pin
-  (=="1.0"), selected_detector_artifact_sha256 (64-hex; SHA256 of the
-  selected R2 detector .engine — NOT best.pt; runner re-computes against
-  the file at selected_detector_artifact_path and exit 2 on mismatch),
-  selected_detector_artifact_path (repo-relative, must exist),
-  replay_evidence_path (repo-relative, must exist; absolute paths
-  rejected), approved_failure_mode_tags (closed enum subset of
-  {small_target_miss, occluded_miss, motion_blur}, minItems=1,
-  uniqueItems), activation_timestamp (ISO 8601 UTC). Runner exit 2 with a
-  §0.2 reference on any of: missing file, schema-validation failure, SHA
-  mismatch, replay path doesn't exist, failure-mode tag set doesn't
-  cover the phase's documented scope. This converts the activation gate
-  from comment-only policy to a runtime tripwire that survives stub-
-  replacement — a future commit replacing `raise NotImplementedError`
-  with real trainer code MUST keep the activation-gate validation; if
-  it doesn't, code review catches the missing import.
+- Activation-gate tripwire (v1.1 hardening, v1.2 schema-enforced, v1.3
+  three-way SHA + four-tag set + path-regex hardened):
+  Every real runner MUST execute the following algorithm BEFORE invoking
+  the trainer or exporter, and exit 2 on any failure with a §0.2
+  reference:
+
+    1. jsonschema-validate `runs/_tsm_activation.json` against
+       `scripts/_tsm_activation_schema.json`. The schema enforces:
+       schema_version pin ("1.0"); selected_detector_artifact_sha256
+       (64-hex); selected_detector_artifact_path (regex rejects absolute
+       paths and '..' segments, requires '.engine' suffix);
+       replay_evidence_path (regex rejects absolute and '..');
+       approved_failure_mode_tags (closed four-tag enum
+       {small_target_miss, far_distance_miss, occluded_miss,
+       motion_blur} per plan §0.2 row 1).
+    2. Assert selected_detector_artifact_path exists on disk.
+    3. Compute computed_sha = SHA256(selected_detector_artifact_path).
+    4. Locate sidecar at <selected_detector_artifact_path>.meta.json;
+       assert it exists and load sidecar.engine_sha256.
+    5. THREE-WAY SHA equality:
+           activation_sha (from JSON) == sidecar.engine_sha256
+                                      == computed_sha
+       Pairwise-mismatch diagnostics (exit 2 with the matching message):
+         - activation != computed && sidecar == computed
+             → "stale activation tripwire — regenerate activation file"
+         - sidecar != computed && activation == computed
+             → "stale engine sidecar — regenerate sidecar via export
+                script"
+         - activation == sidecar != computed
+             → "engine file changed without sidecar/activation update —
+                rebuild engine"
+         - all three differ
+             → "full re-activation required"
+    6. Assert replay_evidence_path exists on disk (no SHA needed; replay
+       evidence is human-curated, not machine-stable).
+    7. Assert approved_failure_mode_tags ⊆ phase's documented scope
+       (cross-check against the phase's runner docstring §0.2 mapping;
+       a Phase 1-A run claiming small_target_miss + far_distance_miss
+       must have those tags listed in concept_validation.py docstring).
+
+  This converts the activation gate from comment-only policy to a
+  runtime tripwire that survives stub-replacement — a future commit
+  replacing `raise NotImplementedError` with real trainer code MUST
+  keep the activation-gate validation; if it doesn't, code review
+  catches the missing import.
 
 ------------------------------------------------------------------------------
 DEIM-D-FINE-specific implementation notes (when --base-detector is deim_*)

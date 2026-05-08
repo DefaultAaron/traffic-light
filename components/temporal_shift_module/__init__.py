@@ -1,4 +1,4 @@
-"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.2).
+"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.3).
 
 Authoritative spec: ``docs/planning/temporal_optimization_plan.md`` §1 (TSM
 recommended path; carries a 2026-05-09 v1.1 amendment in §1.1 noting the
@@ -162,27 +162,35 @@ Deferred deliverables (NEW, not yet present):
                                                (REQUIRED — see Activation gate
                                                section below). Schema:
                                                `scripts/_tsm_activation_schema.
-                                               json` (LANDED at v1.2). Required
-                                               fields: schema_version (=="1.0"),
+                                               json` (LANDED v1.2, hardened
+                                               v1.3). Required fields:
+                                               schema_version (=="1.0");
                                                selected_detector_artifact_
-                                               sha256 (64-hex; SHA256 of the
-                                               selected R2 detector .engine,
-                                               NOT best.pt), selected_detector_
-                                               artifact_path (repo-relative,
-                                               must exist; SHA cross-checked),
-                                               replay_evidence_path (repo-
-                                               relative, must exist; absolute
-                                               paths rejected),
+                                               sha256 (64-hex); selected_
+                                               detector_artifact_path (regex-
+                                               enforced repo-relative, no
+                                               '..' segments, must end in
+                                               '.engine' NOT '.pt'); replay_
+                                               evidence_path (regex-enforced
+                                               repo-relative, no '..');
                                                approved_failure_mode_tags
                                                (closed enum subset of
                                                {small_target_miss,
-                                               occluded_miss, motion_blur},
-                                               minItems=1, uniqueItems),
+                                               far_distance_miss,
+                                               occluded_miss, motion_blur} —
+                                               four-tag set per plan §0.2 row
+                                               1; minItems=1, uniqueItems);
                                                activation_timestamp (ISO 8601
-                                               UTC). Every real runner
-                                               jsonschema-validates before
-                                               invoking the trainer/exporter
-                                               and exit 2 on any mismatch.
+                                               UTC). Three-way SHA equality
+                                               enforced: activation_sha ==
+                                               sidecar.engine_sha256 ==
+                                               computed_sha (runner re-
+                                               computes from file path AND
+                                               loads sidecar at
+                                               <path>.meta.json); pairwise
+                                               mismatch yields a targeted
+                                               stale-source diagnostic per
+                                               schema description.
     runs/_tsm_decisions.json                   per-phase decision records
     scripts/_tsm_decision_schema.json          schema (fields parallel to
                                                _r2_decision_schema.json /
@@ -208,19 +216,32 @@ Engine sidecar carry-forward (§1.5 Phase 1-C, parallels KD §6#5):
       - tsm_feature_cache_stages: list[str] (e.g. ["P3", "P4"])
     Sidecar gap is the canonical pre-Phase-1-C blocker.
 
-Status v1.2:
+Status v1.3:
     Scaffold only — every runner / module / patch / gate stub raises
-    NotImplementedError. v1.2 closes the C3 iter-2 ADDITIONAL-FINDINGS
-    against v1.1:
+    NotImplementedError. v1.3 closes the C3 iter-3 ADDITIONAL-FINDINGS
+    against v1.2:
+      (i)   Activation schema path semantics ENFORCED in JSON Schema, not
+            prose: selected_detector_artifact_path regex rejects absolute
+            paths and '..' segments and requires '.engine' suffix;
+            replay_evidence_path regex rejects absolute and '..'.
+      (ii)  Plan §0.2 row 1 four-tag set restored — `far_distance_miss`
+            added to approved_failure_mode_tags enum (was missing in
+            v1.2). Tag mapping documented in schema description: 小目标=
+            small_target_miss, 远距离=far_distance_miss, 遮挡=occluded_
+            miss, 运动模糊=motion_blur.
+      (iii) THREE-WAY SHA equality contract spelled out: activation_sha
+            == sidecar.engine_sha256 == computed_sha. Pairwise-mismatch
+            diagnostics in schema description (stale activation / stale
+            sidecar / changed engine / full re-activation).
+      (iv)  Empty fenced ``` pair at plan §1.1 line 79-80 removed (NIT).
+
+    v1.2 closed C3 iter-2 ADDITIONAL-FINDINGS against v1.1:
       (a) Plan-authority conflict closed — plan §1.1 carries a dated
           2026-05-09 v1.1 amendment supersesing the bidirectional `c2`
-          line; README header now declares precedence (README > amended
+          line; README header declares precedence (README > amended
           plan §1.1 > plan v1 prose).
-      (b) Activation tripwire is now schema-enforced via
-          `scripts/_tsm_activation_schema.json` (LANDED). SHA target
-          pinned to engine .engine; replay path required repo-relative
-          existing; failure-mode tags closed enum. Runner does
-          jsonschema validation, not shape-only validation.
+      (b) Activation tripwire schema-enforced via
+          `scripts/_tsm_activation_schema.json` (LANDED).
       (c) Residual `HG_Stage 3` wording in modules/__init__.py replaced
           with `config stage4 / HGNetv2.stages[3]`.
       (d) Stray `apples-to-\napples` line break in runners/__init__.py
@@ -240,5 +261,5 @@ Status v1.2:
     Phase 1-C runner validates post-export); activation gate gets a
     tripwire artifact (`runs/_tsm_activation.json` — schema landed at v1.2).
 
-    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.2.
+    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.3.
 """

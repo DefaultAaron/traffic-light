@@ -22,15 +22,17 @@
     "selected_detector_artifact_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "SHA256 of the selected R2 detector's TRT engine .engine file (NOT best.pt — the engine is the deployment artifact whose backbone features TSM augments). Runner cross-checks this against the engine sidecar's engine_sha256 field; mismatch = exit 2."
+      "description": "SHA256 of the selected R2 detector's TRT engine .engine file (NOT best.pt — the engine is the deployment artifact whose backbone features TSM augments). Runner enforces THREE-WAY EQUALITY: activation_sha (this field) == sidecar.engine_sha256 (loaded from <selected_detector_artifact_path>.meta.json) == computed_sha (re-computed by runner against the file at selected_detector_artifact_path). Pairwise mismatch diagnostic: (a) activation != computed && sidecar == computed → 'stale activation tripwire — regenerate activation file'; (b) sidecar != computed && activation == computed → 'stale engine sidecar — regenerate sidecar via export script'; (c) activation == sidecar != computed → 'engine file changed without sidecar/activation update — rebuild engine'; (d) all three differ → 'full re-activation required'. Exit 2 with the matching diagnostic on any pair mismatch."
     },
     "selected_detector_artifact_path": {
       "type": "string",
-      "description": "Repo-relative path to the selected detector engine (e.g. runs/yolo26_s/best.engine). Runner asserts the file exists at this path AND its computed SHA256 equals selected_detector_artifact_sha256."
+      "pattern": "^(?!.*\\.\\.)(?!/).+\\.engine$",
+      "description": "Repo-relative path to the selected detector TRT engine. Schema enforces: (1) does NOT start with '/' (absolute paths rejected); (2) does NOT contain '..' segments (parent-relative paths rejected); (3) ends with '.engine' (NOT .pt — the engine is the deployment artifact). Runner asserts the file exists at this path AND its computed SHA256 equals selected_detector_artifact_sha256 AND matches the sidecar's engine_sha256 (see SHA truth-order in selected_detector_artifact_sha256.description)."
     },
     "replay_evidence_path": {
       "type": "string",
-      "description": "Repo-relative path to the on-vehicle replay analysis artifact (markdown report, JSON, or directory) that surfaced the approved failure modes. Runner asserts the path exists; absolute paths are rejected (exit 2)."
+      "pattern": "^(?!.*\\.\\.)(?!/).+$",
+      "description": "Repo-relative path to the on-vehicle replay analysis artifact (markdown report, JSON, or directory) that surfaced the approved failure modes. Schema enforces non-absolute and non-parent-relative; runner additionally asserts the path exists (existence is filesystem-state, not schema-checkable)."
     },
     "approved_failure_mode_tags": {
       "type": "array",
@@ -40,11 +42,12 @@
         "type": "string",
         "enum": [
           "small_target_miss",
+          "far_distance_miss",
           "occluded_miss",
           "motion_blur"
         ]
       },
-      "description": "Subset of failure modes documented in plan §0.2 启动判定 row 1 / row 4 that this TSM phase claims to address. Runner cross-checks the chosen subset against the phase's documented scope (concept_validation.py docstring); mismatch = exit 2. Enum is closed — adding a new tag requires schema bump."
+      "description": "Subset of failure modes documented in plan §0.2 启动判定 row 1 (小目标 / 远距离 / 遮挡 / 运动模糊导致漏检) that this TSM phase claims to address. Tag mapping: 小目标=small_target_miss, 远距离=far_distance_miss, 遮挡=occluded_miss, 运动模糊=motion_blur. far_distance and small_target are kept as separate tags because they are operationally distinct in this project's traffic-light setting (far-distance failures may come from low-resolution cues even when small-target metrics aren't tripped, and vice versa). Runner cross-checks the chosen subset against the phase's documented scope (concept_validation.py docstring); mismatch = exit 2. Enum is closed — adding a new tag requires schema_version bump."
     },
     "activation_timestamp": {
       "type": "string",
