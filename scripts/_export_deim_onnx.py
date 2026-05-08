@@ -87,6 +87,11 @@ def main() -> None:
     output_file = args.resume.replace(".pth", ".onnx") if args.resume.endswith(".pth") else f"{args.resume}.onnx"
     dynamic_axes = {"images": {0: "N"}, "orig_target_sizes": {0: "N"}}
 
+    # dynamo=False forces the legacy TorchScript-based exporter, which
+    # decomposes LayerNorm into ReduceMean/Sub/Pow/Add. The default dynamo
+    # exporter (PyTorch 2.7+) emits a single LayerNormalization op at opset
+    # 17+, which TensorRT 8.5 (JetPack 5.1) cannot import natively — engine
+    # build aborts at parse time on Jetson Orin.
     torch.onnx.export(
         model,
         (data, size),
@@ -97,6 +102,7 @@ def main() -> None:
         opset_version=16,
         verbose=False,
         do_constant_folding=True,
+        dynamo=False,
     )
 
     if args.check:

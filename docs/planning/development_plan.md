@@ -288,7 +288,7 @@ R2 阶段开发分为**两条独立轨道**，互不阻塞：
 | R1-跟踪 | ByteTrack + EMA 投票（Plan A） | ✅ Python + C++ 两端落地（`inference/tracker/`、`inference/cpp/src/tracker.cpp`）；fixture 单测通过，Orin 集成待触发 |
 | R1-决策 | 应用决策规则 → 锁定 R1 部署基线 | ⏳ 待三轨训练完成 |
 | R2-规划 | 联合检测方案（10–14 类）锁定 | ✅ 范围锁定（下限 10）；待 PM 给出上限类清单 + 标注 SOP |
-| R2-重标注 | 方向 & 直行箭头补标 | ⏳ S2TLD 三子集已完成方向标注（见 `../data/class_distribution.md`）；BSTLD 测试集方向补标 + BSTLD/LISA `forwardGreen`/`forwardRed` 从圆灯恢复待做 |
+| R2-重标注 | 方向 & 直行箭头补标 | ⛔ 取消 — R1 数据集（LISA / BSTLD / S2TLD）已整体退役（2026-05-05 起），原 R1 重标注成果归档于 [`../_archive/class_distribution.md`](../_archive/class_distribution.md) 仅供历史对照；R2/R3 类别分布以自采数据实测为准 |
 | R2-数据采集 | 栏杆 + 部署现场数据 | ⏳ SOP V1 已落地 → [`../data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md)（双 8MP 相机 + LiDAR 多模态版）；一次实采同时获得：部署评估片段 + 栏杆训练集（MVP ≥2K，条件达成则双态各 ≥500）+ 新增灯型样本 + 距离 / 抖动 / 跨模态副产品 |
 | R2-硬负挖掘 | demo8 类 FP 帧入训练集 | ⏳ R2 训练前 — 用 R1 baseline 跑 demo8/11/13 → 挖 FP 帧 → 人工核验 → 加入 `bg/` |
 | R2-训练 | 10–14 类联合模型 + 训练增强（copy-paste + 类不平衡 + 可选 KD） | ⏳ 待数据 |

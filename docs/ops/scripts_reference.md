@@ -9,11 +9,12 @@ Quick map:
 |---|---|
 | [Demo sweep (Orin TRT)](#demo-sweep-orin-trt) | `run_demos.sh` |
 | [Training](#training) | `train_deim.sh`, `train_yolov13.sh` |
-| [Dataset conversion + merge](#dataset-conversion--merge) | `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py`, `yolo_to_coco.py` |
-| [Manual annotation](#manual-annotation) | `annotate_bstld.py`, `annotate_s2tld.py` |
-| [Model export](#model-export) | `strip_yolo26_head.py`, `export_deim.sh` |
+| [Dataset (R2 self-collected)](#dataset-r2-self-collected) | `yolo_to_coco.py` |
+| [Model export](#model-export) | `strip_yolo26_head.py`, `export_yolo.sh`, `export_deim.sh` |
 | [Flicker / tracker validation](#flicker--tracker-validation) | `measure_flicker.py`, `validate_flicker_reduction.py` |
 | [Network / ops](#network--ops) | `setup_reverse_tunnel.sh` |
+
+> **R1 dataset scripts retired** (2026-05-08): `annotate_bstld.py`, `annotate_s2tld.py`, `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py` were removed alongside R1 dataset abandonment per R2 data-replacement policy. R2 uses self-collected data only; the active workflow lives in `docs/data/r2_data_collection_sop.md`. Original R1 docs preserved under `docs/_archive/`.
 
 ---
 
@@ -42,6 +43,8 @@ TRACK=1 ./scripts/run_demos.sh            # tracker     → demo/<run>_tracker/<
 | `TRACK` | `0` | `1` enables `--track` and the `_tracker` suffix |
 | `SKIP_EXIST` | `1` | `1` skips outputs already on disk (resume-friendly) |
 | `OVERWRITE` | `0` | `1` deletes stale output (and any companion `.tracks.jsonl`) before re-running; forces `SKIP_EXIST=0` |
+| `ENGINE_FILTER` | empty | engine stem 子串匹配；仅扫匹配的 engine（例：`_fp32` 只扫 FP32 对照引擎） |
+| `ENGINE_EXCLUDE` | empty | engine stem 子串匹配；命中的 engine 被跳过（例：`_fp32` 在生产扫描时排除 FP32 对照引擎） |
 
 ### Tracker tuning (`TRACK=1` only)
 
@@ -76,6 +79,12 @@ TRACK=1 SAVE_TRACK_JSON=1 \
 # Higher confidence tracker sweep, regenerate.
 TRACK=1 CONF=0.35 OVERWRITE=1 \
     ./scripts/run_demos.sh
+
+# 生产 FP16 单独扫一遍（跳过同目录下的 _fp32 对照引擎）。
+ENGINE_EXCLUDE=_fp32 ./scripts/run_demos.sh
+
+# 仅扫 FP32 对照引擎（导出后做 FP32↔FP16 demo 视觉差异校核）。
+ENGINE_FILTER=_fp32 ./scripts/run_demos.sh
 ```
 
 ### Output formats
@@ -146,51 +155,24 @@ add DEIM torch/torchvision pins to project `pyproject.toml`.
 
 ---
 
-## Dataset conversion + merge
+## Dataset (R2 self-collected)
 
-Run once per dataset, then merge.
-
-| Script | Reads | Writes |
-|---|---|---|
-| `convert_bstld.py` | `data/raw/BSTLD/{train,test}` (YAML + Pascal VOC) | `data/raw/BSTLD/yolo_labels/*.txt` |
-| `convert_lisa.py` | `data/raw/LISA/Annotations/.../frameAnnotationsBOX.csv` | `data/raw/LISA/yolo_labels/*.txt` |
-| `convert_s2tld.py` | `data/raw/S2TLD/{,normal_1,normal_2}/Annotations-fix/*.xml` | `data/raw/S2TLD/yolo_labels/*.txt` |
-
-Then merge:
-
-```bash
-uv run python scripts/merge_datasets.py                         # default: 80/20 split, seed=42
-uv run python scripts/merge_datasets.py --val-ratio 0.15 --seed 7
-```
-
-Output: `data/merged/{images,labels}/{train,val}/` with dataset-prefixed
-filenames so collisions are impossible.
-
-For DEIM (COCO-format) on top of the merged dataset:
+R2 uses self-collected data exclusively (R1 datasets retired — see banner
+at top of this file). The dataset prep workflow now consists of just one
+step: convert YOLO labels to COCO format for DEIM training.
 
 ```bash
 uv run python scripts/yolo_to_coco.py
 uv run python scripts/yolo_to_coco.py --splits train val   # explicit
 ```
 
-Writes `data/merged/annotations/instances_{train,val}.json`. Categories
-are 0-indexed to match `traffic_light.yaml` (so set DEIM's
+Reads `data/merged/{images,labels}/{train,val}/` and writes
+`data/merged/annotations/instances_{train,val}.json`. Categories are
+0-indexed to match `traffic_light.yaml` (so set DEIM's
 `remap_mscoco_category: False`, `num_classes: 7`).
 
----
-
-## Manual annotation
-
-Tk GUIs for re-annotating BSTLD test set + S2TLD with directional labels.
-
-```bash
-python scripts/annotate_bstld.py
-python scripts/annotate_s2tld.py
-```
-
-Both: arrow keys to navigate, click-drag to draw, auto-save 500ms after
-last edit. `Ctrl+q` to quit. Reads/writes the dataset's
-`Annotations-fix/` (or `annotations_fix/`) directory.
+For the upstream collection + labeling SOP, see
+`docs/data/r2_data_collection_sop.md`.
 
 ---
 
@@ -211,47 +193,161 @@ uv run python scripts/strip_yolo26_head.py best.onnx best_stripped.onnx --num-cl
 Then on the Orin: `trtexec --onnx=best_stripped.onnx --saveEngine=...
 --fp16`.
 
-### `export_deim.sh`
+### `export_yolo.sh`
 
-将训练好的 DEIM-D-FINE 检查点导出为 ONNX，并可选在 Orin 上调用 `trtexec`
-生成 `.engine`。导出图包含 `model.deploy() + postprocessor.deploy()`，
-推理时直接吐出 `labels / boxes / scores`，下游 `inference/trt_pipeline.{py,cpp}`
-通过张量名自动识别 DEIM 路径，无需额外 flag。
+Export an Ultralytics YOLO (R2: YOLO26) checkpoint to ONNX, then
+optionally to a TensorRT engine on the Orin. Mirrors the
+`export_deim.sh` contract for size selection, FP16/FP32 precision,
+`_fp32` suffix, and the `<engine>.meta.json` sidecar — but uses
+`yolo export format=engine` (Ultralytics one-shot pipeline) instead of
+calling `trtexec` directly. The shared `inference/trt_pipeline.{py,cpp}`
+auto-detects the YOLO arch from tensor shapes — no flag needed
+downstream.
 
 ```bash
-# Step 1（DEIM venv，CPU 即可）：导出 ONNX
+# ONNX only (host CPU is fine; Ultralytics venv must be active)
+scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt
+
+# ONNX + engine in one shot (run on Orin)
+scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt --build-engine
+```
+
+Outputs (next to the input `.pt`):
+
+| File | When emitted | Purpose |
+|---|---|---|
+| `best.onnx`              | Always (re-emitted by `yolo export format=engine` even on the engine path) | Python ONNXRuntime / parity artifact |
+| `best.engine`            | `--build-engine` and `FP16=1` (default) | Orin TRT production engine |
+| `best_fp32.engine`       | `--build-engine` and `FP16=0` | FP32↔FP16 parity comparison only; coexists with the FP16 engine |
+| `<engine>.meta.json`     | After every successful engine build | Atomic provenance sidecar (see [Engine sidecar contract](#engine-sidecar-contract) below) |
+
+Env overrides:
+
+| Var | Default | Effect |
+|---|---|---|
+| `YOLO_BIN`              | `yolo`     | Path to the `yolo` CLI (looks up on `PATH`) |
+| `PYTHON`                | auto-detect (`python` → `python3`) | Interpreter used for `onnx.checker` and the JSON sidecar writer. Preflight asserts `import onnx` succeeds before any expensive export, so a wrong env fails fast. |
+| `FP16`                  | `1`        | `0` builds an `_fp32.engine` instead of overwriting the FP16 production engine |
+| `SKIP_EXPORT`           | `0`        | `1` reuses an existing `.onnx`. **Logged-and-ignored when `--build-engine` is set** — `yolo export format=engine` is a unified pipeline that re-runs both stages, and short-circuiting it is more fragile than paying the small re-export cost. |
+| `WORKSPACE_GB`          | `4`        | Forwarded to `yolo export workspace=N`. **Note the unit difference: YOLO uses GB, DEIM uses MB.** |
+| `ALLOW_LARGE_WORKSPACE` | `0`        | `1` bypasses the 32 GB sanity cap on `WORKSPACE_GB` (defends against accidental MB→GB unit confusion when copying flags from `export_deim.sh`). The override decision is recorded in the sidecar's `allow_large_workspace` field. |
+| `ALLOW_NON_YOLO26`      | `0`        | The script gates on a `/yolo26<…>` path segment in the checkpoint path. Set to `1` to export non-YOLO26 families (YOLOv13 etc.) — the CLI accepts them transparently, but R2 only validated YOLO26. |
+| `IMGSZ`                 | unset (training imgsz) | Override input size. Most callers should leave unset — Ultralytics uses the `imgsz` baked into the `.pt`. |
+
+FP16 vs FP32 parity workflow (mirrors DEIM):
+
+```bash
+# Build 1: FP16 production engine
+scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt --build-engine
+
+# Build 2: FP32 reference engine (NOTE: yolo's unified pipeline does not
+#          honor SKIP_EXPORT here — the .onnx is re-emitted, so the second
+#          build is effectively a clean rebuild. Provenance is still sound:
+#          source_pt_sha256 in both sidecars matches.)
+FP16=0 scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt --build-engine
+```
+
+> **YOLO26 head-strip is now built into the engine path.** R1 required a
+> manual `scripts/strip_yolo26_head.py` pass on the ONNX before
+> `trtexec`; in R2, `main.py export` and `export_yolo.sh` integrate that
+> step. `strip_yolo26_head.py` is still on disk for legacy / debug use
+> (e.g. when working with a hand-built ONNX outside the wrapper).
+
+### `export_deim.sh`
+
+Export a trained DEIM-D-FINE checkpoint to ONNX, then optionally invoke
+`trtexec` on the Orin to build the `.engine`. The exported graph
+includes `model.deploy() + postprocessor.deploy()`, so inference emits
+`labels / boxes / scores` directly; the shared
+`inference/trt_pipeline.{py,cpp}` auto-detects DEIM by tensor names, no
+flag needed.
+
+```bash
+# Step 1 (DEIM venv, CPU is fine): export ONNX
 scripts/export_deim.sh s runs/detect/deim_dfine_s-r1/best_stg2.pth
 
-# Step 2（Orin 上）：在同一台机器一并构建 engine
+# Step 2 (Orin): build engine in the same call
 scripts/export_deim.sh s runs/detect/deim_dfine_s-r1/best_stg2.pth --build-engine
 ```
 
-输出（与输入 `.pth` 同目录）：
+Outputs (next to the input `.pth`):
 
-| 文件 | 何时产出 | 用途 |
+| File | When emitted | Purpose |
 |---|---|---|
-| `best_stg2.onnx`    | 总是产出 | Python ONNXRuntime / 跨主机搬运 |
-| `best_stg2.engine`  | 仅 `--build-engine` | Orin TRT 推理（demo + 部署） |
+| `best_stg2.onnx`         | Always; `SKIP_EXPORT=1` reuses if `.onnx`+`.imgsz` both exist and pass `onnx.checker` + shape cross-check | Python ONNXRuntime / cross-host transfer |
+| `best_stg2.onnx.imgsz`   | Paired with the `.onnx` | Sidecar carrying the spatial size baked into the graph |
+| `best_stg2.engine`       | `--build-engine` and `FP16=1` (default) | Orin TRT production engine |
+| `best_stg2_fp32.engine`  | `--build-engine` and `FP16=0` | FP32↔FP16 parity comparison only; coexists with FP16 engine |
+| `<engine>.meta.json`     | After every successful engine build | Atomic provenance sidecar (see [Engine sidecar contract](#engine-sidecar-contract) below) |
 
-环境变量：
+Env overrides:
 
-| 变量 | 默认 | 说明 |
+| Var | Default | Effect |
 |---|---|---|
-| `PYTHON`        | `python` | DEIM venv 解释器（GPU 服务器上需先 `source DEIM/.venv/bin/activate` 或显式传 `PYTHON=...`） |
-| `FP16`          | `1`      | `--build-engine` 时给 `trtexec` 加 `--fp16` |
-| `WORKSPACE_MB`  | `4096`   | `trtexec --memPoolSize=workspace:N` |
-| `TRTEXEC`       | `trtexec` | 自定义 `trtexec` 路径 |
+| `PYTHON`                 | `python`   | DEIM venv interpreter (on the GPU server, `source DEIM/.venv/bin/activate` first or pass `PYTHON=...`) |
+| `FP16`                   | `1`        | `--build-engine` adds `--fp16` to `trtexec`; `0` outputs `<ckpt>_fp32.engine` |
+| `SKIP_EXPORT`            | `0`        | `1` skips `pth → onnx` when `.onnx`+`.imgsz` exist AND the cached pair passes `onnx.checker` + a shape cross-check (`.imgsz` value vs the ONNX `images` input dim). A stale `.imgsz` next to a fresh `.onnx` aborts with a refresh hint instead of silently building a mismatched engine. |
+| `WORKSPACE_MB`           | `4096`     | `trtexec --memPoolSize=workspace:N`. **Note the unit difference: DEIM uses MB, YOLO uses GB.** |
+| `ALLOW_SMALL_WORKSPACE`  | `0`        | `1` bypasses the 256 MB sanity floor on `WORKSPACE_MB` (defends against accidental GB→MB unit confusion when copying flags from `export_yolo.sh` — `WORKSPACE_GB=4` interpreted as MB would silently change builder tactics). |
+| `TRTEXEC`                | `trtexec` (PATH), fallback `/usr/src/tensorrt/bin/trtexec` | Custom `trtexec` path. **An explicitly set but missing `TRTEXEC` is a hard error** — the script refuses to silently fall back, because engine provenance is correctness-critical for Python↔C++ TRT parity. |
 
-> **没有 `IMGSZ` 覆盖项**：DEIM traffic_light 配置链 (`base/dfine_hgnetv2.yml`)
-> 已经声明 `eval_spatial_size`；输入尺寸由内嵌 Python 包装脚本
-> `scripts/_export_deim_onnx.py` 读取该字段并写入 `<ckpt>.onnx.imgsz` sidecar，
-> bash 段再据此构造 `trtexec --shapes`，确保两端口径一致。如需切换到 1280
-> 等更大尺寸，需要先按 config 注释（`deim_hgnetv2_s_traffic_light.yml`
-> 第 13–18 行）改训练流水线并重训，单纯改导出尺寸会得到一个精度崩坏的模型。
+FP16 vs FP32 parity workflow (build FP16 first, reuse the same `.onnx` for FP32):
+
+```bash
+# Build 1: FP16 production engine
+scripts/export_deim.sh s runs/.../best_stg2.pth --build-engine
+
+# Build 2: FP32 reference engine — reuses the .onnx from Build 1 (cheap)
+SKIP_EXPORT=1 FP16=0 scripts/export_deim.sh s runs/.../best_stg2.pth --build-engine
+```
+
+> **No `IMGSZ` override.** The DEIM `traffic_light` config chain
+> (`base/dfine_hgnetv2.yml`) declares `eval_spatial_size`; the wrapper
+> `scripts/_export_deim_onnx.py` reads that field and writes
+> `<ckpt>.onnx.imgsz`, then the bash side feeds it into `trtexec
+> --shapes`. To switch to 1280 etc., follow the config comments in
+> `deim_hgnetv2_s_traffic_light.yml` (lines 13–18) — retrain end-to-end.
+> Changing only the export size produces a model with collapsed
+> accuracy.
 >
-> 另注：DEIM 默认 `dynamic_axes` 把 batch 标记为动态。本脚本在 `trtexec` 阶段把
-> min/opt/max 都钉死成 1，避免动态 shape 的 kernel 选择代价；多 batch 部署
-> 需要时再展开 opt/max。
+> Also: DEIM marks the batch axis as dynamic by default. The wrapper
+> pins `min=opt=max=1` to let TRT specialize kernels for batch-1
+> deployment. Multi-batch deployment would need a different opt/max.
+
+#### Engine sidecar contract
+
+Both `export_yolo.sh` and `export_deim.sh` write a JSON sidecar at
+`<engine>.meta.json` after a successful build. The contract is:
+
+- **Atomic** — written to `<engine>.meta.json.tmp`, fsync'd, then
+  `os.replace`'d into place. Readers never see a partial file.
+- **Tied to engine integrity** — on any failure or interrupt before the
+  sidecar lands, the script's cleanup trap removes BOTH the engine and
+  any partial sidecar. The contract: **engine without a valid sidecar
+  is treated as untrusted and never appears on disk**.
+- **Size-stable** — engine SHA256 is computed only after the file size
+  is identical across two reads 0.5 s apart (handles slow flushes from
+  the underlying `trtexec` child).
+
+Schema (shared fields between YOLO and DEIM sidecars):
+
+| Field | YOLO | DEIM | Notes |
+|---|---|---|---|
+| `precision`              | `fp16` / `fp32` | `fp16` / `fp32` | |
+| `exporter`               | `ultralytics yolo` | `trtexec` | Which tool produced the engine |
+| `exporter_cmdline`       | full `yolo export …` | `null` | YOLO records the wrapper invocation |
+| `trtexec_cmdline`        | `null` | `shlex.join` of the actual trtexec call | DEIM records the raw trtexec invocation; the recorded string is paste-runnable |
+| `trt_version`            | best-effort | best-effort | `unknown` if the probe fails |
+| `cuda_version`           | best-effort | best-effort | parsed from `nvcc --version` |
+| `jetpack_version`        | best-effort | best-effort | parsed from `/etc/nv_tegra_release` |
+| `build_host`             | `hostname` | `hostname` | |
+| `build_timestamp`        | UTC ISO-8601 | UTC ISO-8601 | |
+| `source_pt[h]`           | `source_pt`, `source_pt_sha256` | `source_pth`, `source_pth_sha256` | absolute path + content hash |
+| `source_onnx_sha256`     | required (post-engine ONNX validated) | required (post-export ONNX validated) | parity artifact for Python ORT |
+| `engine_sha256`          | required | required | computed after size-stability protocol passes |
+| `engine_size_bytes`      | required | required | |
+| `workspace_gb` / `workspace_mb` | `workspace_gb`, `allow_large_workspace` | `workspace_mb` | YOLO carries the `ALLOW_LARGE_WORKSPACE` decision so audits can distinguish intentional 64 GB from unit-confusion |
+| `imgsz`                  | n/a (baked in `.pt`) | required (from `.imgsz` sidecar) | DEIM carries the spatial size explicitly for parity gating |
 
 ---
 

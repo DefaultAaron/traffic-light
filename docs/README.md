@@ -29,10 +29,9 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 
 | File | Contents |
 |---|---|
-| [`class_distribution.md`](data/class_distribution.md) | R1 7-class sample counts per dataset; R2 scope-change banner |
-| [`data_conversion.md`](data/data_conversion.md) | S2TLD / BSTLD / LISA → unified YOLO format conversion |
-| [`annotation_tool.md`](data/annotation_tool.md) | How to use the project's XML review / edit tools |
 | [`r2_data_collection_sop.md`](data/r2_data_collection_sop.md) | **R2 multimodal data collection + annotation SOP** — dual 8MP cameras (normal + wide) + LiDAR; sync, calibration, site/time coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics + cross-modal hard-neg mining, site-based splits, release prep |
+
+> R1 dataset prep docs (`class_distribution.md`, `data_conversion.md`, `annotation_tool.md`) are retired — see [`_archive/`](_archive/). R1 datasets (LISA / BSTLD / S2TLD) are no longer part of R2/R3 training or evidence base.
 
 ## reports/
 

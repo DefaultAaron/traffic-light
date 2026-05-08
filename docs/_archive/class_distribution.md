@@ -1,3 +1,9 @@
+> **Retired** — R1 dataset prep abandoned post-R2 data collection (see project memory R2 Data Replacement Policy). Kept for historical reproducibility only; not part of the active workflow.
+>
+> **重要**：本文统计基于 R1 数据集（LISA / BSTLD / S2TLD），R2/R3 已完全弃用这些数据集。**本文统计数据不可作为 R2/R3 设计或评估的证据**——R2/R3 类别分布以自采数据实测为准，参见 [`../data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md) 与 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展"。
+
+---
+
 # 标签分布分析（R1 7 类 / R2 9 类基线）
 
 **日期**: 2026-04-16（R1 7 类初版）、2026-04-23（追加 R2 9 类）

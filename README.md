@@ -59,20 +59,7 @@ command -v yolo                                            # expect yolov13/.ven
 
 ## Data Preparation
 
-Raw datasets are placed under `data/raw/{S2TLD,BSTLD,LISA}/` (see `scripts/convert_*.py`). Then:
-
-```bash
-# Per-dataset YOLO label conversion (run each once)
-uv run python scripts/convert_s2tld.py
-uv run python scripts/convert_bstld.py
-uv run python scripts/convert_lisa.py
-
-# Merge + stratified 80/20 split → data/merged/{images,labels}/{train,val}
-uv run python scripts/merge_datasets.py
-
-# COCO JSON for DEIM (images NOT duplicated; points at data/merged/images/)
-uv run python scripts/yolo_to_coco.py
-```
+R1 datasets (LISA / BSTLD / S2TLD) and their conversion scripts have been retired post-R2 self-collection — R2/R3 build on self-collected multimodal data per [`docs/data/r2_data_collection_sop.md`](docs/data/r2_data_collection_sop.md). The R1 conversion + merge recipe (`scripts/convert_*.py`, `scripts/merge_datasets.py`) is preserved in git history if needed for historical reproducibility.
 
 ## Training — Main Track (YOLO26)
 

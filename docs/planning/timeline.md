@@ -17,6 +17,8 @@
 >
 > R2 范围扩展详见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
 
+> **R1 数据集退役标记（2026-05-05）**：随 R2 自采数据完成首批整理，R1 数据集（LISA / BSTLD / S2TLD）整体退役，**不再参与 R2/R3 训练 / 评估 / 设计证据**。本计划阶段 A（第 1–2 周）的 R1 数据流水线条目仅保留为历史记录；其相关脚本（`scripts/convert_*.py`、`scripts/merge_datasets.py`、`scripts/annotate_*.py`）与文档（已归档至 [`../_archive/`](../_archive/)）会在后续清理中移除。R2/R3 数据流水线以自采数据为唯一基础，参见 [`../data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md)。
+
 ---
 
 ## 标签定义
@@ -150,7 +152,7 @@
 
 | 任务 | 说明 |
 |------|------|
-| 数据集组成 | 自采数据（主体，约 15K–20K）+ S2TLD（MIT 许可，1.2K）。排除 BSTLD/LISA（非商用许可） |
+| 数据集组成 | **R2 实际方案**：自采数据为唯一基础；R1 数据集（LISA / BSTLD / S2TLD）整体退役，不再混合使用（原计划"自采 + S2TLD"已废弃，原因含数据域偏差与商用许可双重收紧） |
 | 类别平衡 | 对稀有类别（右转箭头、新增直行箭头、栏杆状态）进行过采样，但保证新增类 < `red`/`green`（~50K），避免加剧现有不平衡 |
 | 数据增强 | HSV 抖动、Mosaic、MixUp、稀有类别 Copy-Paste |
 | 合成数据 | 如箭头数据仍不足：将箭头灯裁剪合成到真实背景上 |

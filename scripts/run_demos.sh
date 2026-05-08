@@ -34,6 +34,18 @@
 #                    present (resume friendly)
 #   OVERWRITE        1 to delete + regenerate     (default: 0)
 #                    stale outputs (forces SKIP_EXIST=0)
+#   ENGINE_FILTER    substring; if set, only      (default: empty)
+#                    sweep engines whose stem
+#                    contains it (e.g. `_fp32`)
+#   ENGINE_EXCLUDE   substring; if set, skip      (default: empty)
+#                    engines whose stem contains
+#                    it (e.g. `_fp32` for prod-only)
+#
+# Note: ENGINE_FILTER / ENGINE_EXCLUDE are unanchored substring matches
+# against the engine basename (no path component). Today's only convention
+# is `_fp32` as a trailing suffix (`<ckpt>_fp32.engine`); if future engines
+# add other tags (e.g. `_int8`, `_mixed`), keep the tag as a trailing suffix
+# before `.engine` to avoid accidental matches against unrelated stems.
 #
 # Tracker tuning (TRACK=1 only; falls through to tl_demo built-in if unset):
 #   ALPHA            tracker EMA alpha
@@ -54,14 +66,19 @@ TRACK=${TRACK:-0}
 SKIP_EXIST=${SKIP_EXIST:-1}
 SAVE_TRACK_JSON=${SAVE_TRACK_JSON:-0}
 OVERWRITE=${OVERWRITE:-0}
+ENGINE_FILTER=${ENGINE_FILTER:-}
+ENGINE_EXCLUDE=${ENGINE_EXCLUDE:-}
 [[ "$OVERWRITE" == "1" ]] && SKIP_EXIST=0
 
-if [[ ! -x "$TL_DEMO" ]]; then
-    echo "tl_demo binary not found or not executable: $TL_DEMO" >&2
-    echo "Build it first:" >&2
-    echo "  cmake -S inference/cpp -B inference/cpp/build && cmake --build inference/cpp/build -j" >&2
+if [[ -n "$ENGINE_FILTER" && -n "$ENGINE_EXCLUDE" && "$ENGINE_FILTER" == "$ENGINE_EXCLUDE" ]]; then
+    echo "ENGINE_FILTER and ENGINE_EXCLUDE are both set to '$ENGINE_FILTER' — every engine would be skipped" >&2
     exit 1
 fi
+
+# tl_demo binary check is deferred until after engine discovery — see
+# below. A truly empty workspace (no engines AND no tl_demo build) must
+# resolve to "nothing to sweep → exit 0", not "missing binary → exit 1",
+# so the binary requirement is only enforced when we actually have work.
 
 # In-flight target paths: the trap below removes these on SIGINT/SIGTERM so a
 # signal-killed tl_demo can't leave a truncated .mp4 (which the default
@@ -123,6 +140,43 @@ fi
 
 shopt -s nullglob
 
+# Two-pass design: the binary check + demos requirement must NOT fire
+# until we know at least one (run × engine) actually passes the filters.
+# Otherwise a CI-clean workspace, or a typo'd ENGINE_FILTER that rejects
+# everything, gets misreported as "missing tl_demo" / "no demo videos"
+# instead of "nothing to sweep" / "filter rejected all engines".
+#
+# Pass 1 (silent): discover runs, count engines that survive the filters
+# into selected_engines. No side effects.
+# Pass 2 (verbose): the original sweep loop, with announcements + exec.
+
+runs=( "$RUNS_DIR"/*/ )
+selected_engines=0
+for run_path in "${runs[@]}"; do
+    run_name=$(basename "$run_path")
+    [[ "$run_name" == *_tracker ]] && continue
+    engines=( "$run_path"*.engine )
+    (( ${#engines[@]} == 0 )) && continue
+    for eng in "${engines[@]}"; do
+        eng_name=$(basename "$eng" .engine)
+        [[ -n "$ENGINE_FILTER"  && "$eng_name" != *"$ENGINE_FILTER"*  ]] && continue
+        [[ -n "$ENGINE_EXCLUDE" && "$eng_name" == *"$ENGINE_EXCLUDE"* ]] && continue
+        selected_engines=$((selected_engines + 1))
+    done
+done
+
+# Branch on the selection count BEFORE requiring demos / tl_demo. Empty
+# selection with a filter set is loud-fail (likely typo); without filter
+# it's "nothing to sweep" → exit 0.
+if (( selected_engines == 0 )); then
+    if [[ -n "$ENGINE_FILTER" || -n "$ENGINE_EXCLUDE" ]]; then
+        echo "ENGINE_FILTER='$ENGINE_FILTER' / ENGINE_EXCLUDE='$ENGINE_EXCLUDE' selected zero engines under $RUNS_DIR — refusing to exit successfully" >&2
+        exit 1
+    fi
+    echo "no engines under $RUNS_DIR — nothing to sweep"
+    exit 0
+fi
+
 demos=( "$DEMOS_DIR"/demo*.mp4 )
 if (( ${#demos[@]} == 0 )); then
     echo "no demo videos found under $DEMOS_DIR/demo*.mp4" >&2
@@ -131,9 +185,13 @@ fi
 IFS=$'\n' demos=( $(printf '%s\n' "${demos[@]}" | sort -V) )
 unset IFS
 
-runs=( "$RUNS_DIR"/*/ )
-if (( ${#runs[@]} == 0 )); then
-    echo "no runs found under $RUNS_DIR/*/" >&2
+# Engines selected AND demos present — only now is tl_demo a hard prereq.
+# Failing here points the user at the right action (build the binary)
+# rather than masking it as "no work to do".
+if [[ ! -x "$TL_DEMO" ]]; then
+    echo "tl_demo binary not found or not executable: $TL_DEMO" >&2
+    echo "Build it first:" >&2
+    echo "  cmake -S inference/cpp -B inference/cpp/build && cmake --build inference/cpp/build -j" >&2
     exit 1
 fi
 
@@ -144,6 +202,10 @@ failed=0
 
 start_ts=$(date +%s)
 
+# Pass 2: actual sweep. Filter checks are repeated here because pass 1 was
+# silent — pass 2 logs each skip so the operator can see why a particular
+# engine was excluded. The selected_engines counter from pass 1 is the
+# authoritative selection size; this pass does not increment it.
 for run_path in "${runs[@]}"; do
     run_name=$(basename "$run_path")
     # Skip already-tracker-suffixed dirs in case OUT_DIR == RUNS_DIR.
@@ -159,6 +221,14 @@ for run_path in "${runs[@]}"; do
 
     for eng in "${engines[@]}"; do
         eng_name=$(basename "$eng" .engine)
+        if [[ -n "$ENGINE_FILTER" && "$eng_name" != *"$ENGINE_FILTER"* ]]; then
+            echo "[$run_name/$eng_name] does not match ENGINE_FILTER=$ENGINE_FILTER — skipping"
+            continue
+        fi
+        if [[ -n "$ENGINE_EXCLUDE" && "$eng_name" == *"$ENGINE_EXCLUDE"* ]]; then
+            echo "[$run_name/$eng_name] matches ENGINE_EXCLUDE=$ENGINE_EXCLUDE — skipping"
+            continue
+        fi
         imgsz=$(imgsz_for "$eng_name")
         out_subdir="$OUT_DIR/${run_name}${run_suffix}/$eng_name"
         mkdir -p "$out_subdir"
@@ -232,5 +302,11 @@ done
 
 elapsed=$(( $(date +%s) - start_ts ))
 echo
-echo "Sweep ($mode_label) done: $done_count ran, $skipped skipped, $failed failed, $total total (${elapsed}s)"
+echo "Sweep ($mode_label) done: $done_count ran, $skipped skipped, $failed failed, $total total"
+echo "  selected $selected_engines engine(s) after ENGINE_FILTER/ENGINE_EXCLUDE; elapsed ${elapsed}s"
+
+# Note: the zero-selection branch is handled in pass 1 above (before
+# demos / tl_demo are required), so we don't need a final-tally guard
+# here. Reaching this point means selected_engines >= 1.
+
 (( failed == 0 ))

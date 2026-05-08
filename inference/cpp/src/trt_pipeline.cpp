@@ -542,12 +542,12 @@ void TRTDetector::allocateBuffers() {
     }
 
     const auto& in_shape = image_in->shape;
-    int n = static_cast<int>(in_shape[0]);
+    int batch = static_cast<int>(in_shape[0]);
     int h = static_cast<int>(in_shape[2]);
     int w = static_cast<int>(in_shape[3]);
-    if (n != 1) {
+    if (batch != 1) {
         throw std::runtime_error(
-            "engine image input has batch=" + std::to_string(n) +
+            "engine image input has batch=" + std::to_string(batch) +
             "; only batch=1 is supported");
     }
     if (h != w) {

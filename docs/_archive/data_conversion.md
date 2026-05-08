@@ -1,3 +1,9 @@
+> **Retired** — R1 dataset prep abandoned post-R2 data collection (see project memory R2 Data Replacement Policy). Kept for historical reproducibility only; not part of the active workflow.
+>
+> 关联脚本（`scripts/convert_s2tld.py`、`scripts/convert_bstld.py`、`scripts/convert_lisa.py`、`scripts/merge_datasets.py`）已随 R1 数据集（LISA / BSTLD / S2TLD）一并退役，删除时点见 git 历史。R2/R3 数据合并流水线基于自采数据另行制定，参见 [`../data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md)。
+
+---
+
 # 数据转换计划
 
 > **文档版本**：本文以 **P1 3 类** 为基准记录流程与映射表。R1 已切至 7 类（分布见 [`class_distribution.md`](./class_distribution.md)），R2 将切至 10–14 类；类别映射在各 `convert_*.py` 内更新，**R1/R2 脚本映射以源码为准**，本文不同步 P1 之外的映射细节。

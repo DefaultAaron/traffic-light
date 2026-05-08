@@ -1,3 +1,9 @@
+> **Retired** — R1 dataset prep abandoned post-R2 data collection (see project memory R2 Data Replacement Policy). Kept for historical reproducibility only; not part of the active workflow.
+>
+> 关联脚本（`scripts/annotate_bstld.py`、`scripts/annotate_s2tld.py`）已随 R1 数据集（LISA / BSTLD / S2TLD）一并退役，删除时点见 git 历史。R2/R3 自采数据的标注工作流另行制定，参见 [`../data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md)。
+
+---
+
 # 标注工具使用指南
 
 本项目提供两个标注工具，用于第二阶段方向标注的审阅与编辑。两个工具界面与操作方式一致，仅数据源不同。
