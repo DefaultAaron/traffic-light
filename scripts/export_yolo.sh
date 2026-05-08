@@ -110,16 +110,37 @@ if [[ "$ALLOW_NON_YOLO26" != "1" ]]; then
     fi
 fi
 
-CKPT_ABS="$(cd "$(dirname "$CKPT")" && pwd)/$(basename "$CKPT")"
-# F10 fix: re-check the YOLO26 path-segment regex against the symlink-resolved
-# absolute path too. If $CKPT was a `runs/yolo26_s/best.pt` symlink pointing
+# C3 iter-2 C1 fix: cd+pwd does NOT follow symlinks (it preserves them in
+# $PWD). Use realpath when available (Linux coreutils + modern macOS 12+);
+# fall back to cd+pwd -P + readlink for the basename if realpath is
+# missing. This is the difference between catching `runs/yolo26_s/best.pt
+# -> /data/old_runs/yolov13_v2/best.pt` (now caught) vs accepting it
+# silently (prior bug).
+if command -v realpath >/dev/null 2>&1; then
+    CKPT_ABS=$(realpath "$CKPT")
+else
+    _ckpt_dir=$(cd "$(dirname "$CKPT")" && pwd -P)
+    _ckpt_base=$(basename "$CKPT")
+    if [[ -L "$_ckpt_dir/$_ckpt_base" ]] && command -v readlink >/dev/null 2>&1; then
+        _ckpt_target=$(readlink "$_ckpt_dir/$_ckpt_base")
+        if [[ "$_ckpt_target" = /* ]]; then
+            CKPT_ABS="$_ckpt_target"
+        else
+            CKPT_ABS="$_ckpt_dir/$_ckpt_target"
+        fi
+    else
+        CKPT_ABS="$_ckpt_dir/$_ckpt_base"
+    fi
+fi
+# Re-check the YOLO26 path-segment regex against the symlink-resolved
+# absolute path. If $CKPT was a `runs/yolo26_s/best.pt` symlink pointing
 # at `/data/old_runs/yolov13_v2/best.pt`, the original $CKPT regex would
-# accept it but downstream artifacts land under the resolved (yolov13) path,
-# silently violating the YOLO26-only contract.
+# accept it but the resolved path lives under yolov13, violating the
+# YOLO26-only contract.
 if [[ "$ALLOW_NON_YOLO26" != "1" ]]; then
     if ! [[ "/$CKPT_ABS" =~ /yolo26[^/]* ]]; then
         echo "ERROR: resolved checkpoint path '$CKPT_ABS' has no path segment starting with 'yolo26'." >&2
-        echo "       (Symlink resolution may have hopped out of a yolo26 dir.)" >&2
+        echo "       (Symlink resolution hopped out of a yolo26 dir.)" >&2
         echo "       Set ALLOW_NON_YOLO26=1 to bypass." >&2
         exit 1
     fi

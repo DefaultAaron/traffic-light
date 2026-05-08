@@ -340,20 +340,22 @@ Schema (shared fields between YOLO and DEIM sidecars):
 | Field | YOLO | DEIM | Notes |
 |---|---|---|---|
 | `precision`              | `fp16` / `fp32` | `fp16` / `fp32` | |
-| `exporter`               | `ultralytics yolo` | `trtexec` | Which tool produced the engine |
-| `exporter_cmdline`       | full `yolo export …` | `null` | YOLO records the wrapper invocation |
-| `trtexec_cmdline`        | `null` | `shlex.join` of the actual trtexec call | DEIM records the raw trtexec invocation; the recorded string is paste-runnable |
+| `exporter`               | `ultralytics yolo + strip_yolo26_head + trtexec` | `trtexec` | Which tools produced the engine. YOLO is now a three-stage pipeline (export ONNX → strip head → trtexec) so the field reflects that; DEIM is single-call trtexec. |
+| `exporter_cmdline`       | full `yolo export … && python strip_yolo26_head.py …` (shlex-joined) | `null` | YOLO records the ONNX-export + strip-script composite |
+| `trtexec_cmdline`        | full `trtexec …` (shlex-joined) | `shlex.join` of the actual trtexec call | Both wrappers now record paste-runnable `trtexec` invocations |
 | `trt_version`            | best-effort | best-effort | `unknown` if the probe fails |
 | `cuda_version`           | best-effort | best-effort | parsed from `nvcc --version` |
 | `jetpack_version`        | best-effort | best-effort | parsed from `/etc/nv_tegra_release` |
 | `build_host`             | `hostname` | `hostname` | |
 | `build_timestamp`        | UTC ISO-8601 | UTC ISO-8601 | |
 | `source_pt[h]`           | `source_pt`, `source_pt_sha256` | `source_pth`, `source_pth_sha256` | absolute path + content hash |
-| `source_onnx_sha256`     | required (post-engine ONNX validated) | required (post-export ONNX validated) | parity artifact for Python ORT |
+| `source_onnx_sha256`     | required (full-head ONNX validated) | required (post-export ONNX validated) | provenance artifact |
+| `source_onnx_stripped_sha256` | required (head-stripped ONNX validated) | n/a | YOLO-only — the ONNX `trtexec` actually consumed |
+| `num_classes`            | required (read from `.pt` or `NUM_CLASSES` env) | n/a | YOLO-only first-class field; carries the value passed to `strip_yolo26_head.py --num-classes`. **Must match the runtime `CLASS_NAMES` size in `inference/trt_pipeline.{py,cpp}`.** |
+| `imgsz`                  | required (read from `.pt` or `IMGSZ` env) | required (from `.imgsz` sidecar) | Both now carry spatial size explicitly. `run_demos.sh` reads this field; legacy filename heuristic only applies when the sidecar is absent. |
 | `engine_sha256`          | required | required | computed after size-stability protocol passes |
 | `engine_size_bytes`      | required | required | |
 | `workspace_gb` / `workspace_mb` | `workspace_gb`, `allow_large_workspace` | `workspace_mb` | YOLO carries the `ALLOW_LARGE_WORKSPACE` decision so audits can distinguish intentional 64 GB from unit-confusion |
-| `imgsz`                  | n/a (baked in `.pt`) | required (from `.imgsz` sidecar) | DEIM carries the spatial size explicitly for parity gating |
 
 ---
 

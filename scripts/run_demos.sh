@@ -124,6 +124,15 @@ should_skip() {
 # `*1280* → 1280`, else 640). Sidecar lives at `<engine>.meta.json`
 # next to the engine and is emitted by both export_yolo.sh and
 # export_deim.sh.
+#
+# C3 iter-2 C2 fix: when a sidecar EXISTS but doesn't yield a valid
+# positive imgsz (corrupt JSON, missing field, non-integer), hard-fail
+# with a clear error rather than silently falling through to the
+# filename heuristic. Per the locked-plan engine sidecar contract, an
+# engine without a matching trusted sidecar is untrusted; demoing it at
+# the wrong shape is exactly the failure mode the contract exists to
+# prevent. The filename-heuristic fallback path is reserved for legacy
+# engines built before the sidecar contract landed (no sidecar at all).
 imgsz_for() {
     local engine_path=$1
     local name=$2
@@ -141,10 +150,14 @@ try:
 except Exception:
     pass
 " "$sidecar" 2>/dev/null)
-        if [[ -n "$sidecar_imgsz" && "$sidecar_imgsz" =~ ^[0-9]+$ ]]; then
+        if [[ -n "$sidecar_imgsz" && "$sidecar_imgsz" =~ ^[0-9]+$ && "$sidecar_imgsz" -gt 0 ]]; then
             echo "$sidecar_imgsz"
             return 0
         fi
+        echo "ERROR: $sidecar exists but does not yield a valid positive imgsz." >&2
+        echo "       The engine is untrusted per the sidecar contract; re-export to repair." >&2
+        echo "       (Filename-heuristic fallback only applies when the sidecar is ABSENT.)" >&2
+        return 1
     fi
     case "$name" in
         *1536*) echo 1536 ;;
