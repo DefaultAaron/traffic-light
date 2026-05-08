@@ -1,10 +1,12 @@
-"""Cell A4 — A2 + A3 combo (logit KD stacked on PKD feature KD).
+"""Combined logit + feature KD: stacks A2-style logit KL on A3-style PKD (cell A4).
 
-Trigger (v1.2 §5.1): max(A2a/A2b, A3) mAP@0.5:0.95 lower-CI > A1 point estimate
-AND no safety-class with full_val_support ≥ 30 has AP delta < −0.5 pp.
-Tie-break (≤ 0.1 pp gap on main metric): pick cheaper wall-clock.
+Trigger (v1.2 §5.1, CI method per §6#1 — default bootstrap1000):
+  max(A2a/A2b, A3) mAP@0.5:0.95 lower-CI > A1 point estimate
+  AND no safety-class with full_val_support ≥ 30 has AP delta < −0.5 pp.
+Tie-break (≤ 0.1 pp gap on main metric): pick cheaper wall-clock —
+  but BOTH candidates must already pass the §6#2 safety-class gate.
 
-Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A4 (P1, all families).
+Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A4 + §6#1 (P1, all families).
 Status: scaffold — lands when A4 is scheduled (gated on A2/A3 outcomes).
 """
 

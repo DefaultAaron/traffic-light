@@ -1,7 +1,7 @@
-"""Cell A3 — selection winner ← same-family M, PKD feature-level (Pearson Correlation).
+"""Pearson Correlation feature KD (PKD): selection winner ← same-family M (cell A3).
 
 Hint layers per v1.2 §5.3:
-    YOLO student : neck P3/P4/P5 (stride 8/16/32)
+    YOLO student : neck P3/P4/P5 (stride 8/16/32) + head pre-logit
     DEIM student : encoder memory + decoder intermediate
 
 Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A3 (P0, all families).

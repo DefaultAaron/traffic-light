@@ -1,4 +1,4 @@
-"""Cell A2a — YOLO26-s ← YOLO26-m, classification logit KL only.
+"""YOLO classification-logit KD: YOLO26-s student ← YOLO26-m teacher (cell A2a).
 
 YOLO26 has DFL removed, so localization-distillation (LD) does not apply on the
 YOLO path; A2a is cls-logit KL only. DEIM students go through A2b instead.

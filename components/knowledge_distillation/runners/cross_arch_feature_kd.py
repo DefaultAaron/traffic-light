@@ -1,4 +1,4 @@
-"""Cell A6 — cross-arch PKD (DEIM ↔ YOLO), arch-agnostic feature-level only.
+"""Cross-architecture feature KD (DEIM ↔ YOLO): arch-agnostic feature-level only via PKD (cell A6).
 
 Spec (v1.2 §4.3):
     direction       teacher = complementary-family M; student = same-family S

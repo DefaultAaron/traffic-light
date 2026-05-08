@@ -1,4 +1,4 @@
-"""Cell A1 — scratch baseline + wall-clock anchor (DEIM path: GO-LSD on).
+"""Scratch baseline + wall-clock anchor for KD-acceptance gates (cell A1; DEIM path: GO-LSD on).
 
 Role: Control + anchor for KD-acceptance §6 gates #1 and #4. T_scratch_A1
 records its wall-clock; A2+ cells must finish under 2.0 × T_scratch_A1.

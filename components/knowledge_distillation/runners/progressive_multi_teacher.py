@@ -1,4 +1,4 @@
-"""Cell A5 — MTPD progressive 2-teacher distillation.
+"""Progressive multi-teacher KD (MTPD): 2-teacher sequence, same-family M then cross-family M (cell A5).
 
 Sequence (v1.2 §3.2): teacher 1 = same-family M (stable features),
 teacher 2 = complementary-family M. Synchronous 4-teacher is explicitly
