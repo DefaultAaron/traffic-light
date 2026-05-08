@@ -31,6 +31,13 @@ import sys
 _PHASE = "1-B"
 _SUMMARY = "Full train: full R2 dataset, scratch init, main-detector hyperparams"
 
+# Activation-gate scope (v1.4): same plan-§0.2 row-1 four-tag set as Phase 1-A
+# (Phase 1-B is a generalization, not a re-scoping). Future per-phase
+# narrowing replaces this constant, NOT prose docstring.
+PHASE_FAILURE_MODE_SCOPE = frozenset(
+    {"small_target_miss", "far_distance_miss", "occluded_miss", "motion_blur"}
+)
+
 
 def main() -> int:
     raise NotImplementedError(

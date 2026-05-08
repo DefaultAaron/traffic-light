@@ -16,8 +16,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "1.0",
-      "description": "Schema version pin. Bump on field-shape changes. Runners refuse files with unknown versions (exit 2)."
+      "const": "1.1",
+      "description": "Schema version pin. Bump on field-shape changes OR closed-enum extension. Runners refuse files with unknown versions (exit 2). v1.0 (initial v1.2 commit) had a 3-tag enum; v1.1 (v1.3 commit) added far_distance_miss to make the enum a 4-tag set per plan §0.2 row 1. Activation files written against v1.0 schema must be regenerated."
     },
     "selected_detector_artifact_sha256": {
       "type": "string",
@@ -26,13 +26,13 @@
     },
     "selected_detector_artifact_path": {
       "type": "string",
-      "pattern": "^(?!.*\\.\\.)(?!/).+\\.engine$",
-      "description": "Repo-relative path to the selected detector TRT engine. Schema enforces: (1) does NOT start with '/' (absolute paths rejected); (2) does NOT contain '..' segments (parent-relative paths rejected); (3) ends with '.engine' (NOT .pt — the engine is the deployment artifact). Runner asserts the file exists at this path AND its computed SHA256 equals selected_detector_artifact_sha256 AND matches the sidecar's engine_sha256 (see SHA truth-order in selected_detector_artifact_sha256.description)."
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.engine$",
+      "description": "Repo-relative POSIX path to the selected detector TRT engine. Schema enforces: (1) does NOT start with '/' (absolute Unix paths rejected); (2) does NOT start with '<letter>:' (Windows drive prefixes rejected); (3) does NOT contain backslash (Windows-style separators rejected); (4) does NOT contain '..' as a path segment (parent-relative rejected); (5) ends with '.engine' (NOT .pt — engine is the deployment artifact). Runner asserts the file exists at this path AND its computed SHA256 equals selected_detector_artifact_sha256 AND matches the sidecar's engine_sha256 (see SHA truth-order in selected_detector_artifact_sha256.description)."
     },
     "replay_evidence_path": {
       "type": "string",
-      "pattern": "^(?!.*\\.\\.)(?!/).+$",
-      "description": "Repo-relative path to the on-vehicle replay analysis artifact (markdown report, JSON, or directory) that surfaced the approved failure modes. Schema enforces non-absolute and non-parent-relative; runner additionally asserts the path exists (existence is filesystem-state, not schema-checkable)."
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$",
+      "description": "Repo-relative POSIX path to the on-vehicle replay analysis artifact (markdown report, JSON, or directory) that surfaced the approved failure modes. Schema enforces same exclusions as selected_detector_artifact_path (no leading '/', no '<letter>:', no backslash, no '..' segments) but no extension constraint. Runner additionally asserts the path exists (existence is filesystem-state, not schema-checkable)."
     },
     "approved_failure_mode_tags": {
       "type": "array",

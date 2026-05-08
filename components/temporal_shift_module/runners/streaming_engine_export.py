@@ -45,6 +45,12 @@ import sys
 _PHASE = "1-C"
 _SUMMARY = "Export + Orin verify: ONNX (Slice+Concat) → TRT FP16 → cache wiring"
 
+# Activation-gate scope (v1.4): export inherits the Phase 1-B model's scope
+# (export does not narrow applicability). Same plan-§0.2 row-1 four-tag set.
+PHASE_FAILURE_MODE_SCOPE = frozenset(
+    {"small_target_miss", "far_distance_miss", "occluded_miss", "motion_blur"}
+)
+
 
 def main() -> int:
     raise NotImplementedError(

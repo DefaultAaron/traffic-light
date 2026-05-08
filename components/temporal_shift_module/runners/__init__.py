@@ -138,10 +138,14 @@ TSM-implementation contract (per v1.0 §1.4 + §1.5; classic mistakes pre-empted
              → "full re-activation required"
     6. Assert replay_evidence_path exists on disk (no SHA needed; replay
        evidence is human-curated, not machine-stable).
-    7. Assert approved_failure_mode_tags ⊆ phase's documented scope
-       (cross-check against the phase's runner docstring §0.2 mapping;
-       a Phase 1-A run claiming small_target_miss + far_distance_miss
-       must have those tags listed in concept_validation.py docstring).
+    7. Assert approved_failure_mode_tags ⊆ this runner module's
+       PHASE_FAILURE_MODE_SCOPE constant (each runner declares this
+       module-level frozenset; v1.4-introduced — see
+       concept_validation.py / full_dataset_train.py /
+       streaming_engine_export.py PHASE_FAILURE_MODE_SCOPE). The check
+       is set-subset, not docstring-parsing — a future per-phase scope
+       narrowing replaces the constant, not the docstring. v1.4 sets
+       all three constants to the full four-tag plan-§0.2-row-1 set.
 
   This converts the activation gate from comment-only policy to a
   runtime tripwire that survives stub-replacement — a future commit

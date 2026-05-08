@@ -1,4 +1,4 @@
-"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.3).
+"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.4).
 
 Authoritative spec: ``docs/planning/temporal_optimization_plan.md`` §1 (TSM
 recommended path; carries a 2026-05-09 v1.1 amendment in §1.1 noting the
@@ -216,10 +216,27 @@ Engine sidecar carry-forward (§1.5 Phase 1-C, parallels KD §6#5):
       - tsm_feature_cache_stages: list[str] (e.g. ["P3", "P4"])
     Sidecar gap is the canonical pre-Phase-1-C blocker.
 
-Status v1.3:
+Status v1.4:
     Scaffold only — every runner / module / patch / gate stub raises
-    NotImplementedError. v1.3 closes the C3 iter-3 ADDITIONAL-FINDINGS
-    against v1.2:
+    NotImplementedError. v1.4 closes the C3 iter-4 ADDITIONAL-FINDINGS
+    against v1.3:
+      (α) schema_version bumped 1.0 → 1.1 to reflect the v1.3 enum
+          extension (added far_distance_miss). The schema's own contract
+          said "adding a new tag requires schema_version bump"; v1.3
+          forgot to actually do the bump. v1.4 corrects it. Activation
+          files written against v1.0 schema must be regenerated.
+      (β) PHASE_FAILURE_MODE_SCOPE module-level frozenset added to each
+          runner (concept_validation.py / full_dataset_train.py /
+          streaming_engine_export.py). Activation tripwire step 7 now
+          performs a deterministic set-subset check against this
+          constant, NOT prose-docstring parsing. v1.4 sets all three
+          constants to the full four-tag plan-§0.2-row-1 set; future
+          per-phase narrowing is a one-line constant edit.
+      (γ) Path regex tightened — also rejects backslash / Windows drive
+          prefixes (C:\\...), not only leading '/' and '..'. Aligns the
+          schema with the "repo-relative POSIX" stated convention.
+
+    v1.3 closed C3 iter-3 ADDITIONAL-FINDINGS against v1.2:
       (i)   Activation schema path semantics ENFORCED in JSON Schema, not
             prose: selected_detector_artifact_path regex rejects absolute
             paths and '..' segments and requires '.engine' suffix;
@@ -261,5 +278,6 @@ Status v1.3:
     Phase 1-C runner validates post-export); activation gate gets a
     tripwire artifact (`runs/_tsm_activation.json` — schema landed at v1.2).
 
-    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.3.
+    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.4.
+    Activation schema at v1.1 (was v1.0 in v1.3 README; bumped at v1.4).
 """

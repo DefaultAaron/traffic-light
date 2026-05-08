@@ -26,6 +26,14 @@ import sys
 _PHASE = "1-A"
 _SUMMARY = "PoC: 10% data, 20 epochs, scratch init, clip-size 4"
 
+# Activation-gate scope (v1.4): the closed set of failure-mode tags this phase
+# claims to address. Used by the activation tripwire's step-7 subset check
+# (see runners/__init__.py). Phase 1-A's PoC scope is the full plan-§0.2 row-1
+# set; future per-phase narrowing replaces this constant, NOT prose docstring.
+PHASE_FAILURE_MODE_SCOPE = frozenset(
+    {"small_target_miss", "far_distance_miss", "occluded_miss", "motion_blur"}
+)
+
 
 def main() -> int:
     raise NotImplementedError(
