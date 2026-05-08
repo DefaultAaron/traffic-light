@@ -1,4 +1,4 @@
-"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.4).
+"""Temporal Shift Module — detector-level temporal optimization (R2/R3 optional, v1.5).
 
 Authoritative spec: ``docs/planning/temporal_optimization_plan.md`` §1 (TSM
 recommended path; carries a 2026-05-09 v1.1 amendment in §1.1 noting the
@@ -218,10 +218,16 @@ Engine sidecar carry-forward (§1.5 Phase 1-C, parallels KD §6#5):
       - tsm_feature_cache_stages: list[str] (e.g. ["P3", "P4"])
     Sidecar gap is the canonical pre-Phase-1-C blocker.
 
-Status v1.4:
+Status v1.5:
     Scaffold only — every runner / module / patch / gate stub raises
-    NotImplementedError. v1.4 closes the C3 iter-4 ADDITIONAL-FINDINGS
-    against v1.3:
+    NotImplementedError. v1.5 closes the C3 iter-5 α-PARTIAL on v1.4 —
+    schema const was correctly bumped 1.0 → 1.1 at v1.4 but two prose
+    references in scaffold docs still cited "1.0" as the pinned version,
+    exposing future implementers to stale guidance. v1.5 syncs both prose
+    sites to "1.1" with v1.0→v1.1 transition rationale inline. C3 iter-5
+    found NO new independent findings; v1.5 is a targeted prose patch.
+
+    v1.4 closed C3 iter-4 ADDITIONAL-FINDINGS against v1.3:
       (α) schema_version bumped 1.0 → 1.1 to reflect the v1.3 enum
           extension (added far_distance_miss). The schema's own contract
           said "adding a new tag requires schema_version bump"; v1.3
@@ -280,6 +286,7 @@ Status v1.4:
     Phase 1-C runner validates post-export); activation gate gets a
     tripwire artifact (`runs/_tsm_activation.json` — schema landed at v1.2).
 
-    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.4.
-    Activation schema at v1.1 (was v1.0 in v1.3 README; bumped at v1.4).
+    Plan stays at v1 with a v1.1 §1.1 amendment; this README at v1.5.
+    Activation schema at v1.1 (was v1.0 in v1.3 README; bumped at v1.4;
+    prose references reconciled at v1.5).
 """
