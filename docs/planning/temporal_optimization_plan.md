@@ -6,6 +6,8 @@
 >
 > **何时启动**：仅在主检测器（R2 baseline）实车 replay 出现具体可测量的失败模式后启动；不在选型阶段提前介入。
 >
+> **状态（2026-05-09）**：TSM 执行面已落地为 [`components/temporal_shift_module/`](../../components/temporal_shift_module/__init__.py) 脚手架（README v1.5；激活契约 schema [`scripts/_tsm_activation_schema.json`](../../scripts/_tsm_activation_schema.json) v1.1），在 B2 + C3 对抗审查 6 轮后达成 AGREED。runners / modules / patches / data / gates 子包均为 `NotImplementedError` 占位 —— 本计划为设计意图层，**on-disk 脚手架是实施契约**；当二者出现冲突，README 优先级高于本计划 v1 散文（README header 显式标注 §-anchor 优先级）。Phase 1-A 启动前必须写入 `runs/_tsm_activation.json` 通过 schema v1.1 校验（**6 字段必填**：`schema_version` / `selected_detector_artifact_sha256` / `selected_detector_artifact_path` / `replay_evidence_path` / `approved_failure_mode_tags` / `activation_timestamp`；其中 `approved_failure_mode_tags` 取自 **4 标签闭枚举**；并满足 SHA 三方一致性 = activation_sha == sidecar.engine_sha256 == 文件计算值）。
+>
 > 本文是时序优化的**可执行级集成计划**，覆盖 detector-level（§1 TSM、§3 StreamYOLO）+ post-detector（§2 HMM/AdaEMA/GRU/Transformer）两类方案。Plan A（tracker + EMA）已在 R1 落地（[`../integration/tracker.md`](../integration/tracker.md)），是 §2 路径的基线。开发计划中的轨道定位见 [`development_plan.md`](development_plan.md) §"R2 时序优化（可选并行轨道）"。
 
 ---
@@ -107,37 +109,62 @@ TSM: c1, c2, c3 = split(feat_t, [1/8, 1/8, 6/8])
 
 TSM 与主线选型工作**深度耦合**：
 
-- **不能从已训权重 fine-tune**：shift 改变了 channel 语义；R1 / R2 baseline 权重在 shift 后的 channel 上没学过对应模式 → **必须从头重训**
-- **训练框架仍可用 Ultralytics**（YOLO26 / YOLOv13 / DEIM 都基于类似框架）：在 `BasicBlock.forward` 注入 shift 即可；不需要自写训练循环（与 §2.4 GRU 不同）
-- **数据**：与主线 R2 训练**同一份 dataset**，但 dataloader 改成 clip-of-N（默认 N=4）；clip 内顺序保持，clip 间随机
+- **不能从已训权重 fine-tune**：shift 改变了 channel 语义；R1 / R2 baseline 权重在 shift 后的 channel 上没学过对应模式 → **必须从头重训**（脚手架 `runners/__init__.py` 在 `--pretrained-init` 与 DEIM `HGNetv2.pretrained` 上声明契约要求；当前 v1.5 runner 仍为 `NotImplementedError`，Phase 1-A 实现时必须将契约落成运行时校验。详见下文 §1.4.1）。
+- **训练框架与注入点因检测器而异**：YOLO 路径（YOLO26 / YOLOv13）在 Ultralytics neck 的 `C3 / C2f BasicBlock.forward` 注入 shift；DEIM 路径在 HGNetv2 backbone 的 `HG_Block.forward` 注入（详见 §1.4.1）。两条路径都**不需要自写训练循环**（与 §2.4 GRU 不同），但 dataloader 包装与 patch apply/revert 由脚手架 runner 负责。
+- **数据**：与主线 R2 训练**同一份 dataset**，但 dataloader 改成 clip-of-N（默认 N=4）；clip 内顺序保持，clip 间随机。Clip 内增强必须**采样一致**（Wang 2022 原则）—— Mosaic / RandomIoUCrop / RandomZoomOut 等的采样状态在 clip 内必须复用一次，否则时序信号被破坏。脚手架 `data/__init__.py` 列出 Ultralytics 与 DEIM 两套增强管线的 clip-consistency clamp 表。
 - **整合时机**：
   - **方案 1（推荐）**：主线选定基线模型后，再启动 TSM 改造作为"基线 + 时序"的 A/B 对照。两个 weight 同时训练（4090 同 GPU，分时或分卡），对比报告。
   - **方案 2**：主线训练完成、replay 验证后再启动。简单但损失 1.5 周再训时间。
 
+#### 1.4.1 DEIM-D-FINE 适用性（2026-05-09 添加；与脚手架 v1.5 同步）
+
+TSM 适用于 DEIM-D-FINE 的卷积 backbone，**不适用于** transformer 编码器或解码器。具体边界：
+
+| DEIM 网络层 | TSM 注入 | 理由 |
+|---|---|---|
+| HGNetv2 backbone `HG_Block.forward`（`DEIM/engine/backbone/hgnetv2.py:275`） | **是** —— 在 forward 起点对 `x` 做 channel 切分 | 卷积特征，与 YOLO BasicBlock 结构同构；`in_chs` 在 HGNetv2 各 size 下都是 8 的倍数（B0 配置：64/128/256/512/1024） |
+| 配置 `stage2 / stage3 / stage4`（即 `self.stages[1] / [2] / [3]`；由 `return_idx=[1,2,3]` 输出至编码器） | **是** —— 三种等价标识符 | 这三个 stage 是返回给 `HybridEncoder` 的特征源；中深层感受野适合短程时序信号 |
+| HGStem（`StemBlock`，line 125）+ 配置 `stage1`（即 `self.stages[0]`；不在 `return_idx` 中） | 否 | 单 conv 入口 / 早期特征感受野过小 |
+| `HybridEncoder`（`DEIM/engine/deim/hybrid_encoder.py`，含 AIFI 多头自注意力） | 否 | 注意力层；原始 TSM (Lin 2019) 仅针对卷积特征，VOD 上下文未研究混合形态 |
+| D-FINE decoder transformer 层 | 否 | 纯注意力，不适用 |
+
+**与 GO-LSD 的关系**：GO-LSD 是 decoder 自蒸馏 loss，TSM 在 backbone 层。TSM **不需要单独的 GO-LSD 开关或 wiring**，但二者并非"loss path 独立"—— TSM 改变的 backbone 特征会影响 encoder/decoder 激活，GO-LSD 梯度会回流到 patched backbone。比较 TSM-on vs TSM-off 时**两侧保持主线选定 config 的 GO-LSD 状态不变**（若主线 baseline 走 D-FINE 默认 GO-LSD-on，则两侧 on；若主线 baseline 已是 GO-LSD-off，则两侧 off）。叠加 KD A0 cell（`deim_baseline_golsd_off.py`）属于联合消融，不是独立效应相加。
+
+**预训练权重风险**：DEIM 的 `HGNetv2.pretrained` 默认 `True`（`DEIM/engine/backbone/hgnetv2.py:443`），即使 runner 传 `--pretrained-init scratch`，HGNetv2 仍会加载 stage1 上游 HuggingFace 权重 —— 违反 §1.4 第一条 "必须从头重训"。脚手架 `runners/__init__.py` 契约要求在 model init 之前 resolve config 并断言 `HGNetv2.pretrained == False`，否则 exit 2 —— Phase 1-A 实现时必须落成此运行时校验（v1.5 runner 仍为 `NotImplementedError`）。
+
+**Dataloader**：DEIM 走 COCO-style（`DEIM/engine/data/coco_dataset.py`）+ 自家增强管线（RandomIoUCrop / RandomZoomOut / RandomHorizontalFlip 等），与 Ultralytics 的 Mosaic-centric 不同。Clip-collator 必须包装这套上游，并对每条 clip 内的所有 T 帧复用同一组采样状态。
+
+**DDP**：DEIM-M 的 traffic_light config 已设 `find_unused_parameters: True`。TSM 自身无可学习参数，不引入新的 unused-param 风险；但**禁止**用单 job 内 runtime flag 切换 shift on/off 的方式做消融（会触发 R1 DEIM-M ep40 同款 reducer 崩溃）—— 必须按 §1.4 方案 1 跑两个独立 weight。
+
 ### 1.5 实施步骤（首选 TSM 路径）
 
-**Phase 1-A: 概念验证（1 周）**
+> **2026-05-09 同步说明**：每个 Phase 的运行入口、gate 评估器、激活契约均已在 `components/temporal_shift_module/` 脚手架声明（详见 §7 LANDED 表）。下文 checklist 为设计意图；实际运行时由对应 runner 文件的 `main()` 执行（v1.5 仍为 `NotImplementedError`，激活时再实现）。三个 Phase 共享同一激活契约：runner 启动前必须 jsonschema-validate `runs/_tsm_activation.json` 并通过 7 步算法（含 SHA 三方一致性、replay 路径存在性、`approved_failure_mode_tags ⊆ PHASE_FAILURE_MODE_SCOPE`）—— 详见脚手架 `runners/__init__.py` 与 [`scripts/_tsm_activation_schema.json`](../../scripts/_tsm_activation_schema.json)。
 
-- [ ] Fork 主线选定的检测器（YOLO26 / YOLOv13 / DEIM 之一）；定位 neck 中 BasicBlock
-- [ ] 实现 `TemporalShift` 模块：1/8 channel 前向 shift + 边界 zero-pad
-- [ ] dataloader 改成"clip of N=4 frames"；clip 内顺序保持
+**Phase 1-A: 概念验证（1 周）** —— runner: [`concept_validation.py`](../../components/temporal_shift_module/runners/concept_validation.py)；gate: [`concept_validation_gate.py`](../../components/temporal_shift_module/gates/concept_validation_gate.py)
+
+- [ ] Fork 主线选定的检测器（YOLO26 / YOLOv13 / DEIM 之一）；定位 neck 中 BasicBlock 或 HGNetv2 中 HG_Block（详见 §1.4.1）
+- [ ] 实现 `TemporalShift` 模块：c1 = 1/8 channel 前向 shift（来自前帧）；c2 = 1/8 channel 训练与推理两侧均置零（**v1.1 修订 causal end-to-end，详见 §1.1**）；c3 = 6/8 channel 直通；边界 zero-pad
+- [ ] dataloader 改成"clip of N=4 frames"；clip 内顺序保持，clip 内增强采样状态复用一次（Wang 2022）
 - [ ] 小规模训练（10% 数据 + 20 epochs）验证 loss 下降、不 NaN
 - [ ] 在小 val 集上对比 TSM-on / TSM-off 的 mAP（按 bbox 高度分桶）
 
-**通过判定**：小目标桶 recall +2% **或** 总体 mAP +1%。任一达成即进入 Phase 1-B；否则回到 §0.2 重新评估问题归因。
+**通过判定**：小目标桶 recall +2% **或** 总体 mAP +1%（脚手架 Gate-1A 实现，OR 条件）。任一达成即进入 Phase 1-B；否则回到 §0.2 重新评估问题归因（**禁止 hyperparam iteration**——失败意味着 TSM 不是对症工具）。
 
-**Phase 1-B: 全量训练 + 验证（1 周）**
+**诊断要求（与 activation tags 对齐 — 2026-05-09 添加）**：若 `runs/_tsm_activation.json` 的 `approved_failure_mode_tags` 包含 `far_distance_miss` / `occluded_miss` / `motion_blur` 中任一，Phase 1-A 报告必须列出对应 bucket recall delta（远距桶按 bbox 距离分桶；遮挡桶按遮挡比；运动模糊桶按 raw frame 模糊度估计或 EXIF 快门信息）。Gate-1A 仍按 OR 执行不变，但**不得只用 small-target recall / 总体 mAP 解释已激活的失败模式** —— 已激活但未改善的 bucket 是 §0.2 重新评估问题归因的强信号，不是 OR 条件已通过的对照。
+
+**Phase 1-B: 全量训练 + 验证（1 周）** —— runner: [`full_dataset_train.py`](../../components/temporal_shift_module/runners/full_dataset_train.py)；gate: [`full_train_acceptance_gate.py`](../../components/temporal_shift_module/gates/full_train_acceptance_gate.py)
 
 - [ ] 全 R2 数据 + 与主线同样的 epoch / patience / 增强策略
-- [ ] 评估 TSM vs 单帧 baseline：总体 mAP + 按 bbox 高度分桶 recall + 遮挡 recall + Orin 实测延迟
-- [ ] 通过判定：小目标桶 recall ≥ 0.6（§0.2 启动阈值）+ 整机延迟 < 26 ms
+- [ ] 评估 TSM vs 单帧 baseline：总体 mAP + 按 bbox 高度分桶 recall + 遮挡 recall + Orin 实测延迟（带锁定 caveat columns：input_source / resolution / tracker_mode / output_mode）
+- [ ] 通过判定：小目标桶 recall ≥ 0.6（§0.2 启动阈值）+ 整机延迟 < 26 ms（脚手架 Gate-1B 实现）
 
-**Phase 1-C: ONNX/TRT 导出 + Orin 验证（3–5 天）**
+**Phase 1-C: ONNX/TRT 导出 + Orin 验证（3–5 天）** —— runner: [`streaming_engine_export.py`](../../components/temporal_shift_module/runners/streaming_engine_export.py)；gate 文件待 Phase 1-C 调度时落地（暂定名 `streaming_export_gate.py`）
 
 - [ ] 推理路径中 TSM shift 退化为"复用上一帧 channel-1/8 特征"
-- [ ] 在 ROS2 节点持有 per-stage 上一帧特征缓存（每相机一份，估算 < 5 MB / 相机）
+- [ ] 在 ROS2 节点持有 per-stage 上一帧特征缓存（每相机一份；YOLO26-s 约 90 KB，DEIM-S/B0 约 720 KB —— 假设 640 输入、fp16、缓存全部返回 stage；DEIM-M (B2) / DEIM-L (B4) 或修改 `cache_stages` 时需重算；< 5 MB / 相机预算 per §1.6）
 - [ ] ONNX export 处理 shift 算子：`Slice` + `Concat` 即可表达（无需自定义算子）
 - [ ] Orin trtexec FP16 + 端到端实测延迟 < 26 ms
+- [ ] 引擎 sidecar（`scripts/export_yolo.sh` / `scripts/export_deim.sh` 写出的 `<engine>.meta.json`）必须包含四个新字段 `tsm_enabled` / `tsm_shift_fraction` / `tsm_clip_size_train` / `tsm_feature_cache_stages`（**Phase 1-C 启动前需 carry-forward 到 export 脚本**）。Phase 1-C runner 不写 sidecar，只在 trtexec 返回后**校验** sidecar 存在并匹配 `args.yaml`。
 
 ### 1.6 风险
 
@@ -149,6 +176,9 @@ TSM 与主线选型工作**深度耦合**：
 | 主检测器选型仍未定，提前启动 TSM | **不要提前启动** —— TSM 与具体 backbone 强耦合，主线未定时启动 = 返工 |
 | 跨视频差异让时序 pattern 不泛化 | 多场景 / 多时段训练；cross-video 验证集 |
 | TSM 改造的 fork 与主线 upstream 漂移 | 用 patch / overlay 形式维护 shift 注入，避免 fork 整库 |
+| **脚手架与本计划版本漂移**（2026-05-09 添加） | README header 显式声明优先级；本计划重大修订时同步更新；脚手架 README 状态字段记录每次 sync commit |
+| **Phase runner 实现时遗漏 activation tripwire**（2026-05-09 添加） | tripwire 不是 prose-only：schema 文件 + 7 步算法已落地；Phase 1-A 实现 PR 必须 import jsonschema 并调用契约定义的 7 步；code review 必查这一步 |
+| **export sidecar 写入者与 Phase 1-C 校验者职责分裂**（2026-05-09 添加） | 写入责任在 `scripts/export_yolo.sh` / `scripts/export_deim.sh`；校验责任在 Phase 1-C runner（exit 2 on mismatch）；二者通过 sidecar 字段集合（`tsm_*` 四个）解耦；scaffold 顶层 README 与 §1.5 同步声明 |
 
 ---
 
@@ -498,13 +528,34 @@ data/
 
 ### §1 TSM 路径
 
-| 文件 | 改动 |
-|---|---|
-| 主检测器训练脚本（`scripts/train_yolov13.sh` 或类似） | 加 `--temporal-shift` 选项；clip-batch dataloader |
-| 主检测器 backbone fork patch | 在 BasicBlock.forward 注入 shift |
-| `scripts/build_pseudo_labels.py` | 用主检测器 + ByteTrack 跑伪标签轨迹（§4.2） |
-| `inference/cpp/src/trt_pipeline.cpp` | 持有 per-stage 上一帧特征缓存（每相机一份） |
-| `tests/fixtures/temporal/` | clip-level 训练 fixture |
+> **2026-05-09 同步**：原表为启动后规划；本节按"已落地（LANDED）/ 待落地（DEFERRED）"重组，反映脚手架 v1.5 实际状态。
+
+#### LANDED（已落地至仓库；6 次 B2+C3 审查后 AGREED）
+
+| 文件 / 路径 | 内容 | 落地版本 |
+|---|---|---|
+| `components/temporal_shift_module/__init__.py` | 顶层契约：机制（§1.1，含 v1.1 causal-end-to-end 修订）、phases、acceptance gates、subpackage map、detector 适用性（YOLO + DEIM）、coupling、激活 gate、deferred deliverables、sidecar carry-forward | README v1.5 |
+| `components/temporal_shift_module/modules/{__init__.py, temporal_shift.py, feature_cache.py}` | TemporalShift 算子契约 + per-stage 前帧 cache 容器；YOLO26-s（90 KB） / DEIM-S B0（720 KB）单相机内存估算 | scaffold-only |
+| `components/temporal_shift_module/data/{__init__.py, clip_collator.py}` | clip-of-N=4 dataloader 契约；Ultralytics + DEIM 增强 clip-consistency clamp 表 | scaffold-only |
+| `components/temporal_shift_module/patches/__init__.py` | per-detector backbone 注入契约；DEIM HG_Block 标识符三元组（config / 代码索引 / return_idx）；HybridEncoder + decoder 显式 OUT-OF-SCOPE | scaffold-only |
+| `components/temporal_shift_module/runners/{__init__.py, concept_validation.py, full_dataset_train.py, streaming_engine_export.py}` | 三个 phase runner stub（NotImplementedError）+ 统一 CLI 契约 + repro 契约 + TSM-implementation 契约 + DEIM-specific notes + 7 步激活算法 | scaffold-only |
+| `components/temporal_shift_module/gates/{__init__.py, concept_validation_gate.py, full_train_acceptance_gate.py}` | Gate-1A（OR 条件）+ Gate-1B（AND 条件）评估器 stub | scaffold-only |
+| `scripts/_tsm_activation_schema.json` | 激活 tripwire JSON Schema：**6 字段必填**（`schema_version` / `selected_detector_artifact_sha256` / `selected_detector_artifact_path` / `replay_evidence_path` / `approved_failure_mode_tags` / `activation_timestamp`）+ 4 标签闭枚举 + path regex（仓库相对、POSIX、`.engine` 后缀） | schema v1.1 |
+| `docs/planning/temporal_optimization_plan.md` §1.1 | v1.1 修订（c2 训练与推理两侧均置零；causal end-to-end） | 本文件 |
+
+#### DEFERRED（按 phase 调度时落地；不在 v1.5 范围内）
+
+| 文件 / 路径 | 触发时机 | 内容 |
+|---|---|---|
+| `components/temporal_shift_module/patches/{yolo26_basicblock.py / yolov13_basicblock.py / deim_hg_block.py}` | Phase 1-A 调度时（按主线最终选型 1 个 file） | 选定检测器的 backbone 注入实现，含 idempotent `apply()` / `revert()` |
+| `components/temporal_shift_module/{modules, data, runners, gates}/*.py` 实现 | 各 phase 调度时 | 替换 `raise NotImplementedError` 为真实实现 |
+| `runs/_tsm_activation.json` | Phase 1-A 启动前由审批人写入 | 激活 tripwire 数据文件（不入库） |
+| `scripts/build_pseudo_labels.py` | §4.2 触发（与 §2 共用） | 主检测器 + ByteTrack 跑伪标签轨迹 |
+| `inference/cpp/include/temporal_cache.hpp` / `inference/cpp/src/temporal_cache.cpp` | Phase 1-C | C++ per-camera per-stage cache 容器 + 生命周期 |
+| `inference/cpp/src/trt_pipeline.cpp` | Phase 1-C | 接入 per-stage 前帧 cache |
+| `scripts/export_yolo.sh` / `scripts/export_deim.sh` 新增 sidecar 字段 | Phase 1-C 启动前 carry-forward | `tsm_enabled` / `tsm_shift_fraction` / `tsm_clip_size_train` / `tsm_feature_cache_stages` |
+| `tests/fixtures/temporal/` | Phase 1-A | clip-level 训练 fixture |
+| `docs/integration/temporal_shift.md` | Phase 1-C 完成后 | 部署 runbook（与 [`tracker.md`](../integration/tracker.md) 同级） |
 
 ### §2 post-detector 路径
 
