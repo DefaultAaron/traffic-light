@@ -198,11 +198,15 @@ Then on the Orin: `trtexec --onnx=best_stripped.onnx --saveEngine=...
 Export an Ultralytics YOLO (R2: YOLO26) checkpoint to ONNX, then
 optionally to a TensorRT engine on the Orin. Mirrors the
 `export_deim.sh` contract for size selection, FP16/FP32 precision,
-`_fp32` suffix, and the `<engine>.meta.json` sidecar — but uses
-`yolo export format=engine` (Ultralytics one-shot pipeline) instead of
-calling `trtexec` directly. The shared `inference/trt_pipeline.{py,cpp}`
-auto-detects the YOLO arch from tensor shapes — no flag needed
-downstream.
+`_fp32` suffix, and the `<engine>.meta.json` sidecar. The pipeline is
+**three-stage**: `yolo export format=onnx` → `strip_yolo26_head.py`
+(removes the in-graph `ReduceMax → TopK` that TRT 8.5.2 cannot parse) →
+`trtexec` directly on the stripped ONNX. We do **not** use
+`yolo export format=engine` because its unified pipeline skips the strip
+and produces engines that either fail to build on JetPack 5.1 or yield
+graphs the C++ pipeline cannot decode. The shared
+`inference/trt_pipeline.{py,cpp}` auto-detects the YOLO arch from tensor
+shapes — no flag needed downstream.
 
 ```bash
 # ONNX only (host CPU is fine; Ultralytics venv must be active)
@@ -216,7 +220,8 @@ Outputs (next to the input `.pt`):
 
 | File | When emitted | Purpose |
 |---|---|---|
-| `best.onnx`              | Always (re-emitted by `yolo export format=engine` even on the engine path) | Python ONNXRuntime / parity artifact |
+| `best.onnx`              | Always | Full-head ONNX (Python ONNXRuntime / parity artifact) |
+| `best_stripped.onnx`     | Always | Head-stripped ONNX (raw `[1, 4+nc, N]`); the file `trtexec` actually consumes |
 | `best.engine`            | `--build-engine` and `FP16=1` (default) | Orin TRT production engine |
 | `best_fp32.engine`       | `--build-engine` and `FP16=0` | FP32↔FP16 parity comparison only; coexists with the FP16 engine |
 | `<engine>.meta.json`     | After every successful engine build | Atomic provenance sidecar (see [Engine sidecar contract](#engine-sidecar-contract) below) |
@@ -226,32 +231,33 @@ Env overrides:
 | Var | Default | Effect |
 |---|---|---|
 | `YOLO_BIN`              | `yolo`     | Path to the `yolo` CLI (looks up on `PATH`) |
-| `PYTHON`                | auto-detect (`python` → `python3`) | Interpreter used for `onnx.checker` and the JSON sidecar writer. Preflight asserts `import onnx` succeeds before any expensive export, so a wrong env fails fast. |
+| `PYTHON`                | auto-detect (`python` → `python3`) | Interpreter used for `onnx.checker`, `strip_yolo26_head.py`, and the JSON sidecar writer. Preflight asserts both `import onnx` and `import onnx_graphsurgeon` succeed before any expensive export. |
+| `TRTEXEC`               | `trtexec`  | Path to the `trtexec` binary. Required when `--build-engine` is passed. |
 | `FP16`                  | `1`        | `0` builds an `_fp32.engine` instead of overwriting the FP16 production engine |
-| `SKIP_EXPORT`           | `0`        | `1` reuses an existing `.onnx`. **Logged-and-ignored when `--build-engine` is set** — `yolo export format=engine` is a unified pipeline that re-runs both stages, and short-circuiting it is more fragile than paying the small re-export cost. |
-| `WORKSPACE_GB`          | `4`        | Forwarded to `yolo export workspace=N`. **Note the unit difference: YOLO uses GB, DEIM uses MB.** |
-| `ALLOW_LARGE_WORKSPACE` | `0`        | `1` bypasses the 32 GB sanity cap on `WORKSPACE_GB` (defends against accidental MB→GB unit confusion when copying flags from `export_deim.sh`). The override decision is recorded in the sidecar's `allow_large_workspace` field. |
-| `ALLOW_NON_YOLO26`      | `0`        | The script gates on a `/yolo26<…>` path segment in the checkpoint path. Set to `1` to export non-YOLO26 families (YOLOv13 etc.) — the CLI accepts them transparently, but R2 only validated YOLO26. |
-| `IMGSZ`                 | unset (training imgsz) | Override input size. Most callers should leave unset — Ultralytics uses the `imgsz` baked into the `.pt`. |
+| `SKIP_EXPORT`           | `0`        | `1` reuses existing `.onnx` and `_stripped.onnx` if they validate. The engine itself is always rebuilt when `--build-engine` is set. |
+| `WORKSPACE_GB`          | `4`        | Converted to MB for `trtexec --memPoolSize=workspace:N`. **Note the unit difference: YOLO surface uses GB, DEIM surface uses MB.** |
+| `ALLOW_LARGE_WORKSPACE` | `0`        | `1` bypasses the 32 GB sanity cap on `WORKSPACE_GB` (defends against accidental MB→GB unit confusion). Recorded in the sidecar's `allow_large_workspace` field. |
+| `ALLOW_NON_YOLO26`      | `0`        | The script gates on a `/yolo26<…>` path segment in the checkpoint path. R2 only validated YOLO26. |
+| `IMGSZ`                 | unset (training imgsz) | Override input size. Most callers should leave unset — Ultralytics uses the `imgsz` baked into the `.pt`, and the script reads the same value back to drive the `trtexec --*Shapes` flags. |
+| `NUM_CLASSES`           | unset (read from `model.names`) | Override class count passed to `strip_yolo26_head.py --num-classes`. Useful when the `.pt`'s class metadata is non-standard. |
 
-FP16 vs FP32 parity workflow (mirrors DEIM):
+FP16 vs FP32 parity workflow:
 
 ```bash
 # Build 1: FP16 production engine
 scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt --build-engine
 
-# Build 2: FP32 reference engine (NOTE: yolo's unified pipeline does not
-#          honor SKIP_EXPORT here — the .onnx is re-emitted, so the second
-#          build is effectively a clean rebuild. Provenance is still sound:
-#          source_pt_sha256 in both sidecars matches.)
-FP16=0 scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt --build-engine
+# Build 2: FP32 reference engine. SKIP_EXPORT=1 reuses the .onnx and
+#          _stripped.onnx from build 1 (only the engine is rebuilt at FP32).
+FP16=0 SKIP_EXPORT=1 scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt --build-engine
 ```
 
-> **YOLO26 head-strip is now built into the engine path.** R1 required a
-> manual `scripts/strip_yolo26_head.py` pass on the ONNX before
-> `trtexec`; in R2, `main.py export` and `export_yolo.sh` integrate that
-> step. `strip_yolo26_head.py` is still on disk for legacy / debug use
-> (e.g. when working with a hand-built ONNX outside the wrapper).
+> **YOLO26 head-strip is integrated into both `main.py export` and
+> `export_yolo.sh`** — R1 required a manual
+> `scripts/strip_yolo26_head.py` pass on the ONNX before `trtexec`; both
+> wrappers now run that pass automatically and point `trtexec` at
+> `best_stripped.onnx`. The strip script remains on disk for legacy /
+> debug use (working with hand-built ONNX outside the wrappers).
 
 ### `export_deim.sh`
 
