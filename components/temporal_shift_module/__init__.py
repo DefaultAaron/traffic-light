@@ -164,7 +164,9 @@ Deferred deliverables (NEW, not yet present):
                                                `scripts/_tsm_activation_schema.
                                                json` (LANDED v1.2, hardened
                                                v1.3). Required fields:
-                                               schema_version (=="1.0");
+                                               schema_version (=="1.1";
+                                               bumped from "1.0" at v1.4
+                                               for the v1.3 enum extension);
                                                selected_detector_artifact_
                                                sha256 (64-hex); selected_
                                                detector_artifact_path (regex-

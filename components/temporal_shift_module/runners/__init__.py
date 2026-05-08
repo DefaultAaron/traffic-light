@@ -111,7 +111,9 @@ TSM-implementation contract (per v1.0 §1.4 + §1.5; classic mistakes pre-empted
 
     1. jsonschema-validate `runs/_tsm_activation.json` against
        `scripts/_tsm_activation_schema.json`. The schema enforces:
-       schema_version pin ("1.0"); selected_detector_artifact_sha256
+       schema_version pin ("1.1" — bumped from "1.0" at v1.4 for the
+       v1.3 far_distance_miss enum extension; runner refuses any other
+       schema_version value); selected_detector_artifact_sha256
        (64-hex); selected_detector_artifact_path (regex rejects absolute
        paths and '..' segments, requires '.engine' suffix);
        replay_evidence_path (regex rejects absolute and '..');
