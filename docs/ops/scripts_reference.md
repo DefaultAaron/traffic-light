@@ -220,11 +220,11 @@ Outputs (next to the input `.pt`):
 
 | File | When emitted | Purpose |
 |---|---|---|
-| `best.onnx`              | Always | Full-head ONNX (Python ONNXRuntime / parity artifact) |
-| `best_stripped.onnx`     | Always | Head-stripped ONNX (raw `[1, 4+nc, N]`); the file `trtexec` actually consumes |
-| `best.engine`            | `--build-engine` and `FP16=1` (default) | Orin TRT production engine |
-| `best_fp32.engine`       | `--build-engine` and `FP16=0` | FP32↔FP16 parity comparison only; coexists with the FP16 engine |
-| `<engine>.meta.json`     | After every successful engine build | Atomic provenance sidecar (see [Engine sidecar contract](#engine-sidecar-contract) below) |
+| `best.onnx`              | Always | Full-head ONNX (provenance / pre-strip source artifact). Not the file the C++/Python decoders read — both expect the stripped raw `[1, 4+nc, N]` shape. |
+| `best_stripped.onnx`     | Always | Head-stripped ONNX (raw `[1, 4+nc, N]`); the artifact `trtexec` consumes AND the artifact to use for Python ONNXRuntime parity testing against the TRT engine. **Note**: written even without `--build-engine` — its presence does NOT imply an engine has been built; check for `<engine>.meta.json` to confirm a trusted engine exists. |
+| `best.engine`            | `--build-engine` and `FP16=1` (default) | Orin TRT production engine. **Existing engines are not overwritten** — delete the prior engine before re-building the same precision. |
+| `best_fp32.engine`       | `--build-engine` and `FP16=0` | FP32↔FP16 parity comparison only; coexists with the FP16 engine. |
+| `<engine>.meta.json`     | After every successful engine build | Atomic provenance sidecar (see [Engine sidecar contract](#engine-sidecar-contract) below). Records `num_classes` and `imgsz` as first-class fields; `imgsz` is consumed by `run_demos.sh`. |
 
 Env overrides:
 
@@ -238,8 +238,8 @@ Env overrides:
 | `WORKSPACE_GB`          | `4`        | Converted to MB for `trtexec --memPoolSize=workspace:N`. **Note the unit difference: YOLO surface uses GB, DEIM surface uses MB.** |
 | `ALLOW_LARGE_WORKSPACE` | `0`        | `1` bypasses the 32 GB sanity cap on `WORKSPACE_GB` (defends against accidental MB→GB unit confusion). Recorded in the sidecar's `allow_large_workspace` field. |
 | `ALLOW_NON_YOLO26`      | `0`        | The script gates on a `/yolo26<…>` path segment in the checkpoint path. R2 only validated YOLO26. |
-| `IMGSZ`                 | unset (training imgsz) | Override input size. Most callers should leave unset — Ultralytics uses the `imgsz` baked into the `.pt`, and the script reads the same value back to drive the `trtexec --*Shapes` flags. |
-| `NUM_CLASSES`           | unset (read from `model.names`) | Override class count passed to `strip_yolo26_head.py --num-classes`. Useful when the `.pt`'s class metadata is non-standard. |
+| `IMGSZ`                 | unset (auto-detect from `.pt`) | Override input size. The script auto-detects from the `.pt`'s baked-in `args.imgsz`; failure to detect is a hard error (no silent default), so set both `IMGSZ` and `NUM_CLASSES` explicitly when working with a checkpoint whose metadata is unusual. |
+| `NUM_CLASSES`           | unset (auto-detect from `model.names`) | Override class count passed to `strip_yolo26_head.py --num-classes`. **Important**: `NUM_CLASSES` at export MUST match the runtime `CLASS_NAMES` size in `inference/trt_pipeline.py` and the C++ `kClassNames` size in `inference/cpp/src/trt_pipeline.cpp`. The sidecar records the value for traceability but inference does not yet read it. |
 
 FP16 vs FP32 parity workflow:
 

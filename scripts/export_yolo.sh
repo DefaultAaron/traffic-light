@@ -60,6 +60,15 @@
 #                    custom class list and Ultralytics' loader is finicky.
 #   ALLOW_NON_YOLO26 1 bypasses the YOLO26 path-segment regex gate.
 #   ALLOW_LARGE_WORKSPACE 1 bypasses the 32GB cap on WORKSPACE_GB.
+#
+# IMPORTANT — runtime class-count contract (cross-script):
+#   The sidecar's `num_classes` field is recorded for traceability, but the
+#   inference stacks (`inference/trt_pipeline.py` CLASS_NAMES,
+#   `inference/cpp/src/trt_pipeline.cpp` kClassNames) currently hard-code
+#   the class count. NUM_CLASSES at export MUST match the runtime
+#   CLASS_NAMES dict size or the engine will fail shape validation at
+#   inference. This is a known gap; teaching the inference path to read
+#   sidecar class metadata is a separate change.
 
 set -euo pipefail
 
@@ -102,6 +111,19 @@ if [[ "$ALLOW_NON_YOLO26" != "1" ]]; then
 fi
 
 CKPT_ABS="$(cd "$(dirname "$CKPT")" && pwd)/$(basename "$CKPT")"
+# F10 fix: re-check the YOLO26 path-segment regex against the symlink-resolved
+# absolute path too. If $CKPT was a `runs/yolo26_s/best.pt` symlink pointing
+# at `/data/old_runs/yolov13_v2/best.pt`, the original $CKPT regex would
+# accept it but downstream artifacts land under the resolved (yolov13) path,
+# silently violating the YOLO26-only contract.
+if [[ "$ALLOW_NON_YOLO26" != "1" ]]; then
+    if ! [[ "/$CKPT_ABS" =~ /yolo26[^/]* ]]; then
+        echo "ERROR: resolved checkpoint path '$CKPT_ABS' has no path segment starting with 'yolo26'." >&2
+        echo "       (Symlink resolution may have hopped out of a yolo26 dir.)" >&2
+        echo "       Set ALLOW_NON_YOLO26=1 to bypass." >&2
+        exit 1
+    fi
+fi
 ONNX_ABS="${CKPT_ABS%.pt}.onnx"
 STRIPPED_ABS="${CKPT_ABS%.pt}_stripped.onnx"
 
@@ -216,7 +238,7 @@ else
         echo "SKIP_EXPORT=1 requested but $ONNX_ABS missing/empty — running full export"
     fi
     if [[ -f "$ONNX_ABS" ]]; then
-        ONNX_BACKUP="${ONNX_ABS}.bak.$$"
+        ONNX_BACKUP="$(mktemp -u "${ONNX_ABS}.bak.XXXXXX")"
         mv "$ONNX_ABS" "$ONNX_BACKUP"
     fi
     trap restore_onnx_on_fail EXIT
@@ -252,35 +274,67 @@ echo "ONNX written + validated: $ONNX_ABS"
 echo
 echo "=== Strip YOLO26 head ==="
 
-# Read num_classes + imgsz from the .pt (one Python call). NUM_CLASSES env
-# override wins if set. Imgsz inferred from baked-in arg, falls back to
-# 1280 (R2 default) if the .pt args are unusual.
-read DETECTED_NC DETECTED_IMGSZ <<<"$("$PYBIN" - "$CKPT_ABS" <<'PYEOF'
+# Read num_classes + imgsz from the .pt. If both NUM_CLASSES and IMGSZ env
+# vars are already set, skip auto-detect entirely; otherwise run a robust
+# Python heredoc that fails LOUDLY on any error (no silent fallback to a
+# default imgsz — that would build the engine at the wrong shape and
+# corrupt downstream parity opaquely).
+if [[ -n "${NUM_CLASSES:-}" && -n "${IMGSZ:-}" ]]; then
+    echo "  num_classes (from env): $NUM_CLASSES"
+    echo "  imgsz (from env):       $IMGSZ"
+    IMGSZ_VAL="$IMGSZ"
+else
+    DETECT_STDOUT=$(mktemp -t exp_yolo_det.XXXXXX)
+    DETECT_STDERR=$(mktemp -t exp_yolo_det.XXXXXX)
+    set +e
+    "$PYBIN" - "$CKPT_ABS" >"$DETECT_STDOUT" 2>"$DETECT_STDERR" <<'PYEOF'
 import sys
 from ultralytics import YOLO
 m = YOLO(sys.argv[1])
 nc = len(m.names)
 imgsz = None
-try:
-    imgsz = m.overrides.get("imgsz") or (
-        m.model.args.get("imgsz") if hasattr(m.model, "args") else None
-    )
-except Exception:
-    pass
+# Ultralytics m.model.args is typically an IterableSimpleNamespace, NOT a
+# dict — `.get(...)` raises AttributeError there. Try dict-access first
+# (catch the resulting exception), then fall back to attribute access.
+args_obj = getattr(m.model, "args", None)
+if args_obj is not None:
+    try:
+        imgsz = args_obj["imgsz"]
+    except (KeyError, TypeError):
+        imgsz = getattr(args_obj, "imgsz", None)
+if not imgsz:
+    overrides = getattr(m, "overrides", None)
+    if isinstance(overrides, dict):
+        imgsz = overrides.get("imgsz")
 if isinstance(imgsz, (list, tuple)):
     imgsz = imgsz[0]
-if not imgsz:
-    imgsz = 1280
+if imgsz is None:
+    sys.stderr.write(
+        "ERROR: imgsz not found in checkpoint metadata.\n"
+        "Re-run with both NUM_CLASSES and IMGSZ env vars set explicitly.\n")
+    sys.exit(2)
 print(int(nc), int(imgsz))
 PYEOF
-)"
+    DETECT_RC=$?
+    set -e
+    if (( DETECT_RC != 0 )); then
+        echo "ERROR: failed to read num_classes/imgsz from $CKPT_ABS (rc=$DETECT_RC)" >&2
+        cat "$DETECT_STDERR" >&2
+        rm -f "$DETECT_STDOUT" "$DETECT_STDERR"
+        exit 1
+    fi
+    DETECTED_NC=""
+    DETECTED_IMGSZ=""
+    read -r DETECTED_NC DETECTED_IMGSZ <"$DETECT_STDOUT"
+    rm -f "$DETECT_STDOUT" "$DETECT_STDERR"
+    NUM_CLASSES="${NUM_CLASSES:-$DETECTED_NC}"
+    IMGSZ_VAL="${IMGSZ:-$DETECTED_IMGSZ}"
+fi
 
-NUM_CLASSES="${NUM_CLASSES:-$DETECTED_NC}"
-IMGSZ_VAL="${IMGSZ:-$DETECTED_IMGSZ}"
 if ! [[ "$NUM_CLASSES" =~ ^[0-9]+$ ]] || ! [[ "$IMGSZ_VAL" =~ ^[0-9]+$ ]]; then
-    echo "failed to read num_classes / imgsz from $CKPT_ABS" >&2
-    echo "  detected: nc='$DETECTED_NC' imgsz='$DETECTED_IMGSZ'" >&2
-    echo "  resolved: nc='$NUM_CLASSES' imgsz='$IMGSZ_VAL'" >&2
+    echo "ERROR: num_classes / imgsz did not parse as positive integers" >&2
+    echo "  resolved: NUM_CLASSES='$NUM_CLASSES' IMGSZ='$IMGSZ_VAL'" >&2
+    echo "  Set both env vars explicitly to bypass auto-detect." >&2
     exit 1
 fi
 echo "  num_classes: $NUM_CLASSES"
@@ -305,17 +359,34 @@ restore_stripped_on_fail() {
 
 # Decide whether to reuse or re-strip. SKIP_EXPORT=1 alone is NOT sufficient
 # to reuse — the stripped ONNX must also be (a) present, (b) at least as new
-# as the source .onnx, and (c) pass onnx.checker. Otherwise auto-re-strip
-# (it's a sub-second pass on a YOLO ONNX, far cheaper than building the
-# wrong engine off a stale graph). Codex stop-gate fix.
+# as the source .onnx, (c) pass onnx.checker, AND (d) have an output axis
+# equal to 4+NUM_CLASSES (otherwise it's a stale strip from a prior run with
+# a different class count, which would silently build an engine whose
+# class axis disagrees with the sidecar — exactly the corruption the
+# strip step exists to prevent). Otherwise auto-re-strip (sub-second).
 NEED_RESTRIP=1
 if [[ "$SKIP_EXPORT" == "1" && -s "$STRIPPED_ABS" ]]; then
     if [[ "$ONNX_ABS" -nt "$STRIPPED_ABS" ]]; then
         echo "SKIP_EXPORT=1: $STRIPPED_ABS is older than $ONNX_ABS — auto-re-stripping."
     elif ! "$PYBIN" -c "import sys, onnx; onnx.checker.check_model(onnx.load(sys.argv[1]))" "$STRIPPED_ABS" 2>/dev/null; then
         echo "SKIP_EXPORT=1: existing $STRIPPED_ABS failed onnx.checker (corrupt/truncated) — auto-re-stripping."
+    elif ! "$PYBIN" - "$STRIPPED_ABS" "$NUM_CLASSES" 2>/dev/null <<'PYEOF'
+import sys, onnx
+m = onnx.load(sys.argv[1])
+expected = 4 + int(sys.argv[2])
+if not m.graph.output:
+    sys.exit(1)
+out = m.graph.output[0]
+dims = []
+for d in out.type.tensor_type.shape.dim:
+    dims.append(d.dim_value if d.dim_value > 0 else None)
+if expected not in [d for d in dims if d is not None]:
+    sys.exit(1)
+PYEOF
+    then
+        echo "SKIP_EXPORT=1: $STRIPPED_ABS output axis does not contain 4+NUM_CLASSES=$((4+NUM_CLASSES)) — auto-re-stripping."
     else
-        echo "SKIP_EXPORT=1 and existing stripped ONNX is valid + fresher than source — reusing $STRIPPED_ABS"
+        echo "SKIP_EXPORT=1 and existing stripped ONNX is valid, fresher than source, and shape-matches NUM_CLASSES=$NUM_CLASSES — reusing $STRIPPED_ABS"
         STRIPPED_VALIDATED=1
         NEED_RESTRIP=0
     fi
@@ -323,7 +394,7 @@ fi
 
 if (( NEED_RESTRIP == 1 )); then
     if [[ -f "$STRIPPED_ABS" ]]; then
-        STRIPPED_BACKUP="${STRIPPED_ABS}.bak.$$"
+        STRIPPED_BACKUP="$(mktemp -u "${STRIPPED_ABS}.bak.XXXXXX")"
         mv "$STRIPPED_ABS" "$STRIPPED_BACKUP"
     fi
     trap restore_stripped_on_fail EXIT
@@ -369,6 +440,13 @@ fi
 
 SIDECAR="${ENGINE_ABS}.meta.json"
 SIDECAR_TMP="${SIDECAR}.tmp"
+# Engine-phase cleanup intentionally does NOT touch $ONNX_ABS or
+# $STRIPPED_ABS — by the time we reach this trap, both have been
+# validated and are useful artifacts on their own (Python ORT parity,
+# legacy debug). Re-running the engine build is cheap; re-running the
+# strip + checker chain is also cheap; rebuilding the .pt is not. The
+# trap deletes only the (untrusted) engine + its (possibly partial)
+# sidecar, so the next run picks up where this one left off.
 cleanup_engine_partial() {
     local rc=$?
     if (( rc != 0 )); then
@@ -381,6 +459,11 @@ cleanup_engine_partial() {
         fi
     fi
 }
+# Trap-overwrite invariant: bash supports only one EXIT trap. Each phase
+# (ONNX export → strip → engine build) arms its own trap and explicitly
+# disarms via `trap - EXIT` on success before the next phase. A future
+# editor MUST preserve this disarm sequence — overlapping armed traps
+# would silently lose the prior cleanup handler.
 trap cleanup_engine_partial EXIT
 
 TRTEXEC_ARGS=(
@@ -410,9 +493,22 @@ print(shlex.join([os.environ["TRTEXEC_BIN_VAL"], *sys.argv[1:]]))
 PYEOF
 )
 
-EXPORTER_CMDLINE="$YOLO_CMD export model=$CKPT_ABS format=onnx simplify=True"
-[[ -n "${IMGSZ:-}" ]] && EXPORTER_CMDLINE="$EXPORTER_CMDLINE imgsz=$IMGSZ"
-EXPORTER_CMDLINE="$EXPORTER_CMDLINE && $PYBIN $STRIP_SCRIPT $ONNX_ABS $STRIPPED_ABS --num-classes $NUM_CLASSES"
+# F9 fix: build EXPORTER_CMDLINE via shlex.join so paths with spaces or
+# quotes are escaped correctly, matching how TRTEXEC_CMDLINE is built.
+# Two distinct shell stages joined by ' && ' — each stage is shlex-safe;
+# the ' && ' literal is fine inside the JSON string.
+EXPORTER_YOLO_ARGS=("$YOLO_CMD" export "model=$CKPT_ABS" format=onnx simplify=True)
+[[ -n "${IMGSZ:-}" ]] && EXPORTER_YOLO_ARGS+=("imgsz=$IMGSZ")
+EXPORTER_STRIP_ARGS=("$PYBIN" "$STRIP_SCRIPT" "$ONNX_ABS" "$STRIPPED_ABS" --num-classes "$NUM_CLASSES")
+EXPORTER_CMDLINE=$(EXPORT_YOLO_LEN="${#EXPORTER_YOLO_ARGS[@]}" \
+    "$PYBIN" - "${EXPORTER_YOLO_ARGS[@]}" "${EXPORTER_STRIP_ARGS[@]}" <<'PYEOF'
+import os, shlex, sys
+n = int(os.environ["EXPORT_YOLO_LEN"])
+yolo_cmd = shlex.join(sys.argv[1:1 + n])
+strip_cmd = shlex.join(sys.argv[1 + n:])
+print(f"{yolo_cmd} && {strip_cmd}")
+PYEOF
+)
 
 # === Atomic sidecar (locked plan Engineering Task 6) ===
 size_of() {

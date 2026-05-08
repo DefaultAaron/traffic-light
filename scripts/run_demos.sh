@@ -119,9 +119,33 @@ should_skip() {
     return 0
 }
 
-# Engine resolution: filename-based — `*1536* → 1536`, `*1280* → 1280`, else 640.
+# Engine resolution: prefer the engine sidecar's `imgsz` when present;
+# else fall back to the legacy filename heuristic (`*1536* → 1536`,
+# `*1280* → 1280`, else 640). Sidecar lives at `<engine>.meta.json`
+# next to the engine and is emitted by both export_yolo.sh and
+# export_deim.sh.
 imgsz_for() {
-    local name=$1
+    local engine_path=$1
+    local name=$2
+    local sidecar="${engine_path}.meta.json"
+    if [[ -s "$sidecar" ]]; then
+        local sidecar_imgsz
+        sidecar_imgsz=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    v = d.get('imgsz')
+    if v is not None:
+        print(int(v))
+except Exception:
+    pass
+" "$sidecar" 2>/dev/null)
+        if [[ -n "$sidecar_imgsz" && "$sidecar_imgsz" =~ ^[0-9]+$ ]]; then
+            echo "$sidecar_imgsz"
+            return 0
+        fi
+    fi
     case "$name" in
         *1536*) echo 1536 ;;
         *1280*) echo 1280 ;;
@@ -229,7 +253,7 @@ for run_path in "${runs[@]}"; do
             echo "[$run_name/$eng_name] matches ENGINE_EXCLUDE=$ENGINE_EXCLUDE — skipping"
             continue
         fi
-        imgsz=$(imgsz_for "$eng_name")
+        imgsz=$(imgsz_for "$eng" "$eng_name")
         out_subdir="$OUT_DIR/${run_name}${run_suffix}/$eng_name"
         mkdir -p "$out_subdir"
 
