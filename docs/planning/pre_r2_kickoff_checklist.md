@@ -98,24 +98,24 @@
 
 #### 2.1.1 即时 plumbing（数据无关，可立刻启动）
 
-- [ ] **a. Scaffold**
-  - [ ] `scripts/_r2_decision_schema.json`（input + output 形状；input 必含 §1.1 audit `audit_coverage_status` 字段 + `$ref` 到 §1.0 `_r2_audit_coverage_schema.json`）
-  - [ ] `scripts/_r2_decide_precision.py` 接口框架（无逻辑）
-  - [ ] `scripts/_r2_verify.py` 接口框架（scope-clamp 注释强制）
+- [x] **a. Scaffold**（2026-05-09 落地）
+  - [x] `scripts/_r2_decision_schema.json`（Input + Output `definitions`，`audit_records` 通过 `$ref` 指向 `_r2_audit_coverage_schema.json#/items`；ConfidenceInterval / ClassWiseDecisionItem cross-field 规则齐全；`_r2_schema_utils.py` 默认 registry 双注册 basename + `$id` 让 `$ref` 在生产路径 load-bearing；CI 序关系由 `enforce_ci_ordering` 运行时执行因 draft-07 不支持 cross-property numeric ordering）
+  - [x] `scripts/_r2_decide_precision.py` 接口框架（8 个 NotImplementedError stub；load_decision_input 负责 hash-pin audit-coverage；write_decisions docstring 三 gate 显式：schema+uniqueness / CI ordering / artifact path）
+  - [x] `scripts/_r2_verify.py` 接口框架（scope-clamp banner + 8 verify_* stub；verify_decisions_artifact docstring 三 gate 锁定为 round-close 不可绕过）
 - [ ] **b. Impl（数据无关部分）**
   - [ ] verify：仅 schema / path / hash 校验；**严禁** 阈值分支 / case 分类 / delta 计算
   - [ ] verify 增加 §4.1 soak SHA 比对：当 `runs/_r2_orin_soak_records.json` 含 entry 时，hard-fail 当 `engine_sha256 != selected_artifact_sha256`（仍是纯比对，不是决策逻辑）
   - [ ] `inference/cpp/src/demo.cpp:271-278` 计时拆分（t_detect / t_track；log 行追加 `(detect=Xms, track=Yms)`）
   - [ ] build-determinism 双构建脚本骨架（YOLO + DEIM 各一；实跑落 §2.1.2）
   - [ ] mixed-precision pipeline 加载验证（按路径加载 `best_fp32.engine`）
-- [ ] **c. Test（数据无关）** — schema 自检通过；verify 单元负向（path 不存在 / hash mismatch / soak SHA mismatch 均 hard-fail）；demo.cpp 编译 + log 解析 fixture
-- [ ] **d. Decision** — B2 + C3 loop AGREED，**逐工件登记**：
-  - [ ] `_r2_decide_precision.py` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `_r2_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `_r2_verify.py` — B2 ✓ / C3 ✓ / unresolved=0（含 scope-clamp 强制 + soak SHA 比对纯校验性 review brief）
-  - [ ] `demo.cpp` 计时拆分 — B2 ✓ / C3 ✓ / unresolved=0（scoped brief：无行为变更 / 无 timer 双计 / log 可解析）
-  - [ ] `export_yolo.sh` + `export_deim.sh` sidecar 字段改动 — B2 ✓ / C3 ✓ / unresolved=0（critical-path；与 §2.2.1 + §2.3 同批次）
-- [ ] **e. Report** — 各工件 transcript 路径写入 `runs/_r2_verification.json`
+- [~] **c. Test（数据无关）** — schema 自检 + cross-file `$ref` 负向 + 运行时 enforce_* helper 全过（`scripts/_r2_schemas_test.py`，~70 fixtures）；verify 单元负向 / demo.cpp 编译 fixture 待 b-stage
+- [~] **d. Decision** — B2 + C3 loop AGREED 仅覆盖 a-stage 三工件（2026-05-09，B2 iter-1 4MAJOR+多MINOR / C3 iter-1 2MAJOR+1MINOR / iter-2 1MAJOR / iter-3 AGREE-WITH-B2，全部 amend）；剩余两批次随 b-stage 落地：
+  - [x] `_r2_decide_precision.py` — B2 ✓ / C3 ✓ / unresolved=0（a-stage scaffold）
+  - [x] `_r2_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0（含 cross-field rules + cross-file `$ref` + CI ordering runtime gate 文档化）
+  - [x] `_r2_verify.py` — B2 ✓ / C3 ✓ / unresolved=0（含 scope-clamp 强制 + 三-gate round-close 契约 + 元测试防 docstring drift）
+  - [ ] `demo.cpp` 计时拆分 — pending b-stage（scoped brief：无行为变更 / 无 timer 双计 / log 可解析）
+  - [ ] `export_yolo.sh` + `export_deim.sh` sidecar 字段改动 — pending b-stage（critical-path；与 §2.2.1 + §2.3 同批次）
+- [ ] **e. Report** — a-stage 三工件 transcript 路径登记待与 b-stage 工件汇总后一次写入 `runs/_r2_verification.json`（即 §1.0 e-stage 同样的 gate）
 
 #### 2.1.2 数据 freeze 后执行（blocked_on=r2_data_freeze）
 
@@ -234,8 +234,8 @@
 |---|---|---|
 | 训练 | YOLO26-s/13-s/L、DEIM-D-FINE-S/M | DEIM-D-FINE-L（训练中） |
 | Export | export_yolo.sh / export_deim.sh + atomic sidecar | KD 3 + TSM 4 字段 carry-forward |
-| 决策执行器 | — | `_r2_decide_precision.py` / `_r2_verify.py` / `_kd_decide_cell.py` / `_tsm_decide_phase.py` |
-| Schema | `_tsm_activation_schema.json` v1.1；§1.0 三 schema (`_r2_component_decision_schema.json` / `_r2_audit_coverage_schema.json` / `_r2_carry_forward_schema.json`) + `_r2_schema_utils.py` 运行时强制 | `_r2_decision_schema.json` / `_kd_decision_schema.json` |
+| 决策执行器 | `_r2_decide_precision.py` / `_r2_verify.py` 接口框架（NotImplementedError stub 全函数，待 b-stage 填实） | `_kd_decide_cell.py` / `_tsm_decide_phase.py` |
+| Schema | `_tsm_activation_schema.json` v1.1；§1.0 三 schema + §2.1.1 `_r2_decision_schema.json` + `_r2_schema_utils.py` 运行时强制（schema validation / sub-key uniqueness / CI ordering） | `_kd_decision_schema.json` |
 | C++ | — | `demo.cpp` 计时拆分 |
 | Scaffold | TSM v1.5；KD a1 | — |
 | 计划 stub | — | R3_precision_reproducibility.md / pre_deploy_AGV_integration.md |

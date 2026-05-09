@@ -1,0 +1,407 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "scripts/_r2_decision_schema.json",
+  "title": "R2 Precision Decision I/O Contract (§2.1.1 a-stage)",
+  "description": "Both shapes the _r2_decide_precision.py executor sees: Input (per-detector eval/timing/audit bundle the executor consumes) and Output (canonical entry shape in runs/_r2_precision_decisions.json). Field set + decision_case enum + sensitivity_sweep keys + threshold_pass dict are pinned at elegant-sauteeing-quail.md LOCK-iter-3. Input.class_wise items inline the §1.1 audit-coverage record fields (audit_coverage_status / audit_low_power / construction_failure_reason?) and reference _r2_audit_coverage_schema.json#/items via $ref so the cross-schema invariant is enforceable when a registry-aware validator is used; the test driver builds a referencing.Registry from both schemas to make the $ref load-bearing at validation time. Outputs of decide_precision MUST validate against #/definitions/PrecisionDecisionsArray; inputs the executor accepts MUST validate against #/definitions/PrecisionDecisionsInput.",
+  "definitions": {
+    "ConfidenceInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["point", "ci_low", "ci_high"],
+      "properties": {
+        "point": {"type": "number"},
+        "ci_low": {"type": "number"},
+        "ci_high": {"type": "number"}
+      },
+      "description": "Bootstrap CI tuple (1000 resamples, 95% interval per locked plan). Decision rule keys on ci_low for CI-aware comparisons. Numeric ordering ci_low <= point <= ci_high is NOT expressible in JSON Schema draft-07 (no cross-property numeric ordering operator); writers/verifiers MUST call _r2_schema_utils.enforce_ci_ordering(records, CI_FIELDS_PER_DECISION_OUTPUT_RECORD) after schema validation. The schema rejects malformed shapes (missing fields, non-number types); the runtime helper rejects malformed orderings (e.g. {point: -0.1, ci_low: 0.2, ci_high: 0.3})."
+    },
+    "AuditFields": {
+      "$ref": "_r2_audit_coverage_schema.json#/items",
+      "description": "Reference to _r2_audit_coverage_schema.json per-record shape. The audit-coverage record's required fields (class_id / class_name / full_val_support / full_val_insufficient / audit_support / audit_coverage_status / audit_low_power) become the canonical audit fields inside ClassWiseDecisionItem; runtime registry resolution makes this $ref load-bearing."
+    },
+    "ClassWiseDecisionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "delta_AP",
+        "full_val_support",
+        "full_val_insufficient",
+        "audit_support",
+        "audit_coverage_status",
+        "audit_low_power"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Class name. Must match class_name in the corresponding _r2_audit_coverage.json record (writer-enforced cross-file invariant; _r2_verify.py asserts byte-equality on the audit-fields subset by class name)."
+        },
+        "delta_AP": {
+          "type": "number",
+          "description": "FP32-FP16 per-class AP delta on the frozen R2 val set. Sign convention: positive = FP32 better."
+        },
+        "full_val_support": {"type": "integer", "minimum": 0},
+        "full_val_insufficient": {"type": "boolean"},
+        "support_tier": {
+          "type": ["string", "null"],
+          "enum": ["low_block", "medium_block", "high_block", null],
+          "description": "Reporting tier when full_val_support >= 30: 30-99=low_block, 100-499=medium_block, >=500=high_block. null when full_val_insufficient=true. Per locked plan: tier is reporting-only, does not change blocking rule. Cross-field consistency with full_val_support is enforced by allOf rules below."
+        },
+        "audit_support": {"type": "integer", "minimum": 0},
+        "audit_coverage_status": {
+          "type": "string",
+          "enum": ["covered", "low_power", "construction_failed"]
+        },
+        "audit_low_power": {"type": "boolean"},
+        "construction_failure_reason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "description": "full_val_insufficient = (full_val_support < 30); mirrors _r2_audit_coverage_schema.json rule.",
+          "if": {"properties": {"full_val_support": {"minimum": 30}}},
+          "then": {"properties": {"full_val_insufficient": {"const": false}}},
+          "else": {"properties": {"full_val_insufficient": {"const": true}}}
+        },
+        {
+          "description": "support_tier=null when full_val_insufficient=true.",
+          "if": {"properties": {"full_val_insufficient": {"const": true}}},
+          "then": {"properties": {"support_tier": {"type": "null"}}}
+        },
+        {
+          "description": "support_tier='low_block' for 30 <= full_val_support <= 99.",
+          "if": {
+            "properties": {"full_val_support": {"minimum": 30, "maximum": 99}},
+            "required": ["full_val_support"]
+          },
+          "then": {"properties": {"support_tier": {"const": "low_block"}}}
+        },
+        {
+          "description": "support_tier='medium_block' for 100 <= full_val_support <= 499.",
+          "if": {
+            "properties": {"full_val_support": {"minimum": 100, "maximum": 499}},
+            "required": ["full_val_support"]
+          },
+          "then": {"properties": {"support_tier": {"const": "medium_block"}}}
+        },
+        {
+          "description": "support_tier='high_block' for full_val_support >= 500.",
+          "if": {"properties": {"full_val_support": {"minimum": 500}}},
+          "then": {"properties": {"support_tier": {"const": "high_block"}}}
+        },
+        {
+          "description": "audit_coverage_status pinned to audit_support range; mirrors _r2_audit_coverage_schema.json rule.",
+          "if": {"properties": {"audit_support": {"const": 0}}},
+          "then": {"properties": {"audit_coverage_status": {"const": "construction_failed"}}}
+        },
+        {
+          "if": {
+            "properties": {"audit_support": {"minimum": 1, "maximum": 4}},
+            "required": ["audit_support"]
+          },
+          "then": {"properties": {"audit_coverage_status": {"const": "low_power"}}}
+        },
+        {
+          "if": {"properties": {"audit_support": {"minimum": 5}}},
+          "then": {"properties": {"audit_coverage_status": {"const": "covered"}}}
+        },
+        {
+          "description": "audit_low_power = (audit_support < 30); mirrors audit schema rule.",
+          "if": {"properties": {"audit_support": {"minimum": 30}}},
+          "then": {"properties": {"audit_low_power": {"const": false}}},
+          "else": {"properties": {"audit_low_power": {"const": true}}}
+        },
+        {
+          "description": "construction_failure_reason present iff status=construction_failed; mirrors audit schema rule.",
+          "if": {"properties": {"audit_coverage_status": {"const": "construction_failed"}}},
+          "then": {"required": ["construction_failure_reason"]},
+          "else": {"not": {"required": ["construction_failure_reason"]}}
+        }
+      ]
+    },
+    "SafetyClassExclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "rationale"],
+      "properties": {
+        "class": {"type": "string", "minLength": 1},
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text but minLength enforced per locked plan: silent exclusion of pedestrian-signal classes (or any safety-set member) is forbidden."
+        }
+      }
+    },
+    "Diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "num_safety_classes_regressed",
+        "worst_safety_delta_AP",
+        "support_of_worst_class",
+        "worst_class_name"
+      ],
+      "properties": {
+        "num_safety_classes_regressed": {"type": "integer", "minimum": 0},
+        "worst_safety_delta_AP": {"type": "number"},
+        "support_of_worst_class": {"type": "integer", "minimum": 0},
+        "worst_class_name": {
+          "type": "string",
+          "description": "Empty when num_safety_classes_regressed=0 (cross-field rule below). Class name from R2 manifest otherwise."
+        }
+      },
+      "allOf": [
+        {
+          "description": "When no safety class regressed, all worst-* fields must be zero/empty (no spurious worst-class data).",
+          "if": {"properties": {"num_safety_classes_regressed": {"const": 0}}},
+          "then": {
+            "properties": {
+              "worst_class_name": {"maxLength": 0},
+              "worst_safety_delta_AP": {"const": 0},
+              "support_of_worst_class": {"const": 0}
+            }
+          }
+        }
+      ]
+    },
+    "AllThresholdsPass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "loc_regression_pp",
+        "safety_regression_pp",
+        "build_map_variance_pp",
+        "build_tdetect_variance_pct"
+      ],
+      "properties": {
+        "loc_regression_pp": {"type": "boolean"},
+        "safety_regression_pp": {"type": "boolean"},
+        "build_map_variance_pp": {"type": "boolean"},
+        "build_tdetect_variance_pct": {"type": "boolean"}
+      },
+      "description": "Per-threshold pass flags (one per swept parameter in locked plan). False = threshold tripped."
+    },
+    "PrecisionEnum": {
+      "type": "string",
+      "enum": ["fp16", "fp32"]
+    },
+    "SensitivitySweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["one_at_a_time", "joint"],
+      "properties": {
+        "one_at_a_time": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "loc_regression_pp",
+            "safety_regression_pp",
+            "build_map_variance_pp",
+            "build_tdetect_variance_pct"
+          ],
+          "properties": {
+            "loc_regression_pp": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/definitions/PrecisionEnum"},
+              "description": "Map from threshold value (string-encoded e.g. '-0.1') to ship_precision under that single-parameter override."
+            },
+            "safety_regression_pp": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/definitions/PrecisionEnum"}
+            },
+            "build_map_variance_pp": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/definitions/PrecisionEnum"}
+            },
+            "build_tdetect_variance_pct": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/definitions/PrecisionEnum"}
+            }
+          }
+        },
+        "joint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strict", "nominal", "lenient"],
+          "properties": {
+            "strict": {"$ref": "#/definitions/PrecisionEnum"},
+            "nominal": {"$ref": "#/definitions/PrecisionEnum"},
+            "lenient": {"$ref": "#/definitions/PrecisionEnum"}
+          },
+          "description": "Three named joint-profile bundles per locked plan."
+        }
+      }
+    },
+    "PrecisionDecisionOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detector",
+        "ship_precision",
+        "decision_case",
+        "delta_mAP_0.5",
+        "delta_mAP_0.5_0.95",
+        "class_wise",
+        "safety_class_exclusions",
+        "diagnostics",
+        "investigation_required",
+        "investigation_note",
+        "all_thresholds_pass",
+        "sensitivity_sweep",
+        "selected_artifact_path",
+        "selected_artifact_sha256"
+      ],
+      "properties": {
+        "detector": {
+          "type": "string",
+          "enum": ["yolo26_s", "yolov13_s", "deim_dfine_s", "deim_dfine_m"],
+          "description": "Closed enum locked to the four R2 candidates in elegant-sauteeing-quail.md LOCK-iter-3. Adding a candidate requires schema bump."
+        },
+        "ship_precision": {"$ref": "#/definitions/PrecisionEnum"},
+        "decision_case": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "inconclusive_global",
+            "audit_disagreement",
+            "executor_error"
+          ],
+          "description": "4 main cases (A=ship FP32, B=ship FP16 default, C=catch-all FP16 with regression flag, D=mixed-signal FP16) + 3 escapes (inconclusive_global / audit_disagreement / executor_error) per locked plan. Mutually exclusive — exactly one terminal outcome per detector."
+        },
+        "delta_mAP_0.5": {"$ref": "#/definitions/ConfidenceInterval"},
+        "delta_mAP_0.5_0.95": {"$ref": "#/definitions/ConfidenceInterval"},
+        "class_wise": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/ClassWiseDecisionItem"}
+        },
+        "safety_class_exclusions": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/SafetyClassExclusion"}
+        },
+        "diagnostics": {"$ref": "#/definitions/Diagnostics"},
+        "investigation_required": {"type": "boolean"},
+        "investigation_note": {
+          "type": "string",
+          "description": "May be empty when investigation_required=false."
+        },
+        "all_thresholds_pass": {"$ref": "#/definitions/AllThresholdsPass"},
+        "sensitivity_sweep": {"$ref": "#/definitions/SensitivitySweep"},
+        "selected_artifact_path": {
+          "type": "string",
+          "pattern": "^(?!/)(?![A-Za-z]:)(?!\\./)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\s]+(?<!/)\\.engine$",
+          "description": "Repo-relative path to the selected TRT engine. Same canonicalization rules as _r2_component_decision_schema.json blocking_artifacts paths, plus required '.engine' suffix because precision decisions ALWAYS pick an engine artifact."
+        },
+        "selected_artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pre_committed_defer_outcome": {
+          "type": "string",
+          "enum": ["r2_fp16_default"],
+          "description": "Optional. Set when build-determinism check (§2.1.2 c) trips threshold and forces fp16-default per pre_committed_defer_outcome rule. Single-value enum so writers can't smuggle ad-hoc strings; new outcomes require schema bump."
+        }
+      },
+      "allOf": [
+        {
+          "description": "investigation_note minLength 1 when investigation_required=true.",
+          "if": {"properties": {"investigation_required": {"const": true}}},
+          "then": {"properties": {"investigation_note": {"minLength": 1}}}
+        },
+        {
+          "description": "Case C is the catch-all for blocked FP32; Cases A/B/D never trigger investigation_required. Per locked plan: only Case C requires investigation note.",
+          "if": {"properties": {"decision_case": {"const": "C"}}},
+          "then": {"properties": {"investigation_required": {"const": true}}}
+        },
+        {
+          "description": "Reverse direction: investigation_required=true → decision_case=C. Closes the smuggle channel where a writer could flag investigation on B/D outcomes.",
+          "if": {"properties": {"investigation_required": {"const": true}}},
+          "then": {"properties": {"decision_case": {"const": "C"}}}
+        },
+        {
+          "description": "Case A ships FP32; ship_precision must be fp32.",
+          "if": {"properties": {"decision_case": {"const": "A"}}},
+          "then": {"properties": {"ship_precision": {"const": "fp32"}}}
+        },
+        {
+          "description": "Cases B/C/D ship FP16 (locked plan §-Decision-rule). All escape cases also ship FP16: audit_disagreement (locked plan §-Audit-subset-action), inconclusive_global (locked plan §-Inconclusive-evidence-outcome), executor_error (defense-in-depth: a crash report MUST NOT default to FP32).",
+          "if": {
+            "properties": {
+              "decision_case": {
+                "enum": ["B", "C", "D", "audit_disagreement", "inconclusive_global", "executor_error"]
+              }
+            }
+          },
+          "then": {"properties": {"ship_precision": {"const": "fp16"}}}
+        },
+        {
+          "description": "pre_committed_defer_outcome only valid on inconclusive_global escape (build variance defer flows through inconclusive_global per locked plan).",
+          "if": {"required": ["pre_committed_defer_outcome"]},
+          "then": {"properties": {"decision_case": {"const": "inconclusive_global"}}}
+        }
+      ]
+    },
+    "PrecisionDecisionsArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/definitions/PrecisionDecisionOutput"},
+      "description": "Top-level shape for runs/_r2_precision_decisions.json. Sub-key uniqueness on `detector` is unenforceable in draft-07; writers/verifiers MUST call _r2_schema_utils.validate_and_enforce(records, schema_path, unique_keys=['detector']) before persisting/accepting. Output array MUST contain exactly 4 entries (one per R2 candidate) at R2 close per §4.1; this schema does NOT enforce minItems/maxItems=4 because the executor may write partial records during iteration — final-state count check lives in _r2_verify.py."
+    },
+    "PrecisionDecisionsInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detector",
+        "eval_fp16_path",
+        "eval_fp32_path",
+        "eval_audit_fp16_path",
+        "eval_audit_fp32_path",
+        "timing_fp16_path",
+        "timing_fp32_path",
+        "build_variance_path",
+        "audit_coverage_path",
+        "audit_coverage_sha256",
+        "val_manifest_sha256",
+        "audit_records"
+      ],
+      "properties": {
+        "detector": {
+          "type": "string",
+          "enum": ["yolo26_s", "yolov13_s", "deim_dfine_s", "deim_dfine_m"]
+        },
+        "eval_fp16_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "eval_fp32_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "eval_audit_fp16_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "eval_audit_fp32_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "timing_fp16_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "timing_fp32_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "build_variance_path": {"$ref": "#/definitions/RepoRelativePath"},
+        "audit_coverage_path": {
+          "$ref": "#/definitions/RepoRelativePath",
+          "description": "Path to runs/_r2_audit_coverage.json. The hash-pin (audit_coverage_sha256) is the load-bearing field; path is for runtime location."
+        },
+        "audit_coverage_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 hash-pin of the audit-coverage JSON file. _r2_decide_precision.py MUST recompute the file's actual hash and assert equality before consuming any audit_records — per §1.1 b-stage propagation rule (low_power → confidence-downgrade; construction_failed → escape outcome)."
+        },
+        "val_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "audit_records": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/AuditFields"},
+          "description": "Inlined audit-coverage records (the $ref resolves to _r2_audit_coverage_schema.json#/items at validation time). Required by §2.1.1 a-stage spec: 'input 必含 §1.1 audit audit_coverage_status 字段 + $ref 到 §1.0 _r2_audit_coverage_schema.json'. Executor MUST cross-check audit_records against audit_coverage_path's actual file content and audit_coverage_sha256."
+        }
+      }
+    },
+    "RepoRelativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\./)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\s]+(?<!/)$",
+      "description": "Same canonicalization rules as _r2_component_decision_schema.json blocking_artifacts paths."
+    }
+  }
+}
