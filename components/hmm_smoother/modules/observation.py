@@ -21,6 +21,7 @@ the signature so the inference algorithms can be written against it.
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 
 import numpy as np
@@ -55,13 +56,34 @@ class ObservationModel:
         mode: ObservationMode = ObservationMode.SOFT,
         epsilon: float = 1e-6,
     ):
-        if num_classes <= 0:
+        # Codex stop-gate 2026-05-09: parallel hardening to match
+        # HmmYamlConfig.__post_init__ — direct ObservationModel construction
+        # is a public boundary and needs the same validation discipline.
+        if num_classes is None:
+            raise ValueError("num_classes must be set explicitly; got None")
+        if not isinstance(num_classes, int) or isinstance(num_classes, bool):
             raise ValueError(
-                f"num_classes must be positive; got {num_classes}"
+                f"num_classes must be int; got "
+                f"{type(num_classes).__name__}={num_classes!r}"
             )
+        if num_classes <= 0:
+            raise ValueError(f"num_classes must be > 0; got {num_classes}")
+        if not isinstance(mode, ObservationMode):
+            raise ValueError(
+                f"mode must be ObservationMode enum; got "
+                f"{type(mode).__name__}={mode!r}"
+            )
+        if not isinstance(epsilon, float) or isinstance(epsilon, bool):
+            raise ValueError(
+                f"epsilon must be float; got "
+                f"{type(epsilon).__name__}={epsilon!r}"
+            )
+        if not math.isfinite(epsilon):
+            raise ValueError(f"epsilon must be finite; got {epsilon!r}")
         if not (0.0 < epsilon < 1.0 / num_classes):
             raise ValueError(
-                f"epsilon must be in (0, 1/num_classes); got {epsilon}"
+                f"epsilon must be in (0, 1/num_classes={1.0 / num_classes:g}); "
+                f"got {epsilon}"
             )
         self._num_classes = num_classes
         self._mode = mode

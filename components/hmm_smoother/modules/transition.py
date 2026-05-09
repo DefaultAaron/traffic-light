@@ -26,6 +26,7 @@ adversarial loop.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -65,15 +66,60 @@ class TransitionConfig:
     )
 
     def __post_init__(self) -> None:
+        # Codex stop-gate 2026-05-09: parallel hardening to match
+        # HmmYamlConfig.__post_init__ — same bool-subclass / NaN / type-guard
+        # hazards apply at this constructor boundary too. Direct construction
+        # bypasses the YAML-config layer's validation, so both system
+        # boundaries need the same discipline.
+        if self.num_classes is None:
+            raise ValueError(
+                "num_classes must be set explicitly; got None"
+            )
+        if not isinstance(self.num_classes, int) or isinstance(self.num_classes, bool):
+            raise ValueError(
+                f"num_classes must be int; got "
+                f"{type(self.num_classes).__name__}={self.num_classes!r}"
+            )
         if self.num_classes <= 0:
             raise ValueError(
-                f"num_classes must be positive; got {self.num_classes}"
+                f"num_classes must be > 0; got {self.num_classes}"
+            )
+        if not isinstance(self.laplace_alpha, float) or isinstance(self.laplace_alpha, bool):
+            raise ValueError(
+                f"laplace_alpha must be float; got "
+                f"{type(self.laplace_alpha).__name__}={self.laplace_alpha!r}"
+            )
+        if not math.isfinite(self.laplace_alpha):
+            raise ValueError(
+                f"laplace_alpha must be finite; got {self.laplace_alpha!r}"
             )
         if self.laplace_alpha < 0.0:
             raise ValueError(
-                f"laplace_alpha must be non-negative; got {self.laplace_alpha}"
+                f"laplace_alpha must be >= 0; got {self.laplace_alpha}"
             )
-        for src, dst in self.illegal_transition_set:
+        if not isinstance(self.illegal_transition_policy, IllegalTransitionPolicy):
+            raise ValueError(
+                f"illegal_transition_policy must be IllegalTransitionPolicy enum; "
+                f"got {type(self.illegal_transition_policy).__name__}"
+            )
+        if not isinstance(self.illegal_transition_set, tuple):
+            raise ValueError(
+                f"illegal_transition_set must be tuple; got "
+                f"{type(self.illegal_transition_set).__name__}={self.illegal_transition_set!r}"
+            )
+        for pair in self.illegal_transition_set:
+            if not (isinstance(pair, tuple) and len(pair) == 2):
+                raise ValueError(
+                    f"illegal_transition_set entries must be 2-tuples; got "
+                    f"{type(pair).__name__}={pair!r}"
+                )
+            src, dst = pair
+            for cell_label, cell in (("src", src), ("dst", dst)):
+                if not isinstance(cell, int) or isinstance(cell, bool):
+                    raise ValueError(
+                        f"illegal_transition cell {cell_label} must be int; got "
+                        f"{type(cell).__name__}={cell!r} in pair {pair!r}"
+                    )
             if not (0 <= src < self.num_classes and 0 <= dst < self.num_classes):
                 raise ValueError(
                     f"illegal_transition cell ({src},{dst}) out of range "
