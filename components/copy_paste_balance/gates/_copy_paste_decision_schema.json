@@ -53,14 +53,14 @@
       "type": "string",
       "enum": ["deploy", "defer", "drop", "executor_error"]
     },
-    "notes": { "type": "string" },
+    "notes": { "type": "string", "minLength": 1 },
     "no_aug": {
       "type": "object",
       "additionalProperties": false,
       "required": ["metrics", "notes"],
       "properties": {
         "metrics": { "$ref": "#/definitions/BaselineMetricsBlock" },
-        "notes": { "type": "string" }
+        "notes": { "type": "string", "minLength": 1 }
       },
       "description": "Baseline reference; no decision is computed (the rule is undefined on a self-comparison). All MetricsBlock delta fields are constrained to exactly 0 by BaselineMetricsBlock — the runner asserts this before serialization, and the schema mirrors at the boundary."
     },
@@ -131,7 +131,10 @@
         "zero_support_rare_classes",
         "eval_manifest_sha256",
         "fp_manifest_sha256",
-        "is_baseline_reference"
+        "is_baseline_reference",
+        "map_no_regression",
+        "map_regression_tolerance_pp",
+        "data_yaml_sha256"
       ],
       "properties": {
         "rare_class_mean_delta_AP_pp": { "type": "number", "minimum": -100, "maximum": 100 },
@@ -156,11 +159,26 @@
         },
         "eval_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "fp_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "is_baseline_reference": { "type": "boolean" }
+        "is_baseline_reference": { "type": "boolean" },
+        "map_no_regression": {
+          "type": "boolean",
+          "description": "C3 iter-9 NEW-MAJOR 2026-05-09: upstream eval verdict for THIS arm vs baseline. Per-cell so the artifact carries the verdict that drove the decision. For BaselineMetricsBlock this is constrained to const true (self-comparison)."
+        },
+        "map_regression_tolerance_pp": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 0.5,
+          "description": "C3 iter-9 NEW-MAJOR 2026-05-09: tolerance applied when computing map_no_regression. Cap at 0.5 mirrors DecisionInputs.DROP_TOTAL_MAP_REGRESSION_PP — beyond that the deploy guard tolerates regressions the drop trigger rejects."
+        },
+        "data_yaml_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "C3 iter-9 NEW-MAJOR 2026-05-09: source data.yaml hash. Class-label provenance — runner enforces equality across all 5 evals AND between top-level data_yaml_sha256, config, counts, and every metrics block."
+        }
       }
     },
     "BaselineMetricsBlock": {
-      "description": "C3 NEW-MAJOR 4 2026-05-09: the no_aug arm's metrics block. is_baseline_reference is fixed true and every delta field is fixed 0 (the baseline is constructed by self-comparison; non-zero deltas indicate a runner construction bug). Without this constraint, a no_aug.metrics block could mark itself as candidate (is_baseline_reference=false) and the resulting artifact would be semantically broken even though all numeric ranges pass.",
+      "description": "C3 NEW-MAJOR 4 2026-05-09: the no_aug arm's metrics block. is_baseline_reference is fixed true and every delta field is fixed 0 (the baseline is constructed by self-comparison; non-zero deltas indicate a runner construction bug). Without this constraint, a no_aug.metrics block could mark itself as candidate (is_baseline_reference=false) and the resulting artifact would be semantically broken even though all numeric ranges pass. C3 iter-9 NEW-MAJOR 2026-05-09: also pins map_no_regression: const true (the baseline self-comparison has no regression possible).",
       "allOf": [
         { "$ref": "#/definitions/MetricsBlockCommon" },
         {
@@ -170,7 +188,8 @@
             "rare_class_max_delta_AP_pp": { "const": 0 },
             "rare_safety_min_delta_AP_pp": { "const": 0 },
             "rare_related_fp_delta_frac": { "const": 0 },
-            "total_map_delta_pp": { "const": 0 }
+            "total_map_delta_pp": { "const": 0 },
+            "map_no_regression": { "const": true }
           }
         }
       ]
@@ -196,7 +215,7 @@
           "type": "string",
           "enum": ["deploy", "defer", "drop", "executor_error"]
         },
-        "notes": { "type": "string" }
+        "notes": { "type": "string", "minLength": 1 }
       }
     },
     "BetaCell": {
@@ -211,7 +230,7 @@
           "type": "string",
           "enum": ["deploy", "defer", "drop", "executor_error"]
         },
-        "notes": { "type": "string" }
+        "notes": { "type": "string", "minLength": 1 }
       }
     }
   }

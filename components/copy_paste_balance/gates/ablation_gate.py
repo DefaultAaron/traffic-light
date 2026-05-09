@@ -150,6 +150,13 @@ class ArmMetrics:
     zero_support_rare_classes: tuple[int, ...]  # excluded from mean/min
     eval_manifest_sha256: str                   # frozen val manifest hash
     fp_manifest_sha256: str                     # §3.7+§4.7 shared manifest hash
+    # C3 iter-9 NEW-MAJOR 2026-05-09: decision-provenance fields.
+    # Without these per-cell, a hand-built artifact can claim
+    # ``decision: "deploy"`` while hiding the upstream mAP verdict /
+    # tolerance / data.yaml hash that made the decision possible.
+    map_no_regression: bool                     # upstream eval verdict (THIS arm vs baseline)
+    map_regression_tolerance_pp: float          # tolerance applied; runner-side knob
+    data_yaml_sha256: str                       # eval source data.yaml hash; class-label provenance
 
     _ALLOWED_ARM_IDS: ClassVar[tuple[str, ...]] = ("no_aug", "cp_only", "cp_balanced")
     # Schema MetricsBlock ranges (mirror _copy_paste_decision_schema.json):
@@ -283,6 +290,46 @@ class ArmMetrics:
                 f"fp_manifest_sha256 must be 64-char lowercase hex; got "
                 f"{self.fp_manifest_sha256!r}"
             )
+        if not _is_hex_sha256(self.data_yaml_sha256):
+            raise ValueError(
+                f"data_yaml_sha256 must be 64-char lowercase hex; got "
+                f"{self.data_yaml_sha256!r}"
+            )
+        # C3 iter-9 NEW-MAJOR (decision-provenance) 2026-05-09:
+        # map_no_regression must be plain bool. For the baseline arm
+        # the value is trivially True (self-comparison has zero mAP
+        # delta), and the dataclass enforces that consistency below.
+        if not isinstance(self.map_no_regression, bool):
+            raise ValueError(
+                f"map_no_regression must be bool; got "
+                f"{type(self.map_no_regression).__name__}={self.map_no_regression!r}"
+            )
+        if self.is_baseline_reference and not self.map_no_regression:
+            raise ValueError(
+                f"is_baseline_reference=True requires map_no_regression=True "
+                f"(baseline is constructed by self-comparison; mAP delta is "
+                f"exactly 0, no regression possible); got map_no_regression={self.map_no_regression}"
+            )
+        # map_regression_tolerance_pp: float-with-bool-exclusion + finite
+        # + range [0, 0.5] (mirrors DecisionInputs ceiling at the §3.7
+        # drop threshold; rule is incoherent if tolerance > drop).
+        if not isinstance(self.map_regression_tolerance_pp, float) or isinstance(self.map_regression_tolerance_pp, bool):
+            raise ValueError(
+                f"map_regression_tolerance_pp must be float; got "
+                f"{type(self.map_regression_tolerance_pp).__name__}="
+                f"{self.map_regression_tolerance_pp!r}"
+            )
+        if not math.isfinite(self.map_regression_tolerance_pp):
+            raise ValueError(
+                f"map_regression_tolerance_pp must be finite; got "
+                f"{self.map_regression_tolerance_pp!r}"
+            )
+        if not (0.0 <= self.map_regression_tolerance_pp <= 0.5):
+            raise ValueError(
+                f"map_regression_tolerance_pp must be in [0, 0.5]; got "
+                f"{self.map_regression_tolerance_pp} (cap mirrors "
+                f"DecisionInputs.DROP_TOTAL_MAP_REGRESSION_PP)"
+            )
 
 
 def compute_arm_metrics(
@@ -298,6 +345,13 @@ def compute_arm_metrics(
     safety_class_ids: tuple[int, ...],
     eval_manifest_sha256: str,
     fp_manifest_sha256: str,
+    # C3 iter-10 NEW-MAJOR 2026-05-09: producer signature must accept the
+    # three iter-9 ArmMetrics fields, otherwise b-stage cannot build a
+    # legal ArmMetrics from this helper. For the baseline self-comparison
+    # the caller passes map_no_regression=True.
+    map_no_regression: bool,
+    map_regression_tolerance_pp: float,
+    data_yaml_sha256: str,
 ) -> ArmMetrics:
     """Compute the §3.7 metric block on a single arm vs the baseline.
 
@@ -334,6 +388,16 @@ def compute_arm_metrics(
             of all class IDs).
         eval_manifest_sha256: hash of the frozen R2 val manifest.
         fp_manifest_sha256: hash of the frozen §3.7+§4.7 shared FP manifest.
+        map_no_regression: upstream eval verdict for THIS arm vs baseline
+            (computed from candidate_total_map - baseline_total_map vs
+            map_regression_tolerance_pp). For arm_id == "no_aug" the
+            caller MUST pass True (self-comparison).
+        map_regression_tolerance_pp: the tolerance threshold the runner
+            applied when computing ``map_no_regression``. Recorded into
+            the ArmMetrics for audit. Same value MUST be passed for
+            every arm in a single ablation run.
+        data_yaml_sha256: hash of the data.yaml the eval was computed
+            against. Class-label provenance — same value across all arms.
 
     Returns:
         ``ArmMetrics`` ready to feed into the d-stage decision gate.

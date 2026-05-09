@@ -265,6 +265,44 @@ class DecisionInputs:
                 "must propagate identically to every candidate cell; mismatch "
                 "would change the effective rare population the rule operates on)"
             )
+        # C3 iter-9 NEW-MAJOR 2026-05-09: cross-side equality on the new
+        # decision-provenance fields landed on ArmMetrics. tolerance and
+        # data_yaml_sha256 are the SAME across both sides (runner-side
+        # constants); map_no_regression is per-arm (baseline trivially
+        # True; candidate is the upstream verdict for THIS arm vs baseline).
+        if self.baseline.map_regression_tolerance_pp != self.candidate.map_regression_tolerance_pp:
+            raise ValueError(
+                f"baseline.map_regression_tolerance_pp != "
+                f"candidate.map_regression_tolerance_pp "
+                f"({self.baseline.map_regression_tolerance_pp} vs "
+                f"{self.candidate.map_regression_tolerance_pp}) — tolerance is "
+                f"a runner-side knob; the SAME value must propagate to every cell"
+            )
+        if self.baseline.data_yaml_sha256 != self.candidate.data_yaml_sha256:
+            raise ValueError(
+                f"baseline.data_yaml_sha256 != candidate.data_yaml_sha256 "
+                f"({self.baseline.data_yaml_sha256} vs "
+                f"{self.candidate.data_yaml_sha256}) — class-label drift across "
+                f"arms silently corrupts per-class AP delta interpretation"
+            )
+        # DecisionInputs's own map_no_regression / map_regression_tolerance_pp
+        # are now redundant with ArmMetrics's per-cell copies; cross-check
+        # they match the candidate's view so the runner can't pass
+        # inconsistent values.
+        if self.map_no_regression != self.candidate.map_no_regression:
+            raise ValueError(
+                f"DecisionInputs.map_no_regression ({self.map_no_regression}) "
+                f"must equal candidate.map_no_regression "
+                f"({self.candidate.map_no_regression}) — the upstream verdict "
+                f"is per-arm and must be the same value the runner stamped on "
+                f"the ArmMetrics"
+            )
+        if self.map_regression_tolerance_pp != self.candidate.map_regression_tolerance_pp:
+            raise ValueError(
+                f"DecisionInputs.map_regression_tolerance_pp ({self.map_regression_tolerance_pp}) "
+                f"must equal candidate.map_regression_tolerance_pp "
+                f"({self.candidate.map_regression_tolerance_pp})"
+            )
         # map_no_regression: must be plain bool, not a truthy string.
         if not isinstance(self.map_no_regression, bool):
             raise ValueError(
@@ -288,6 +326,20 @@ class DecisionInputs:
             raise ValueError(
                 f"map_regression_tolerance_pp must be >= 0; got "
                 f"{self.map_regression_tolerance_pp}"
+            )
+        # C3 iter-7 NEW-MAJOR (tolerance ceiling) 2026-05-09: cap at
+        # DROP_TOTAL_MAP_REGRESSION_PP. Beyond this, the deploy guard
+        # tolerates regressions that the drop trigger also rejects,
+        # making the rule incoherent. CopyPasteBalanceYamlConfig
+        # mirrors this ceiling at its layer; both must change in
+        # lock-step if the §3.7 drop threshold is ever amended.
+        if self.map_regression_tolerance_pp > self.DROP_TOTAL_MAP_REGRESSION_PP:
+            raise ValueError(
+                f"map_regression_tolerance_pp must be <= "
+                f"DROP_TOTAL_MAP_REGRESSION_PP ({self.DROP_TOTAL_MAP_REGRESSION_PP}); "
+                f"got {self.map_regression_tolerance_pp} (a tolerance > the drop "
+                f"threshold makes the deploy guard broader than the drop trigger, "
+                f"which is incoherent — both cases would fire on the same input)"
             )
 
 

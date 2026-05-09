@@ -246,6 +246,23 @@ class CopyPasteBalanceYamlConfig:
                 f"map_regression_tolerance_pp must be >= 0; got "
                 f"{self.map_regression_tolerance_pp}"
             )
+        # C3 iter-7 NEW-MAJOR (tolerance ceiling) 2026-05-09: cap at the
+        # plan-pinned drop threshold (0.5 pp; mirrors
+        # DecisionInputs.DROP_TOTAL_MAP_REGRESSION_PP). Beyond 0.5, the
+        # deploy guard would tolerate regressions that the drop trigger
+        # also rejects, making the rule incoherent (deploy and drop
+        # would both fire). Hardcoded here to avoid a circular import
+        # with gates/decision_gate.py — the value is the source of truth
+        # over there; if that ClassVar changes, this constant changes
+        # in lock-step.
+        if self.map_regression_tolerance_pp > 0.5:
+            raise ValueError(
+                f"map_regression_tolerance_pp must be <= 0.5 (the §3.7 "
+                f"drop threshold for total mAP regression); got "
+                f"{self.map_regression_tolerance_pp} (a tolerance > 0.5 makes "
+                f"the deploy guard broader than the drop trigger, which is "
+                f"incoherent — both cases would fire on the same input)"
+            )
 
 
 def load_copy_paste_balance_yaml(path: str | Path) -> CopyPasteBalanceYamlConfig:

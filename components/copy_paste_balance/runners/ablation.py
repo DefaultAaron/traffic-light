@@ -34,19 +34,47 @@ Drives the d-stage flow end-to-end:
        * ``cp_only``      — copy-paste ON, β=0
        * ``cp_balanced``  — copy-paste ON, β > 0; one eval per β in
                             {0.99, 0.999, 0.9999} (5 eval JSONs total)
-     Each eval JSON has shape:
+     Each eval JSON has shape (C3 iter-7 NEW-MAJOR 2026-05-09:
+     ``data_yaml_sha256`` is REQUIRED — without it, two evals can
+     ship matching numeric class IDs while the active ``data.yaml``
+     has remapped the names underneath, silently corrupting per-class
+     AP comparisons. C3 iter-10 NEW-MAJOR 2026-05-09:
+     ``map_no_regression`` is now per-arm; the prior global
+     ``--eval-metrics-json`` contract is REPLACED — each eval JSON
+     carries its own verdict computed by the upstream trainer eval
+     pipeline against the same tolerance):
        ``{"per_class_AP": [{"class_id", "class_name", "ap_at_0_5",
                             "full_val_support"}, ...],
           "total_mAP_at_0_5": float,
           "rare_fp_count": int,                # on the §3.7+§4.7 manifest
+          "data_yaml_sha256": str,             # 64-char lowercase hex; REQUIRED
           "eval_manifest_sha256": str,
-          "fp_manifest_sha256": str}``
+          "fp_manifest_sha256": str,
+          "map_no_regression": bool,           # THIS arm vs no_aug; baseline=True trivially
+          "map_regression_tolerance_pp": float}``
 
   2. Verify cross-arm invariants (the runner is the only layer that can):
        * All five evals reference the SAME ``eval_manifest_sha256``.
        * All five evals reference the SAME ``fp_manifest_sha256``.
+       * All five evals reference the SAME ``data_yaml_sha256``.
+         (C3 iter-7 NEW-MAJOR 2026-05-09: stale class-label remap is
+         the high-impact failure mode for a traffic-light detector —
+         numeric class IDs can match while the semantic meaning has
+         shifted underneath. The runner hard-fails on mismatch.)
+       * That ``data_yaml_sha256`` MUST also equal both the active
+         ``CopyPasteBalanceYamlConfig`` data_yaml hash AND the
+         ``ClassCountsTable.data_yaml_sha256`` recorded in the
+         weights file. Three-way equality across config / counts /
+         eval is the only way to guarantee the rare population, the
+         class-balance weights, and the per-class AP delta are all
+         computed against the SAME ``data.yaml``.
        * All five evals' ``per_class_AP`` arrays contain the SAME class
          IDs in the SAME order.
+       * All five evals reference the SAME ``map_regression_tolerance_pp``
+         (the runner-side knob; per-arm tolerance drift is a contract
+         violation).
+       * The no_aug eval MUST have ``map_no_regression=True``
+         (self-comparison; the runner hard-fails if False).
        * The runner reads ``data_yaml_sha256`` + ``weights_yaml_sha256``
          from the active config + weights file and records both into the
          output for downstream auditability.
@@ -105,12 +133,18 @@ Schema-validation contract (mirrors HMM gate iter-2 boundary split):
     Output validation failure is a HARD error (process exit non-zero),
     not an ``executor_error`` row.
 
-mAP no-regression contract (mirrors HMM gate B2 review I4):
-  The runner reads the verdict from a frozen eval-metrics JSON (default
-  derived from ``runs/_r2_val_manifest``) — ``map_no_regression`` is
-  derivable, not asserted by a CLI flag. Schema for that JSON:
-  ``{"map_no_regression": bool, "tolerance_pp": float}``; the runner
-  records its SHA256 in the output for auditability.
+mAP no-regression contract (C3 iter-10 NEW-MAJOR 2026-05-09 — replaces
+the prior single-eval-metrics-json contract):
+  ``map_no_regression`` is PER-ARM (different cp_balanced β cells can
+  have different total_mAP deltas; one global verdict cannot stamp
+  every arm). Each of the 5 eval JSONs carries its own verdict
+  pre-computed by the trainer's upstream eval pipeline against the
+  shared tolerance. The runner verifies cross-arm consistency:
+  ``map_regression_tolerance_pp`` is identical across all 5 evals;
+  the no_aug eval has ``map_no_regression=True``; each value is
+  recorded into the corresponding ArmMetrics cell. b-stage drops
+  ``--eval-metrics-json`` from the CLI — the per-arm verdicts arrive
+  inside each eval JSON now.
 
 Scope fence reminder: this runner MUST NOT import anything from
 ``inference.tracker`` or ``inference.cpp`` (parallel to HMM gate's
@@ -161,13 +195,12 @@ class AblationConfig:
     diagnostic ``decision: "executor_error"`` rows.
     """
 
-    no_aug_eval_json: Path                      # baseline arm eval output
-    cp_only_eval_json: Path                     # copy-paste arm eval output
-    cp_balanced_eval_jsons: tuple[Path, ...]    # one per β; len == 3
+    no_aug_eval_json: Path                      # baseline arm eval output (carries map_no_regression=True)
+    cp_only_eval_json: Path                     # copy-paste arm eval output (carries its own map_no_regression)
+    cp_balanced_eval_jsons: tuple[Path, ...]    # one per β; len == 3; each carries its own map_no_regression
     cp_balanced_betas: tuple[float, ...]        # parallel to cp_balanced_eval_jsons
     config_yaml: Path                           # configs/copy_paste_balance.yaml
     weights_yaml: Path                          # configs/data_R2_class_weights.yaml
-    eval_metrics_json: Path                     # frozen mAP-no-regression artifact
     output_json: Path                           # runs/_copy_paste_decision.json
     anchor_arm: str                             # "cp_only" or "cp_balanced"
     anchor_beta: float | None                   # required iff anchor_arm == cp_balanced
@@ -186,7 +219,6 @@ class AblationConfig:
             ("cp_only_eval_json", self.cp_only_eval_json),
             ("config_yaml", self.config_yaml),
             ("weights_yaml", self.weights_yaml),
-            ("eval_metrics_json", self.eval_metrics_json),
             ("output_json", self.output_json),
         )
         for name, value in path_fields:
@@ -296,8 +328,9 @@ def run_ablation(config: AblationConfig) -> None:
         * Reads all five eval JSONs.
         * Reads ``config.config_yaml`` + ``config.weights_yaml``; records
           both SHA256 hashes in the output.
-        * Reads ``config.eval_metrics_json`` (mAP no-regression verdict
-          + tolerance), records its SHA256 in the output.
+        * mAP no-regression verdict is per-arm (read from each eval
+          JSON's ``map_no_regression`` field; C3 iter-10 NEW-MAJOR
+          2026-05-09 replaces the prior single eval-metrics-json contract).
         * Validates the cross-arm manifest invariants (all evals share
           the same eval + fp manifest hash; same class-ID set).
         * Applies the decision rule to each non-baseline cell.
@@ -318,15 +351,15 @@ def run_ablation(config: AblationConfig) -> None:
 def main() -> int:
     """CLI entry: parse args → build ``AblationConfig`` → ``run_ablation``.
 
-    Argparse contract (b-stage):
-        --no-aug-eval FILE       baseline arm's eval JSON
+    Argparse contract (b-stage; C3 iter-10 NEW-MAJOR 2026-05-09:
+    --eval-metrics-json REMOVED — verdicts now arrive per-arm inside
+    each eval JSON):
+        --no-aug-eval FILE       baseline arm's eval JSON (must carry
+                                  map_no_regression=True)
         --cp-only-eval FILE      copy-paste arm's eval JSON
         --cp-balanced-eval FILE  one per β; pass 3 times in β order
         --config FILE            configs/copy_paste_balance.yaml path
         --weights FILE           configs/data_R2_class_weights.yaml path
-        --eval-metrics-json FILE frozen JSON with
-                                  ``{"map_no_regression": bool,
-                                    "tolerance_pp": float}``
         --output FILE            runs/_copy_paste_decision.json path
         --anchor-arm {cp_only,cp_balanced}
                                   which arm populates headline_*; no_aug
@@ -376,6 +409,15 @@ def assert_artifact_invariants(artifact: dict) -> None:
          dynamic array-subset checks without ``$data`` (a non-Draft-7
          extension), so the runner is the load-bearing layer.
 
+      6. C3 iter-10 NEW-MAJOR 2026-05-09: decision-vs-verdict
+         consistency. Per plan §3.7, both deploy and defer require
+         total mAP no-regression. A cell with
+         ``decision in {"deploy", "defer"}`` AND
+         ``metrics.map_no_regression == False`` is a malformed
+         decision artifact. Enforced for every candidate cell
+         (cp_only + 3 cp_balanced sweep rows + headline). The
+         baseline cell has no decision so doesn't apply.
+
     This validator is implemented (not stubbed) because cross-row
     invariants are pure dict→raise logic — no I/O, no infrastructure
     — and a stub would defeat the whole point of the iter-2 finding
@@ -423,6 +465,126 @@ def assert_artifact_invariants(artifact: dict) -> None:
                 f"rare={sorted(rare)} (zero-support exclusions are reported "
                 f"against classes outside the rare population — malformed "
                 f"decision artifact)"
+            )
+    # C3 iter-7 NEW-MAJOR (cross-block rare-set equality) 2026-05-09:
+    # the §3.7 decision rule is built on a SINGLE rare population
+    # derived from the no_aug arm and propagated to every candidate
+    # cell. A hand-built artifact with different rare sets per cell
+    # would corrupt the deploy/defer/drop interpretation across
+    # arms (each cell would be reporting against a different rare
+    # population). DecisionInputs enforces this for the in-memory
+    # baseline+candidate pair, but NOT across all 6 cells. The runner
+    # is the only layer that holds all six. Take no_aug.metrics as
+    # canonical and require every block's three rare-set fields to
+    # match exactly.
+    canonical_rare = tuple(artifact["no_aug"]["metrics"]["rare_class_ids"])
+    canonical_rare_safety = tuple(
+        artifact["no_aug"]["metrics"]["rare_safety_class_ids"]
+    )
+    canonical_zero_support = tuple(
+        artifact["no_aug"]["metrics"]["zero_support_rare_classes"]
+    )
+    # C3 iter-8 NEW-MAJOR (cross-block manifest equality) 2026-05-09:
+    # extend the canonical-vs-cell pattern to manifest hashes. The
+    # schema's 64-hex per-cell pattern doesn't enforce equality across
+    # cells — a hand-built artifact could pair AP deltas computed
+    # against different val manifests, silently corrupting the
+    # deploy/defer/drop comparison. Same hazard class as the rare-set
+    # fields; same canonical-derived-from-no_aug fix.
+    canonical_eval_manifest = artifact["no_aug"]["metrics"]["eval_manifest_sha256"]
+    canonical_fp_manifest = artifact["no_aug"]["metrics"]["fp_manifest_sha256"]
+    # C3 iter-9 NEW-MAJOR 2026-05-09: cross-block equality also covers the
+    # new decision-provenance fields. data_yaml_sha256 must additionally
+    # match the artifact's top-level data_yaml_sha256 (which is the
+    # config-level hash; three-way equality across config / per-cell /
+    # top-level closes the class-label drift gap).
+    canonical_data_yaml = artifact["no_aug"]["metrics"]["data_yaml_sha256"]
+    canonical_tolerance = artifact["no_aug"]["metrics"]["map_regression_tolerance_pp"]
+    if canonical_data_yaml != artifact["data_yaml_sha256"]:
+        raise ValueError(
+            f"no_aug.metrics.data_yaml_sha256 ({canonical_data_yaml}) must "
+            f"equal artifact.data_yaml_sha256 ({artifact['data_yaml_sha256']}) "
+            f"— top-level config hash and per-cell eval hash must agree, else "
+            f"the per-class AP delta is computed against a different class set "
+            f"than the rare population was derived from"
+        )
+    for path, metrics in metrics_blocks:
+        if path == "no_aug.metrics":
+            continue
+        if tuple(metrics["rare_class_ids"]) != canonical_rare:
+            raise ValueError(
+                f"{path}.rare_class_ids must match no_aug.metrics.rare_class_ids "
+                f"(canonical={canonical_rare}); got "
+                f"{tuple(metrics['rare_class_ids'])} (rare population is "
+                f"baseline-derived and propagated to every cell; per-cell "
+                f"drift corrupts the rule's deploy/defer/drop interpretation)"
+            )
+        if tuple(metrics["rare_safety_class_ids"]) != canonical_rare_safety:
+            raise ValueError(
+                f"{path}.rare_safety_class_ids must match "
+                f"no_aug.metrics.rare_safety_class_ids "
+                f"(canonical={canonical_rare_safety}); got "
+                f"{tuple(metrics['rare_safety_class_ids'])}"
+            )
+        if tuple(metrics["zero_support_rare_classes"]) != canonical_zero_support:
+            raise ValueError(
+                f"{path}.zero_support_rare_classes must match "
+                f"no_aug.metrics.zero_support_rare_classes "
+                f"(canonical={canonical_zero_support}); got "
+                f"{tuple(metrics['zero_support_rare_classes'])}"
+            )
+        if metrics["eval_manifest_sha256"] != canonical_eval_manifest:
+            raise ValueError(
+                f"{path}.eval_manifest_sha256 must match "
+                f"no_aug.metrics.eval_manifest_sha256 "
+                f"(canonical={canonical_eval_manifest}); got "
+                f"{metrics['eval_manifest_sha256']} (every cell must consume "
+                f"the SAME frozen val manifest — manifest drift across cells "
+                f"corrupts the AP-delta comparison the rule operates on)"
+            )
+        if metrics["fp_manifest_sha256"] != canonical_fp_manifest:
+            raise ValueError(
+                f"{path}.fp_manifest_sha256 must match "
+                f"no_aug.metrics.fp_manifest_sha256 "
+                f"(canonical={canonical_fp_manifest}); got "
+                f"{metrics['fp_manifest_sha256']}"
+            )
+        if metrics["data_yaml_sha256"] != canonical_data_yaml:
+            raise ValueError(
+                f"{path}.data_yaml_sha256 must match "
+                f"no_aug.metrics.data_yaml_sha256 "
+                f"(canonical={canonical_data_yaml}); got "
+                f"{metrics['data_yaml_sha256']} (class-label drift across "
+                f"cells silently corrupts per-class AP delta interpretation)"
+            )
+        if metrics["map_regression_tolerance_pp"] != canonical_tolerance:
+            raise ValueError(
+                f"{path}.map_regression_tolerance_pp must match "
+                f"no_aug.metrics.map_regression_tolerance_pp "
+                f"(canonical={canonical_tolerance}); got "
+                f"{metrics['map_regression_tolerance_pp']} (tolerance is a "
+                f"runner-side knob; the same value must stamp every cell)"
+            )
+    # C3 iter-10 NEW-MAJOR 2026-05-09: decision-vs-verdict consistency.
+    # Per plan §3.7, both deploy and defer require total mAP no-regression.
+    # A candidate cell with decision in {deploy, defer} AND
+    # metrics.map_no_regression == False is a malformed artifact.
+    decision_map_check_sites = [
+        ("headline", artifact["headline_decision"], artifact["headline_metrics"]),
+        ("cp_only", artifact["cp_only"]["decision"], artifact["cp_only"]["metrics"]),
+    ]
+    for i, row in enumerate(artifact["cp_balanced"]["sensitivity_sweep"]):
+        decision_map_check_sites.append(
+            (f"cp_balanced.sensitivity_sweep[{i}]", row["decision"], row["metrics"])
+        )
+    for site, decision, metrics in decision_map_check_sites:
+        if decision in ("deploy", "defer") and metrics["map_no_regression"] is not True:
+            raise ValueError(
+                f"{site}.decision={decision!r} is incompatible with "
+                f"metrics.map_no_regression={metrics['map_no_regression']!r} — "
+                f"plan §3.7 requires total mAP no-regression for both deploy "
+                f"and defer; a cell that regressed total mAP MUST land on "
+                f"drop, not deploy or defer (malformed decision artifact)"
             )
 
     sweep = artifact["cp_balanced"]["sensitivity_sweep"]
