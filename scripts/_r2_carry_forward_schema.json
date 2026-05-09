@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "scripts/_r2_carry_forward_schema.json",
+  "title": "R2 Carry-Forward Registry (§4.2)",
+  "description": "Schema for runs/_r2_carry_forward.json. Tracks every R2-non-actionable item that closes the round under reduced-lifecycle (a + e). Two top-level statuses per pre-r2 kickoff checklist v1.4 §1.0: 'blocked' = waiting on at least one closed-enum unblock token; 'scheduled' = no external trigger, just round-scheduled (carries empty blocked_on). The 10-token closed enum and the AND/OR semantics are pinned at v1.4 LOCK; adding a token requires schema bump. Per-record uniqueness on item_id is unenforceable in draft-07 (uniqueItems compares full records); writers/verifiers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['item_id']) — see UNIQUENESS_KEYS in _r2_schema_utils for the canonical mapping.",
+  "type": "array",
+  "uniqueItems": true,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "item_id",
+      "status",
+      "blocked_on",
+      "next_entrypoint"
+    ],
+    "properties": {
+      "item_id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Stable identifier for the carried-forward item, conventionally referencing the source plan section (e.g. 'kd_first_cell', 'tsm_phase_1a', 'sahi_inference_only', 'multi_cam_fusion'). Writer-enforced uniqueness across the array."
+      },
+      "status": {
+        "type": "string",
+        "enum": ["blocked", "scheduled"],
+        "description": "blocked = waiting on at least one external trigger from the closed enum. scheduled = round-internal scheduling only (no external trigger; blocked_on must be empty)."
+      },
+      "blocked_on": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "r2_data_freeze",
+            "deim_l_training",
+            "on_vehicle_replay_failure_modes",
+            "hard_neg_manifest_hash",
+            "autonomy_team",
+            "planning_team",
+            "gps_topic_5_12",
+            "sahi_b_c_measured",
+            "tsm_phase_1b_passed",
+            "replay_temporal_flicker_or_state_confusion"
+          ]
+        },
+        "description": "Closed-enum unblock tokens. Single-token = unblock_logic moot (omit). Multi-token = AND by default; explicit unblock_logic='any' switches to OR. status='scheduled' forces blocked_on=[] (enforced below). Closed enum locks the unblock vocabulary; new triggers require schema bump."
+      },
+      "unblock_logic": {
+        "type": "string",
+        "enum": ["all", "any"],
+        "description": "Semantics for multi-token blocked_on. 'all' = every token must clear (default; redundant to write but allowed). 'any' = unlock when any single token clears (must be explicit per v1.4 LOCK iter-3 ruling: unencoded OR was undefined behaviour pre-iter-3). Forbidden when status='scheduled'."
+      },
+      "unblock_evidence_path": {
+        "type": "string",
+        "pattern": "^(?!/)(?![A-Za-z]:)(?!\\./)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\s]+(?<!/)$",
+        "description": "Optional. Repo-relative POSIX path mirroring blocking_artifacts pattern in _r2_component_decision_schema.json. Forbids: absolute Unix (^/), Windows drive prefix (^[A-Za-z]:), leading current-dir (^./), backslashes, double slashes (//), '.' as any path segment, '..' segments, trailing slash, and whitespace (no prose smuggling). Hidden files allowed (leading dot in name is fine). Empty string rejected via [^\\s]+. Used for documentation that proves the unblock condition has been (or will be) verified — e.g. a planning doc anchor, a sidecar manifest path, a transcript reference. When present, _r2_verify.py is expected to assert path-existence (filesystem state, not schema-checkable)."
+      },
+      "next_entrypoint": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Free-text or path-like identifier of the resumption point once unblocked (e.g. 'additional_components_plan §七.6', 'temporal_optimization_plan §1.5.4 b-stage', 'r3_latency_budget_release'). Empty disallowed: a carry-forward record without a resumption pointer is a black hole."
+      }
+    },
+    "allOf": [
+      {
+        "description": "status=blocked → blocked_on minItems=1.",
+        "if": { "properties": { "status": { "const": "blocked" } } },
+        "then": { "properties": { "blocked_on": { "minItems": 1 } } }
+      },
+      {
+        "description": "status=scheduled → blocked_on=[] AND unblock_logic forbidden.",
+        "if": { "properties": { "status": { "const": "scheduled" } } },
+        "then": {
+          "properties": { "blocked_on": { "maxItems": 0 } },
+          "not": { "required": ["unblock_logic"] }
+        }
+      }
+    ]
+  }
+}

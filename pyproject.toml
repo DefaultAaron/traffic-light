@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "jsonschema>=4.20",
     "kaggle>=2.0.0",
     "onnx>=1.21.0",
     "onnx-graphsurgeon>=0.6.1",

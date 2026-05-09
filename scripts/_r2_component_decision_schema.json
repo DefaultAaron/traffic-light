@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "scripts/_r2_component_decision_schema.json",
+  "title": "R2 Component Decision Record (§1.2 / §1.3 / §1.4 d-stage)",
+  "description": "Schema for runs/_r2_component_decisions.json. Consumed by phase_R2.md report-builder + runs/_r2_verification.json. The d-stage outcome of every R2-blocking component (§1.2 copy-paste / §1.3 hard-neg mining / §1.4 map-prior gating) is written here. Single source of truth for deploy/defer/drop calls per pre-r2 kickoff checklist v1.4 §1.0. Component-level uniqueness (one record per component) is unenforceable in JSON Schema draft-07 (uniqueItems guards only full-record duplication). Writers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['component']) before persisting; verifiers MUST call the same gate before accepting. UNIQUENESS_KEYS mapping in _r2_schema_utils declares the canonical key set.",
+  "type": "array",
+  "uniqueItems": true,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "component",
+      "outcome",
+      "reason",
+      "blocking_artifacts",
+      "next_round_action"
+    ],
+    "properties": {
+      "component": {
+        "type": "string",
+        "enum": [
+          "copy_paste_class_balanced_loss",
+          "hard_negative_mining",
+          "map_prior_gating"
+        ],
+        "description": "Closed enum locked to R2-scope components. Adding a new component requires schema bump (uses _r2_ prefix because R2-scoped — non-R2 components have their own decision schemas, e.g. _kd_decision_schema.json)."
+      },
+      "outcome": {
+        "type": "string",
+        "enum": ["deploy", "defer", "drop"],
+        "description": "deploy = ship in R2 final pipeline. defer = component scaffolded but execution moved to later round (must populate next_round_action). drop = component abandoned for the R2 timeline (must populate next_round_action with carry-forward target)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Free-text rationale. Empty string allowed when outcome=deploy (rationale lives in the report). On non-deploy outcomes, conditional rule below requires minLength >= 1 — silent drops not permitted."
+      },
+      "blocking_artifacts": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "SHA256 hex (64 lowercase hex chars)."
+            },
+            {
+              "type": "string",
+              "pattern": "^(?!/)(?![A-Za-z]:)(?!\\./)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$))[^\\s]+(?<!/)$",
+              "description": "Repo-relative POSIX path. Forbids: absolute Unix (^/), Windows drive prefix (^[A-Za-z]:), leading current-dir (^./), backslashes, double slashes (//), '.' as any path segment (interior or trailing — e.g. 'runs/./x.json' or 'runs/.'), '..' segments (parent-relative), trailing slash (e.g. 'runs/' or 'runs/x/'), and whitespace (forbids prose-disguised-as-path smuggling). Hidden files with leading dot in the name (e.g. 'runs/.hidden') remain allowed because the segment is not exactly '.'. Empty string rejected via [^\\s]+. Path canonicalization is the writer's responsibility — multiple spellings for the same artifact must NOT both be written."
+            }
+          ]
+        },
+        "description": "Array of references (path|sha256) to artifacts that document or block this decision (e.g. ablation result JSON, frozen manifest hashes, conflictor transcripts). Free-text prose disallowed by element-level oneOf so reviewers cannot smuggle un-anchored claims."
+      },
+      "next_round_action": {
+        "type": "string",
+        "description": "Free-text. Empty string allowed only when outcome=deploy. On non-deploy outcomes, conditional below requires minLength >= 1 (e.g. 'R3 hard-neg pool re-mining after on-vehicle replay'). Used by §4.2 carry-forward registration (_r2_carry_forward.json next_entrypoint feeds from this)."
+      },
+      "branch": {
+        "type": "string",
+        "enum": ["live", "replay_only"],
+        "description": "Map-prior-only field. live = real-time GPS+map service available (5/12 GPS topic decision affirmative). replay_only = fallback because GPS topic missed deadline. Required only for component=map_prior_gating; ignored elsewhere (additionalProperties=false would reject branch on non-map-prior, but the conditional rule below makes it explicit)."
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": { "outcome": { "enum": ["defer", "drop"] } }
+        },
+        "then": {
+          "properties": {
+            "reason": { "minLength": 1 },
+            "next_round_action": { "minLength": 1 }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": { "component": { "const": "map_prior_gating" } }
+        },
+        "then": {
+          "required": ["branch"]
+        },
+        "else": {
+          "not": { "required": ["branch"] }
+        }
+      }
+    ]
+  }
+}

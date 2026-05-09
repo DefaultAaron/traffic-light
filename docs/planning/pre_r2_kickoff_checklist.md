@@ -31,22 +31,22 @@
 
 ### 1.0 共享 schema（在 §1.1+ / §2.1+ b-stage 引用前必须落地；data-independent，可立刻启动）
 
-- [ ] **a. Scaffold**
-  - [ ] `scripts/_r2_component_decision_schema.json`：§1.2/§1.3/§1.4 d-stage 写入的 `runs/_r2_component_decisions.json` schema
+- [x] **a. Scaffold**
+  - [x] `scripts/_r2_component_decision_schema.json`：§1.2/§1.3/§1.4 d-stage 写入的 `runs/_r2_component_decisions.json` schema
     - 形状：array，按 `component` 唯一；字段 `{component, outcome ∈ {deploy, defer, drop}, reason, blocking_artifacts: [path|sha256], next_round_action, branch?}`；非-deploy 时 reason + next_round_action 必填；map-prior 必填 `branch ∈ {live, replay_only}`
-  - [ ] `scripts/_r2_audit_coverage_schema.json`：§1.1 audit 子集输出 schema
+  - [x] `scripts/_r2_audit_coverage_schema.json`：§1.1 audit 子集输出 schema
     - 形状：array，per-class `{class_id, class_name, full_val_support, full_val_insufficient, audit_support, audit_coverage_status ∈ {covered, low_power, construction_failed}, audit_low_power, construction_failure_reason?}`
-  - [ ] `scripts/_r2_carry_forward_schema.json`：§4.2 carry-forward 登记 schema
+  - [x] `scripts/_r2_carry_forward_schema.json`：§4.2 carry-forward 登记 schema
     - 形状：array，`{item_id, status ∈ {blocked, scheduled}, blocked_on: [closed_enum], unblock_logic? ∈ {all, any}, unblock_evidence_path?, next_entrypoint}`
     - 规则：`status="blocked"` → `blocked_on` `minItems: 1`；多 token 默认 `unblock_logic="all"`，OR 关系必须显式 `"any"`；`status="scheduled"` → `blocked_on=[]` AND **禁止** `unblock_logic`
     - `blocked_on` closed enum：`{r2_data_freeze, deim_l_training, on_vehicle_replay_failure_modes, hard_neg_manifest_hash, autonomy_team, planning_team, gps_topic_5_12, sahi_b_c_measured, tsm_phase_1b_passed, replay_temporal_flicker_or_state_confusion}`
-- [ ] **b. Impl** — 仅 schema 文件，无逻辑代码
-- [ ] **c. Test** — 三 schema 通过 JSON Schema draft-07 自检；负向 fixture 各一（缺必填 / 错枚举 / outcome=defer 但 reason 缺失 → 全 fail）
-- [ ] **d. Decision** — B2 + C3 loop AGREED，逐 schema 登记：
-  - [ ] `_r2_component_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `_r2_audit_coverage_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `_r2_carry_forward_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-- [ ] **e. Report** — 三 schema 路径写入 `runs/_r2_verification.json`
+- [x] **b. Impl** — 三 schema 文件落地，无逻辑代码；spec-level "unique by sub-key" 由 `scripts/_r2_schema_utils.py`（运行时可导入）落地，schema JSON 描述指向该模块的 `validate_and_enforce` 入口（draft-07 `uniqueItems` 不足以覆盖 sub-key 唯一性）
+- [x] **c. Test** — 三 schema 通过 JSON Schema draft-07 自检；负向 fixture 全套（缺必填 / 错枚举 / 条件规则 / 路径反例 / 唯一性碰撞）+ runtime 强制路径测试；脚本 `scripts/_r2_schemas_test.py` 通过
+- [x] **d. Decision** — B2 + C3 loop AGREED（3-iter 收敛 2026-05-09；iter-1 1MAJOR+2MINOR / iter-2 3MINOR / iter-3 AGREE-WITH-B2 无新发现），三 schema 共批次登记：
+  - [x] `_r2_component_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
+  - [x] `_r2_audit_coverage_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
+  - [x] `_r2_carry_forward_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
+- [ ] **e. Report** — 三 schema 路径 + B2/C3 transcript 写入 `runs/_r2_verification.json`（**gated on §2.1.1 a-stage** —`scripts/_r2_verify.py` 是该索引文件的唯一生成器，在 §2.1.1 落地前 e-stage 物理上无法完成，记入 §4.1 R2-close 准入而非本 §1.0 incomplete）
 
 ### 1.1 R2 验证集 freeze + 分层 audit subset
 
@@ -235,7 +235,7 @@
 | 训练 | YOLO26-s/13-s/L、DEIM-D-FINE-S/M | DEIM-D-FINE-L（训练中） |
 | Export | export_yolo.sh / export_deim.sh + atomic sidecar | KD 3 + TSM 4 字段 carry-forward |
 | 决策执行器 | — | `_r2_decide_precision.py` / `_r2_verify.py` / `_kd_decide_cell.py` / `_tsm_decide_phase.py` |
-| Schema | `_tsm_activation_schema.json` v1.1 | `_r2_decision_schema.json` / `_kd_decision_schema.json` |
+| Schema | `_tsm_activation_schema.json` v1.1；§1.0 三 schema (`_r2_component_decision_schema.json` / `_r2_audit_coverage_schema.json` / `_r2_carry_forward_schema.json`) + `_r2_schema_utils.py` 运行时强制 | `_r2_decision_schema.json` / `_kd_decision_schema.json` |
 | C++ | — | `demo.cpp` 计时拆分 |
 | Scaffold | TSM v1.5；KD a1 | — |
 | 计划 stub | — | R3_precision_reproducibility.md / pre_deploy_AGV_integration.md |

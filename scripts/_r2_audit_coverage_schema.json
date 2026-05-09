@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "scripts/_r2_audit_coverage_schema.json",
+  "title": "R2 Audit Subset Per-Class Coverage Record (§1.1 b-stage output)",
+  "description": "Schema for runs/_r2_audit_coverage.json. Per-class records describing whether the stratified audit subset achieves rule-disagreement-sentinel coverage (≥5 instances) for each safety-critical class. Consumed by _r2_decide_precision.py with hash-pin via runs/_r2_audit_coverage.json.sha256: low_power → confidence-downgrade write; construction_failed → escape outcome (degraded-confidence detector flag). Status thresholds (covered ≥ 5 / low_power 1-4 / construction_failed 0) and audit_low_power threshold (audit_support < 30) are derived from elegant-sauteeing-quail LOCK-iter-3; cross-field consistency between status and audit_support is enforced below via conditional rules. Per-record uniqueness on (class_id, class_name) is unenforceable in draft-07 (uniqueItems compares full records); writers/verifiers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['class_id', 'class_name']) — see UNIQUENESS_KEYS in _r2_schema_utils for the canonical mapping.",
+  "type": "array",
+  "uniqueItems": true,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "class_id",
+      "class_name",
+      "full_val_support",
+      "full_val_insufficient",
+      "audit_support",
+      "audit_coverage_status",
+      "audit_low_power"
+    ],
+    "properties": {
+      "class_id": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Numeric class ID matching R2 dataset manifest (frozen at §1.1 a-stage). Per-record uniqueness on (class_id, class_name) is writer-enforced."
+      },
+      "class_name": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Human-readable class label matching R2 dataset manifest (e.g. red, redLeft, barrier_up). Frozen at §1.1 a-stage."
+      },
+      "full_val_support": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Instance count for this class in the frozen R2 val set."
+      },
+      "full_val_insufficient": {
+        "type": "boolean",
+        "description": "Convenience flag = (full_val_support < 30). Writer-derived from elegant-sauteeing-quail safety-class blocking rule. Schema cross-checks it below."
+      },
+      "audit_support": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Instance count for this class in the stratified audit subset."
+      },
+      "audit_coverage_status": {
+        "type": "string",
+        "enum": ["covered", "low_power", "construction_failed"],
+        "description": "covered = audit_support >= 5; low_power = 1 <= audit_support <= 4; construction_failed = audit_support == 0. Cross-field rule below pins these."
+      },
+      "audit_low_power": {
+        "type": "boolean",
+        "description": "Flag = (audit_support < 30). Distinct from audit_coverage_status — the latter gates rule-disagreement-sentinel viability (≥5), this one gates AP-estimator credibility (≥30). Schema cross-checks below."
+      },
+      "construction_failure_reason": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Required only when audit_coverage_status=construction_failed; otherwise must be omitted. Free-text describing why stratified sampling could not place a single instance (e.g. 'class absent from val set entirely', 'all instances filtered by scenario-tag stratification')."
+      }
+    },
+    "allOf": [
+      {
+        "description": "full_val_insufficient must equal (full_val_support < 30).",
+        "if": { "properties": { "full_val_support": { "minimum": 30 } } },
+        "then": { "properties": { "full_val_insufficient": { "const": false } } },
+        "else": { "properties": { "full_val_insufficient": { "const": true } } }
+      },
+      {
+        "description": "audit_coverage_status pinned to audit_support range.",
+        "if": { "properties": { "audit_support": { "const": 0 } } },
+        "then": { "properties": { "audit_coverage_status": { "const": "construction_failed" } } }
+      },
+      {
+        "if": {
+          "properties": { "audit_support": { "minimum": 1, "maximum": 4 } },
+          "required": ["audit_support"]
+        },
+        "then": { "properties": { "audit_coverage_status": { "const": "low_power" } } }
+      },
+      {
+        "if": { "properties": { "audit_support": { "minimum": 5 } } },
+        "then": { "properties": { "audit_coverage_status": { "const": "covered" } } }
+      },
+      {
+        "description": "audit_low_power = (audit_support < 30).",
+        "if": { "properties": { "audit_support": { "minimum": 30 } } },
+        "then": { "properties": { "audit_low_power": { "const": false } } },
+        "else": { "properties": { "audit_low_power": { "const": true } } }
+      },
+      {
+        "description": "construction_failure_reason present iff status=construction_failed.",
+        "if": { "properties": { "audit_coverage_status": { "const": "construction_failed" } } },
+        "then": { "required": ["construction_failure_reason"] },
+        "else": { "not": { "required": ["construction_failure_reason"] } }
+      }
+    ]
+  }
+}
