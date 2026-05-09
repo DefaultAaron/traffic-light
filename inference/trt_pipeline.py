@@ -952,11 +952,13 @@ class TRTDetector:
           - boxes : (N, K, 4) — xyxy already scaled by `orig_target_sizes`
           - scores: (N, K)  — sigmoid (focal-loss path), descending
 
-        Two-phase postprocess. Phase 1 collects per-slot survivors in
-        letterbox space after conf threshold + class validation +
-        same-query bit-identical dedup. Phase 2 runs per-class greedy IoU
-        NMS over those survivors, then unscales + clips the keepers to
-        image space.
+        Three-phase postprocess. Phase 0 stable-sorts conf-thresholded
+        slot indices by score-desc so phase 1's dedup picks the highest-
+        conf survivor regardless of upstream emission order. Phase 1
+        runs the same-query bit-identical letterbox-box dedup,
+        collecting per-slot survivors. Phase 2 runs per-class greedy IoU
+        NMS over those survivors. Survivors that pass NMS are then
+        unscaled + clipped to image space.
 
         PHASE 1 — same-query dedup. postprocessor.py:59 does
         `topk(scores.flatten(1), K)` over (query × class) score pairs, so

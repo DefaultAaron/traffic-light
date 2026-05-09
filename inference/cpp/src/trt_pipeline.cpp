@@ -787,16 +787,23 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
     std::vector<Detection> dets;
     dets.reserve(32);
 
-    // Two-phase postprocess. Phase 1 collects per-slot survivors in
-    // letterbox space after conf threshold + class validation +
-    // same-query bit-identical dedup. Phase 2 runs per-class IoU NMS over
-    // those survivors, then unscales + clips the keepers to image space.
+    // Three-phase postprocess. Phase 0 stable-sorts conf-thresholded slot
+    // indices by score-desc so phase 1's dedup picks the highest-conf
+    // survivor regardless of upstream emission order. Phase 1 runs the
+    // same-query bit-identical letterbox-box dedup, collecting per-slot
+    // survivors. Phase 2 runs per-class IoU NMS over those survivors.
+    // Survivors that pass NMS are then unscaled + clipped to image space.
     //
-    // Why two phases: NMS needs IoU comparisons in a coordinate frame
-    // that's not affected by image-bound clipping. Letterbox space is
-    // pre-clip and is the frame the model actually emitted; doing NMS
-    // in image space after clipping would give wrong IoUs whenever a
-    // box extends past the image edge.
+    // Why phase 0 sort BEFORE dedup: dedup keeps "first encountered" for
+    // each bit-identical box; sorting first means "first encountered"
+    // is "highest conf", which is the right semantic regardless of
+    // whether DEIM's `torch.topk(sorted=True)` continues to hold.
+    //
+    // Why phase 2 NMS in letterbox space: NMS needs IoU comparisons in
+    // a coordinate frame not affected by image-bound clipping. Letterbox
+    // space is pre-clip and is the frame the model actually emitted;
+    // doing NMS in image space after clipping would give wrong IoUs
+    // whenever a box extends past the image edge.
     //
     // PHASE 1 — same-query letterbox-box dedup. DEIM's deploy
     // postprocessor (DEIM/engine/deim/postprocessor.py:59) does
