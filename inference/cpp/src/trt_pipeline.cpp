@@ -10,6 +10,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -786,6 +787,48 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
     std::vector<Detection> dets;
     dets.reserve(32);
 
+    // Letterbox-box dedup buffer for same-query duplicates. DEIM's deploy
+    // postprocessor (DEIM/engine/deim/postprocessor.py:59) does
+    // `topk(scores.flatten(1), K)` over (query × class) score pairs, so a
+    // single high-confidence query can occupy multiple top-K slots under
+    // different class labels — same query index, different class id. The
+    // bbox is fetched via `bbox_pred.gather(query_idx)` (postprocessor.py:
+    // 64), so same-query slots produce the bit-identical letterbox box. We
+    // track seen letterbox-space boxes and skip later occurrences; engine
+    // output is `torch.topk` sorted desc, so the survivor is the
+    // highest-scored class for that box.
+    //
+    // Why letterbox-space exact equality (not post-unscale + tolerance):
+    // boxes are read once into a float32 scratch via readFloatOutput (FP16
+    // engines included — FP16→FP32 widening is a deterministic bit-pattern
+    // conversion, not arithmetic). Reading the same source slot twice yields
+    // the same float32 bits. Affine unscale would change the values but not
+    // their equality, however unscaling a duplicate is wasted work; dedup
+    // before unscale also lets us use strict `==` instead of an epsilon that
+    // could collapse two genuinely distinct objects.
+    //
+    // Stronger detectors (e.g. DEIM-D-FINE-M) can also produce CROSS-query
+    // duplicates — separate queries firing on the same physical object with
+    // near-but-not-identical boxes. Those survive this dedup. If demo output
+    // still shows multiple boxes per object after this fix, raise --conf or
+    // add IoU-based NMS; both are out of scope here.
+    //
+    // Residual: keying on box (proxy for query identity) means two DISTINCT
+    // queries that emit bit-identical boxes (e.g. FP16 quantization snapping
+    // different bbox_pred floats to the same FP16 representation) are
+    // collapsed onto the highest-scored class. In expected DEIM behavior
+    // this is usually same-object duplication (Dense O2O training assigns
+    // multiple queries to the same target) and degrades like NMS at IoU=1.0
+    // — sub-pixel-coincident predictions describe the same physical region.
+    // If this is observed to affect class state (e.g. unexplained class
+    // flips or dropped rare-class detections), the strictly-correct fix is
+    // to export `query_idx` as a 4th DEIM deploy output and dedup on it;
+    // that requires modifying DEIM/engine/deim/postprocessor.py deploy mode
+    // + re-exporting every DEIM engine + breaking the 3-output
+    // construction-time gate, which is out of scope for this hotfix.
+    std::vector<std::array<float, 4>> seen_lbox;
+    seen_lbox.reserve(32);
+
     for (size_t i = 0; i < K; ++i) {
         float conf = scores[i];
         if (conf < conf_thresh_) continue;
@@ -803,10 +846,23 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
                 "(expected int64 or int32)");
         }
         // DEIM may emit cls_id == nc for "no object"; drop instead of clamp.
+        // Done before dedup so a "no object" slot does not consume a valid
+        // box's first-seen slot.
         if (cls_id < 0 || cls_id >= nc) continue;
 
         const float* bb = boxes + i * 4;
         float lx1 = bb[0], ly1 = bb[1], lx2 = bb[2], ly2 = bb[3];
+
+        bool dup = false;
+        for (const auto& prev : seen_lbox) {
+            if (prev[0] == lx1 && prev[1] == ly1 &&
+                prev[2] == lx2 && prev[3] == ly2) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) continue;
+        seen_lbox.push_back({lx1, ly1, lx2, ly2});
 
         float x1 = (lx1 - pad_w) / scale;
         float y1 = (ly1 - pad_h) / scale;

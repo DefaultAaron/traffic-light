@@ -948,9 +948,37 @@ class TRTDetector:
           - labels: (N, K)  — class id per query, already top-K sorted
           - boxes : (N, K, 4) — xyxy already scaled by `orig_target_sizes`
           - scores: (N, K)  — sigmoid (focal-loss path), descending
-        We drop the batch dim, threshold scores, and unscale through the
-        shared letterbox math. No NMS is needed: the top-K with focal
-        scores already serves the role.
+        We drop the batch dim, threshold scores, dedup same-query duplicates
+        in letterbox space, then unscale through the shared letterbox math.
+
+        Why dedup: postprocessor.py:59 does `topk(scores.flatten(1), K)` over
+        (query × class) score pairs, so a single high-confidence query can
+        occupy multiple top-K slots under different class labels. The bbox
+        is fetched via `bbox_pred.gather(query_idx)` (postprocessor.py:64),
+        so same-query slots produce the bit-identical letterbox box. Without
+        dedup, stronger detectors (e.g. DEIM-M) emit hundreds of (q, c)
+        duplicates per scene at conf=0.25.
+
+        Strict equality is correct: same source slot read twice yields the
+        same bytes (FP16→FP32 widening is deterministic). We dedup BEFORE
+        the affine unscale to (a) avoid wasted unscale on duplicates and
+        (b) justify `==` instead of an epsilon that could collapse two
+        genuinely distinct objects.
+
+        Cross-query duplicates (separate queries firing on the same physical
+        object with near-but-not-identical boxes) are NOT addressed here;
+        raise --conf or add IoU-based NMS if observed.
+
+        Residual: keying on box (proxy for query identity) means two DISTINCT
+        queries that emit bit-identical boxes (e.g. FP16 quantization) are
+        collapsed onto the highest-scored class. In expected DEIM behavior
+        this is usually same-object duplication (Dense O2O training assigns
+        multiple queries to the same target) and degrades like NMS at IoU=
+        1.0. If this is observed to affect class state (e.g. unexplained
+        class flips or dropped rare-class detections), the strictly-correct
+        fix is to export `query_idx` as a 4th DEIM deploy output and dedup
+        on it — DEIM upstream change + re-export of every engine + break of
+        the 3-output construction-time gate, out of scope here.
         """
         for k in ("labels", "boxes", "scores"):
             if outputs[k].shape[0] != 1:
@@ -971,14 +999,24 @@ class TRTDetector:
         scores = scores[keep]
 
         nc = len(CLASS_NAMES)
+        # Letterbox-box dedup buffer for same-query duplicates — see
+        # docstring. C++ parity: equivalent `seen_lbox` vector in
+        # inference/cpp/src/trt_pipeline.cpp postprocessDeim().
+        seen_lbox: set[tuple[float, float, float, float]] = set()
         detections: list[Detection] = []
         for cls_id, (lx1, ly1, lx2, ly2), conf in zip(labels.tolist(), boxes, scores.tolist()):
             cls_id = int(cls_id)
-            # DEIM may emit cls_id == nc for "no object"; drop instead of clamp.
+            # DEIM may emit cls_id == nc for "no object"; drop instead of
+            # clamp. Done before dedup so a "no object" slot does not
+            # consume a valid box's first-seen slot.
             if cls_id < 0 or cls_id >= nc:
                 continue
+            lbox = (float(lx1), float(ly1), float(lx2), float(ly2))
+            if lbox in seen_lbox:
+                continue
+            seen_lbox.add(lbox)
             x1, y1, x2, y2 = self._unscale_clip(
-                float(lx1), float(ly1), float(lx2), float(ly2),
+                lbox[0], lbox[1], lbox[2], lbox[3],
                 scale, pad, orig_shape,
             )
             detections.append(Detection(
