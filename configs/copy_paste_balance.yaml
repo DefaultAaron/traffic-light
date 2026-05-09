@@ -1,0 +1,124 @@
+# Copy-paste augmentation + class-balance loss — pre-committed config for
+# the c-stage ablation under components/copy_paste_balance/.
+#
+# Authoritative spec: docs/planning/additional_components_plan.md §三.
+# This config is consumed by:
+#   1. The ablation runner (components/copy_paste_balance/runners/ablation.py)
+#      when aggregating per-arm metrics and applying the §3.7 decision rule.
+#   2. main.py train --copy-paste / --cls-weight CLI flags, which override
+#      individual fields here when ablating from the trainer side.
+# Default behavior is OFF: copy_paste.probability=0.0 and class_balance.beta=0.0
+# preserve the no-augmentation baseline so the standard `main.py train`
+# invocation is byte-for-byte unchanged. Ablation arms are triggered
+# explicitly by the runner / CLI flags.
+
+# State-space size. Must match the active data.yaml's class count. R2 nc
+# range is 10–14 per project memory; default `null` forces an explicit
+# override at run time so a stale value can't silently mismatch the data.
+num_classes: null
+
+# Class names matching the active data.yaml (must align with num_classes).
+# Loader checks `len(class_names) == num_classes`. Default empty list is
+# rejected at load time; the runner / CLI must provide an explicit list
+# matching the active detector's class set.
+class_names: []
+
+# Rare-class instance-count threshold. Classes with full_val_support below
+# this are flagged "rare" for the §3.7 decision rule. Plan default 30
+# matches the R2 precision plan's full_val_support floor; reducing this
+# would expand the rare-set membership and dilute the deploy gate.
+rare_class_threshold: 30
+
+# Safety-critical class IDs (subset of range(num_classes)). Plan §3.7
+# guards rare ∩ safety classes with a tighter floor (-1 pp) than the
+# overall mAP (-0.2 pp). Default empty list = no class is safety-critical
+# — the runner is responsible for supplying the active R2 safety set
+# (typically the lit-state classes: red, yellow, green, redLeft, etc.).
+safety_class_ids: []
+
+# Copy-paste augmentation knobs --------------------------------------------
+
+copy_paste:
+  # Augmentation probability/weight. Ultralytics interprets this as the
+  # `copy_paste=` flag (per-image probability of paste op). 0.0 = disabled
+  # (preserves baseline arm). Plan §3.5 mask constraint enforced via
+  # y_center_max_frac below.
+  probability: 0.0
+
+  # Plan §3.5 mask: pasted bbox y-center must be in the upper fraction of
+  # the frame. 0.33 = upper third (plan default; lights are usually mounted
+  # high). null disables the constraint (NOT RECOMMENDED — produces
+  # "lights floating in the sky" samples that hurt validation).
+  y_center_max_frac: 0.33
+
+  # Class IDs eligible for the paste-source pool (the rare-class instance
+  # bank). Loader checks every entry is in [0, num_classes). Default empty
+  # list = no paste sources, which makes copy-paste a no-op even when
+  # probability > 0; the runner / CLI MUST populate this from the active
+  # rare-class set before c-stage training.
+  paste_source_class_ids: []
+
+  # Min instances per batch guarantee (plan §3.1: "at least K times per
+  # batch"). 0 = no guarantee (Ultralytics default behavior). Positive K
+  # = forced injection up to K. b-stage scope: gentle injection only;
+  # never replace natural augmentation samples with synthetic ones.
+  min_per_batch_K: 0
+
+  # Plan §3.5 hard pin: arrows can't be horizontally flipped. The runner
+  # verifies the active training config's `fliplr` flag against this value
+  # BEFORE training starts; mismatch is a hard fail rather than a silent
+  # degradation. See feedback_augmentation memory.
+  required_fliplr: 0.0
+
+  # Mosaic interaction lock. b-stage may tighten after profiling; default
+  # false (allow Ultralytics default mosaic). When true, the runner verifies
+  # the active training config disables mosaic.
+  required_mosaic_lock: false
+
+# Class-balance loss knobs --------------------------------------------------
+
+class_balance:
+  # Cui et al. 2019 effective-number-of-samples β. β=0 → uniform weights
+  # (cp_only arm); β > 0 → reweighted (cp_balanced arm). HARD CONSTRAINT:
+  # MUST be one of {0.0, 0.99, 0.999, 0.9999}. `load_copy_paste_balance_yaml`
+  # rejects any other value rather than silently widening the §3.7
+  # sensitivity-sweep set. To deviate, amend the plan §3.7 sweep set first,
+  # then update _copy_paste_decision_schema.json's enum, this comment, and
+  # the loader.
+  beta: 0.0
+
+  # How the per-class weight vector flows into the trainer:
+  #   ultralytics_class_weights : pass weights via training callback that
+  #                                patches the loss module's class-weight
+  #                                buffer (plan default for Ultralytics).
+  #                                Requires version-pinned callback API
+  #                                check at b-stage.
+  #   ultralytics_cls_scalar    : collapse to scalar Ultralytics `cls=`
+  #                                gain (mean of weights). Lossy fallback;
+  #                                NEVER the default.
+  #   deim_focal_alpha          : replace DEIM's focal-loss α with the
+  #                                per-class weights (b-stage; DEIM uses
+  #                                focal loss by default per plan §3.1).
+  apply_mode: ultralytics_class_weights
+
+  # Maximum weight clamp ratio. max(w) / min(w) is clamped to this value
+  # before normalization, per plan §3.5 risk: large weights → rare-class
+  # FP explosion. Use joint with copy-paste, never alone with high β.
+  max_weight_ratio: 10.0
+
+  # Path to the per-class instance counts artifact produced by
+  # components/copy_paste_balance/data/class_weights.py. The runner reads
+  # `counts` from this YAML, calls ClassBalanceWeights.from_counts(beta=beta,
+  # apply_mode=apply_mode, max_weight_ratio=max_weight_ratio), and threads
+  # the resulting weight vector into the trainer per apply_mode. null = use
+  # uniform weights (β is ignored when this is null).
+  class_counts_path: null
+
+# Decision-rule tolerance (plan §3.7) --------------------------------------
+#
+# The total-mAP regression tolerance is the only §3.7 threshold lifted to
+# YAML; the rest (rare avg +5 pp, rare safety -1 pp, FP rise 10/30%, drop
+# triggers) are pinned as ClassVars on DecisionInputs (mirrors HMM's
+# convention of pinning structural thresholds in code while exposing only
+# the numeric tolerance to ops).
+map_regression_tolerance_pp: 0.2

@@ -1,0 +1,34 @@
+# Per-class instance counts — fitter output for the class-balance ablation.
+#
+# Authoritative spec: docs/planning/additional_components_plan.md §3.8 a +
+# components/copy_paste_balance/data/class_weights.py.
+#
+# This file is a FITTER OUTPUT, not a hand-edited config. It is regenerated
+# by `components.copy_paste_balance.data.class_weights.estimate_from_dataset`
+# whenever the training data manifest changes. The ablation runner consumes
+# `counts[]` to build ClassBalanceWeights via the Cui 2019 effective-number-
+# of-samples formula.
+#
+# Schema (a-stage stub; b-stage populates):
+#   schema_version       : "1"
+#   data_yaml_sha256     : 64-char lowercase hex of the source data.yaml
+#   train_split          : "train" (which manifest split was tallied)
+#   num_classes          : int
+#   class_names          : list[str], length == num_classes
+#   counts               : list[int], length == num_classes; per-class instance count
+#   rare_class_threshold : 30 (plan default)
+#   rare_class_ids       : list[int], indices where counts[i] < rare_class_threshold
+#
+# This file is currently a STUB. Run the fitter to populate before:
+#   1. Triggering `main.py train --cls-weight configs/data_R2_class_weights.yaml`,
+#   2. Running the ablation runner (which validates the data_yaml_sha256
+#      matches the active data.yaml and refuses stale counts).
+
+schema_version: "1"
+data_yaml_sha256: ""        # b-stage: populated by fitter
+train_split: train
+num_classes: null           # b-stage: populated by fitter
+class_names: []             # b-stage: populated by fitter
+counts: []                  # b-stage: populated by fitter
+rare_class_threshold: 30
+rare_class_ids: []          # b-stage: derived by fitter

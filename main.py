@@ -1,6 +1,7 @@
 """Traffic light detection — train, evaluate, and export models."""
 
 import argparse
+import math
 from pathlib import Path
 
 import yaml
@@ -8,7 +9,30 @@ from ultralytics import RTDETR, YOLO
 
 ROOT = Path(__file__).resolve().parent
 CONFIGS_DIR = ROOT / "configs"
-VALID_MODELS = [p.stem for p in sorted(CONFIGS_DIR.glob("*.yaml"))]
+
+
+def _is_model_config(path: Path) -> bool:
+    """True iff `path` is a real Ultralytics model config (carries a ``model:`` key).
+
+    B2 review I3 2026-05-09: ablation YAMLs (``copy_paste_balance.yaml``,
+    ``data_R2_class_weights.yaml``, ``temporal_hmm.yaml``) have no
+    ``model:`` key and would crash ``build_model()`` with a confusing
+    ``KeyError`` if a contributor tab-completes them in the train choice
+    list. Filter the choice list to the YAMLs ``build_model`` can
+    actually consume. Malformed YAMLs are silently excluded (a strictly
+    broken config can't be a valid ``train`` argument anyway).
+    """
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError:
+        return False
+    return isinstance(data, dict) and "model" in data
+
+
+VALID_MODELS = [
+    p.stem for p in sorted(CONFIGS_DIR.glob("*.yaml")) if _is_model_config(p)
+]
 
 RTDETR_MODELS = {"rtdetr-l"}
 
@@ -73,6 +97,81 @@ def _register_seed_marker(model, seed: int) -> None:
     model.add_callback("on_pretrain_routine_start", _cb)
 
 
+def _apply_ablation_overrides(config: dict, args) -> None:
+    """Apply --copy-paste / --cls-weight ablation overrides to the train config.
+
+    Both flags default to None at the argparse layer; when supplied they
+    override the active model config in-place. The runner-side ablation
+    contract (components/copy_paste_balance/runners/ablation.py) consumes
+    the resulting trained checkpoints; this function only wires the
+    trainer-side plumbing.
+
+    Default-OFF preservation (B2 review I1 2026-05-09): use ``getattr`` so
+    callers / subparsers that lack these attrs entirely behave as if the
+    flag was None (no-op). Any future subcommand that imports this helper
+    without re-declaring the args is therefore safe.
+
+    --copy-paste FLOAT
+        Forwarded directly into Ultralytics' built-in `copy_paste=` flag
+        (per-image probability of paste op). Range [0, 1]. Plan §3.5
+        notes the y-center mask + fliplr=0 lock; those are b-stage
+        responsibilities owned by the dataloader callback (the a-stage
+        scaffold lives under components/copy_paste_balance/modules/).
+
+        B2 review C1 2026-05-09: argparse's ``type=float`` rejects bools
+        at parse time, but this helper is also directly callable by
+        tests / programmatic harnesses where ``True`` would silently
+        coerce via ``float(True) == 1.0``. Validate bool/int/float +
+        finite + range here so the system-boundary discipline matches
+        every dataclass __post_init__ in this scaffold tree.
+
+    --cls-weight PATH
+        Path to configs/data_R2_class_weights.yaml (or a fitter-emitted
+        equivalent). a-stage scaffold validates existence and stashes the
+        path on args.cls_weight for the b-stage callback that patches
+        the loss module's class-weight buffer to consume. We deliberately
+        do NOT inject the weights into Ultralytics' `cls=` scalar gain
+        because that flag is a single scalar loss multiplier, not a
+        per-class vector — silently routing per-class weights through it
+        would corrupt training without any indication.
+
+        B2 review I2 2026-05-09: a-stage refuses the flag with SystemExit
+        rather than printing a warning. A stderr warning is silently
+        swallowed by the conflictor / CI wrappers and would let a
+        c-stage ablation kicked off before b-stage lands silently train
+        an unweighted baseline. b-stage replaces the SystemExit with the
+        actual callback registration.
+    """
+    copy_paste = getattr(args, "copy_paste", None)
+    cls_weight = getattr(args, "cls_weight", None)
+    if copy_paste is not None:
+        # bool is an int subclass in Python; argparse type=float rejects it
+        # for CLI input but a direct caller can still pass it. Reject before
+        # the range check so the diagnostic names the type error clearly.
+        if isinstance(copy_paste, bool) or not isinstance(copy_paste, (int, float)):
+            raise SystemExit(
+                f"--copy-paste must be float; got "
+                f"{type(copy_paste).__name__}={copy_paste!r}"
+            )
+        if not math.isfinite(copy_paste):
+            raise SystemExit(f"--copy-paste must be finite; got {copy_paste!r}")
+        if not (0.0 <= copy_paste <= 1.0):
+            raise SystemExit(f"--copy-paste must be in [0, 1]; got {copy_paste}")
+        config["copy_paste"] = float(copy_paste)
+    if cls_weight is not None:
+        weights_path = Path(cls_weight)
+        if not weights_path.exists():
+            raise SystemExit(f"--cls-weight file not found: {weights_path}")
+        raise SystemExit(
+            f"--cls-weight {weights_path} recorded but a-stage cannot apply it. "
+            f"The b-stage callback under components/copy_paste_balance/ is "
+            f"required to wire per-class weights into Ultralytics' loss module; "
+            f"running c-stage training without that callback would silently "
+            f"produce an unweighted baseline. Wait for b-stage to land before "
+            f"using this flag."
+        )
+
+
 def train(args):
     if args.resume:
         ckpt = Path(args.resume)
@@ -100,6 +199,7 @@ def train(args):
     if args.imgsz:
         config["imgsz"] = args.imgsz
     config["seed"] = args.seed
+    _apply_ablation_overrides(config, args)
 
     model = build_model(config)
     config.pop("model")  # already loaded, don't pass twice
@@ -215,6 +315,7 @@ def train_all(args):
         if args.imgsz:
             config["imgsz"] = args.imgsz
         config["seed"] = args.seed
+        _apply_ablation_overrides(config, args)
 
         model = build_model(config)
         config.pop("model")
@@ -239,6 +340,22 @@ def main():
                          help="Resume from checkpoint (e.g. runs/yolo26n/weights/last.pt)")
     p_train.add_argument("--seed", type=int, default=0,
                          help="Random seed for reproducibility (default: 0)")
+    # Ablation knobs (default OFF — preserve current pipeline behavior).
+    # Authoritative spec: docs/planning/additional_components_plan.md §三 +
+    # components/copy_paste_balance/. Supplying these flags routes the run
+    # into the c-stage ablation arm tree (no_aug / cp_only / cp_balanced).
+    p_train.add_argument("--copy-paste", type=float, default=None,
+                         dest="copy_paste",
+                         metavar="FLOAT",
+                         help="Override Ultralytics copy_paste= flag (range [0, 1]). "
+                              "Default None preserves the model config value.")
+    p_train.add_argument("--cls-weight", type=str, default=None,
+                         dest="cls_weight",
+                         metavar="PATH",
+                         help="Path to per-class weights YAML "
+                              "(configs/data_R2_class_weights.yaml). a-stage "
+                              "scaffold; full integration requires the b-stage "
+                              "callback under components/copy_paste_balance/.")
     p_train.set_defaults(func=train)
 
     # train-all
@@ -250,6 +367,16 @@ def main():
     p_all.add_argument("--device", type=str)
     p_all.add_argument("--seed", type=int, default=0,
                        help="Random seed for reproducibility (default: 0)")
+    p_all.add_argument("--copy-paste", type=float, default=None,
+                       dest="copy_paste",
+                       metavar="FLOAT",
+                       help="Override Ultralytics copy_paste= flag for ALL "
+                            "selected variants (range [0, 1]).")
+    p_all.add_argument("--cls-weight", type=str, default=None,
+                       dest="cls_weight",
+                       metavar="PATH",
+                       help="Path to per-class weights YAML applied to ALL "
+                            "selected variants (a-stage scaffold).")
     p_all.set_defaults(func=train_all)
 
     # val

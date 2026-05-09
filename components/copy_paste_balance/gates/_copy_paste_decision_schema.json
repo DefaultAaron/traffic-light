@@ -1,0 +1,218 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://traffic-light.local/schemas/_copy_paste_decision.json",
+  "title": "Copy-paste + class-balance ablation decision artifact",
+  "description": "OUTPUT-ONLY schema for the final runs/_copy_paste_decision.json artifact (plan docs/planning/additional_components_plan.md §3.7). Sister-file precedent: components/hmm_smoother/gates/_hmm_decision_schema.json (locked iter-3 2026-05-09). C3 NEW-MAJOR 3+4 2026-05-09: headline_arm enum no longer accepts 'no_aug' (the baseline reference cell carries no decision); MetricsBlock split into BaselineMetricsBlock (is_baseline_reference=true + all-zero deltas) and CandidateMetricsBlock (is_baseline_reference=false) so a sweep cell can't silently masquerade as baseline. Validation library: `jsonschema` (Draft-7), matching scripts/_r2_decision_schema.json's precedent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "config_yaml_sha256",
+    "data_yaml_sha256",
+    "weights_yaml_sha256",
+    "headline_arm",
+    "headline_beta",
+    "headline_metrics",
+    "headline_decision",
+    "notes",
+    "no_aug",
+    "cp_only",
+    "cp_balanced"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "config_yaml_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "data_yaml_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "weights_yaml_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "headline_arm": {
+      "type": "string",
+      "enum": ["cp_only", "cp_balanced"],
+      "description": "C3 NEW-MAJOR 3 2026-05-09: 'no_aug' is REJECTED at the schema boundary because the baseline reference cell carries no decision. AblationConfig.__post_init__ rejects 'no_aug' as anchor_arm at the runtime boundary; mirror that contract here so a malformed artifact (e.g. handwritten test fixture) fails schema validation rather than silently producing a meaningless top-level decision."
+    },
+    "headline_beta": {
+      "anyOf": [
+        { "type": "number", "enum": [0.99, 0.999, 0.9999] },
+        { "type": "null" }
+      ],
+      "description": "null when headline_arm == 'cp_only'; otherwise must match the cp_balanced.deploy_anchor_beta field."
+    },
+    "headline_metrics": { "$ref": "#/definitions/CandidateMetricsBlock" },
+    "headline_decision": {
+      "type": "string",
+      "enum": ["deploy", "defer", "drop", "executor_error"]
+    },
+    "notes": { "type": "string" },
+    "no_aug": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics", "notes"],
+      "properties": {
+        "metrics": { "$ref": "#/definitions/BaselineMetricsBlock" },
+        "notes": { "type": "string" }
+      },
+      "description": "Baseline reference; no decision is computed (the rule is undefined on a self-comparison). All MetricsBlock delta fields are constrained to exactly 0 by BaselineMetricsBlock — the runner asserts this before serialization, and the schema mirrors at the boundary."
+    },
+    "cp_only": { "$ref": "#/definitions/ArmCell" },
+    "cp_balanced": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deploy_anchor_beta", "sensitivity_sweep"],
+      "properties": {
+        "deploy_anchor_beta": {
+          "type": "number",
+          "enum": [0.99, 0.999, 0.9999],
+          "description": "Which β value populates the top-level headline_* fields. Must match exactly one sensitivity_sweep row's beta. Plan §3.7 sensitivity-sweep set is fixed; deviation requires re-running the §三 adversarial loop."
+        },
+        "sensitivity_sweep": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/definitions/BetaCell" },
+          "allOf": [
+            { "contains": { "properties": { "beta": { "const": 0.99 } } } },
+            { "contains": { "properties": { "beta": { "const": 0.999 } } } },
+            { "contains": { "properties": { "beta": { "const": 0.9999 } } } }
+          ],
+          "description": "Plan §3.7 sweeps β ∈ {0.99, 0.999, 0.9999}. The allOf+contains tuple combined with minItems/maxItems=3 forces exactly one row per required β (Draft-7 has no minContains/maxContains, mirroring _hmm_decision_schema.json's pattern). Exactly one row MUST set deploy_anchor=true; anchor-uniqueness is a runner runtime invariant since JSON Schema cannot express 'exactly one of array elements has property X = true'."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "headline_arm": { "const": "cp_only" }
+        }
+      },
+      "then": {
+        "properties": {
+          "headline_beta": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "headline_arm": { "const": "cp_balanced" }
+        }
+      },
+      "then": {
+        "properties": {
+          "headline_beta": { "type": "number", "enum": [0.99, 0.999, 0.9999] }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "MetricsBlockCommon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rare_class_mean_delta_AP_pp",
+        "rare_class_max_delta_AP_pp",
+        "rare_safety_min_delta_AP_pp",
+        "rare_related_fp_delta_frac",
+        "total_map_delta_pp",
+        "rare_class_ids",
+        "rare_safety_class_ids",
+        "zero_support_rare_classes",
+        "eval_manifest_sha256",
+        "fp_manifest_sha256",
+        "is_baseline_reference"
+      ],
+      "properties": {
+        "rare_class_mean_delta_AP_pp": { "type": "number", "minimum": -100, "maximum": 100 },
+        "rare_class_max_delta_AP_pp": { "type": "number", "minimum": -100, "maximum": 100 },
+        "rare_safety_min_delta_AP_pp": { "type": "number", "minimum": -100, "maximum": 100 },
+        "rare_related_fp_delta_frac": { "type": "number", "minimum": -1.0, "maximum": 10.0 },
+        "total_map_delta_pp": { "type": "number", "minimum": -100, "maximum": 100 },
+        "rare_class_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "uniqueItems": true
+        },
+        "rare_safety_class_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "uniqueItems": true
+        },
+        "zero_support_rare_classes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "uniqueItems": true
+        },
+        "eval_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fp_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "is_baseline_reference": { "type": "boolean" }
+      }
+    },
+    "BaselineMetricsBlock": {
+      "description": "C3 NEW-MAJOR 4 2026-05-09: the no_aug arm's metrics block. is_baseline_reference is fixed true and every delta field is fixed 0 (the baseline is constructed by self-comparison; non-zero deltas indicate a runner construction bug). Without this constraint, a no_aug.metrics block could mark itself as candidate (is_baseline_reference=false) and the resulting artifact would be semantically broken even though all numeric ranges pass.",
+      "allOf": [
+        { "$ref": "#/definitions/MetricsBlockCommon" },
+        {
+          "properties": {
+            "is_baseline_reference": { "const": true },
+            "rare_class_mean_delta_AP_pp": { "const": 0 },
+            "rare_class_max_delta_AP_pp": { "const": 0 },
+            "rare_safety_min_delta_AP_pp": { "const": 0 },
+            "rare_related_fp_delta_frac": { "const": 0 },
+            "total_map_delta_pp": { "const": 0 }
+          }
+        }
+      ]
+    },
+    "CandidateMetricsBlock": {
+      "description": "C3 NEW-MAJOR 4 2026-05-09: cp_only and cp_balanced sweep cells. is_baseline_reference is fixed false so a candidate cell can't silently masquerade as baseline.",
+      "allOf": [
+        { "$ref": "#/definitions/MetricsBlockCommon" },
+        {
+          "properties": {
+            "is_baseline_reference": { "const": false }
+          }
+        }
+      ]
+    },
+    "ArmCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics", "decision", "notes"],
+      "properties": {
+        "metrics": { "$ref": "#/definitions/CandidateMetricsBlock" },
+        "decision": {
+          "type": "string",
+          "enum": ["deploy", "defer", "drop", "executor_error"]
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "BetaCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beta", "deploy_anchor", "metrics", "decision", "notes"],
+      "properties": {
+        "beta": { "type": "number", "enum": [0.99, 0.999, 0.9999] },
+        "deploy_anchor": { "type": "boolean" },
+        "metrics": { "$ref": "#/definitions/CandidateMetricsBlock" },
+        "decision": {
+          "type": "string",
+          "enum": ["deploy", "defer", "drop", "executor_error"]
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}
