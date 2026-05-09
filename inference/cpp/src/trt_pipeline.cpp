@@ -787,7 +787,18 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
     std::vector<Detection> dets;
     dets.reserve(32);
 
-    // Letterbox-box dedup buffer for same-query duplicates. DEIM's deploy
+    // Two-phase postprocess. Phase 1 collects per-slot survivors in
+    // letterbox space after conf threshold + class validation +
+    // same-query bit-identical dedup. Phase 2 runs per-class IoU NMS over
+    // those survivors, then unscales + clips the keepers to image space.
+    //
+    // Why two phases: NMS needs IoU comparisons in a coordinate frame
+    // that's not affected by image-bound clipping. Letterbox space is
+    // pre-clip and is the frame the model actually emitted; doing NMS
+    // in image space after clipping would give wrong IoUs whenever a
+    // box extends past the image edge.
+    //
+    // PHASE 1 — same-query letterbox-box dedup. DEIM's deploy
     // postprocessor (DEIM/engine/deim/postprocessor.py:59) does
     // `topk(scores.flatten(1), K)` over (query × class) score pairs, so a
     // single high-confidence query can occupy multiple top-K slots under
@@ -802,36 +813,79 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
     // boxes are read once into a float32 scratch via readFloatOutput (FP16
     // engines included — FP16→FP32 widening is a deterministic bit-pattern
     // conversion, not arithmetic). Reading the same source slot twice yields
-    // the same float32 bits. Affine unscale would change the values but not
-    // their equality, however unscaling a duplicate is wasted work; dedup
-    // before unscale also lets us use strict `==` instead of an epsilon that
-    // could collapse two genuinely distinct objects.
+    // the same float32 bits. Strict `==` is correct here; an epsilon would
+    // risk collapsing two genuinely distinct objects.
     //
-    // Stronger detectors (e.g. DEIM-D-FINE-M) can also produce CROSS-query
-    // duplicates — separate queries firing on the same physical object with
-    // near-but-not-identical boxes. Those survive this dedup. If demo output
-    // still shows multiple boxes per object after this fix, raise --conf or
-    // add IoU-based NMS; both are out of scope here.
+    // Cross-query NEAR-duplicates — separate queries firing on the same
+    // physical object with near-but-not-identical boxes — are NOT caught
+    // by the dedup above. DEIM Dense-O2O training intentionally assigns
+    // multiple queries per target; on dense traffic-light scenes DEIM-M
+    // emits ~30 detections at conf=0.25 of which the majority are
+    // cross-query duplicates of a handful of physical lights. Phase 2 NMS
+    // is what handles those.
     //
-    // Residual: keying on box (proxy for query identity) means two DISTINCT
-    // queries that emit bit-identical boxes (e.g. FP16 quantization snapping
-    // different bbox_pred floats to the same FP16 representation) are
-    // collapsed onto the highest-scored class. In expected DEIM behavior
-    // this is usually same-object duplication (Dense O2O training assigns
-    // multiple queries to the same target) and degrades like NMS at IoU=1.0
-    // — sub-pixel-coincident predictions describe the same physical region.
-    // If this is observed to affect class state (e.g. unexplained class
-    // flips or dropped rare-class detections), the strictly-correct fix is
-    // to export `query_idx` as a 4th DEIM deploy output and dedup on it;
-    // that requires modifying DEIM/engine/deim/postprocessor.py deploy mode
-    // + re-exporting every DEIM engine + breaking the 3-output
-    // construction-time gate, which is out of scope for this hotfix.
-    std::vector<std::array<float, 4>> seen_lbox;
-    seen_lbox.reserve(32);
+    // Residual of phase 1: keying on box (proxy for query identity) means
+    // two DISTINCT queries that emit bit-identical boxes (e.g. FP16
+    // quantization snapping different bbox_pred floats to the same
+    // representation) are collapsed onto the highest-scored class. This
+    // degrades like NMS at IoU=1.0 — sub-pixel-coincident predictions
+    // describe the same physical region. The strictly-correct fix is to
+    // export `query_idx` as a 4th DEIM deploy output and dedup on it,
+    // which requires DEIM upstream change + re-export every engine +
+    // breaking the 3-output construction-time gate; out of scope.
+    struct DeimSurvivor {
+        int cls_id;
+        float conf;
+        float lx1, ly1, lx2, ly2;
+    };
+    std::vector<DeimSurvivor> survivors;
+    survivors.reserve(32);
 
+    // PHASE 0 — score-desc sort over the conf-thresholded slot indices,
+    // BEFORE phase 1 dedup. Sorting before dedup ensures the dedup
+    // naturally keeps the HIGHEST-CONFIDENCE slot for any bit-identical
+    // letterbox-box tuple (the first one encountered in sorted order).
+    // Doing this AFTER dedup would only fix NMS ordering, but leave the
+    // dedup itself trusting DEIM's `torch.topk(sorted=True)` contract
+    // for class-label selection — which we explicitly want to stop
+    // depending on (see additional comment in phase 1 below).
+    //
+    // std::stable_sort preserves the original topk tie-break order on
+    // exact-conf ties (rare but possible at FP16 quantization
+    // boundaries). N is bounded by num_top_queries=300; cost is
+    // negligible.
+    //
+    // Index permutation rather than in-place reorder of the engine's
+    // host buffers — those are owned by the TensorBuf scratch and
+    // mutating them would corrupt the next inference pass.
+    std::vector<size_t> sorted_idx;
+    sorted_idx.reserve(K);
     for (size_t i = 0; i < K; ++i) {
+        if (scores[i] >= conf_thresh_) sorted_idx.push_back(i);
+    }
+    std::stable_sort(sorted_idx.begin(), sorted_idx.end(),
+                     [scores](size_t a, size_t b) {
+                         return scores[a] > scores[b];
+                     });
+
+    // PHASE 1 — same-query bit-identical letterbox-box dedup. Dedup is
+    // done by linear-searching `survivors` directly instead of carrying
+    // a parallel `seen_lbox` buffer. Both lookups are O(N) per push so
+    // the cost is identical, and the single-buffer form can't drift if
+    // a future edit forgets to push to one of two parallel structures.
+    //
+    // INVARIANT (enforced, not trusted): survivors[] is in score-
+    // descending order at exit of phase 1, because we iterate
+    // sorted_idx in score-desc order and only push (never reorder).
+    // Phase 2 greedy NMS depends on this. DEIM's `torch.topk(sorted=
+    // True)` already provides the order, but the explicit phase-0 sort
+    // means (a) we don't depend on that upstream contract continuing
+    // to hold across DEIM versions, and (b) we don't need a debug-only
+    // assert that would compile out under default Release builds
+    // (CMakeLists.txt:25-26 sets CMAKE_BUILD_TYPE=Release ⇒ NDEBUG ⇒
+    // assert is a no-op exactly where it matters).
+    for (size_t i : sorted_idx) {
         float conf = scores[i];
-        if (conf < conf_thresh_) continue;
 
         int cls_id = -1;
         if (labels_buf->is_int64) {
@@ -854,27 +908,105 @@ std::vector<Detection> TRTDetector::postprocessDeim(const cv::Mat& orig,
         float lx1 = bb[0], ly1 = bb[1], lx2 = bb[2], ly2 = bb[3];
 
         bool dup = false;
-        for (const auto& prev : seen_lbox) {
-            if (prev[0] == lx1 && prev[1] == ly1 &&
-                prev[2] == lx2 && prev[3] == ly2) {
+        for (const auto& prev : survivors) {
+            if (prev.lx1 == lx1 && prev.ly1 == ly1 &&
+                prev.lx2 == lx2 && prev.ly2 == ly2) {
                 dup = true;
                 break;
             }
         }
         if (dup) continue;
-        seen_lbox.push_back({lx1, ly1, lx2, ly2});
 
-        float x1 = (lx1 - pad_w) / scale;
-        float y1 = (ly1 - pad_h) / scale;
-        float x2 = (lx2 - pad_w) / scale;
-        float y2 = (ly2 - pad_h) / scale;
+        survivors.push_back({cls_id, conf, lx1, ly1, lx2, ly2});
+    }
+
+    // PHASE 2 — per-class greedy IoU NMS.
+    //
+    // Per-class (NOT class-agnostic): adjacent traffic lights of
+    // different states (e.g. red next to yellow on a gantry) must not
+    // suppress each other. Locked plan §-Decision-rule's safety-class
+    // guardrail keys on per-class AP; class-agnostic NMS would corrupt
+    // that signal whenever two adjacent lights of different states sit
+    // within IoU > threshold of each other.
+    //
+    // Threshold 0.5 — RT-DETR / D-FINE postprocessors use 0.45–0.5. DEIM
+    // upstream's deploy mode runs NO NMS at all
+    // (DEIM/engine/deim/postprocessor.py:75 returns labels/boxes/scores
+    // raw from topk), which is precisely why this hotfix is needed. We
+    // mirror the RT-DETR/D-FINE convention: below 0.5 starts collapsing
+    // genuinely adjacent objects, above 0.7 leaves the cross-query
+    // near-duplicates we're targeting. Hardcoded for now; if a future
+    // round wants per-detector tuning, lift to a TRTDetector ctor arg
+    // alongside conf_thresh_. Re-evaluate the 0.5 choice if a future
+    // round adds dense rows of small (<8px) targets where adjacent
+    // objects routinely sit at IoU > 0.5.
+    //
+    // O(N^2) is fine: N is the dedup'd survivor count, ~30 on busy
+    // DEIM-M frames after phase 1 and bounded by num_top_queries=300 in
+    // the worst case. Worst-case upper-triangular pair count is
+    // N(N-1)/2 ≈ 45k at 300; realistic ~900/frame at 30 FPS is ~27k/s;
+    // trivially sub-millisecond.
+    //
+    // IoU computed in letterbox space (pre-clip). Doing it post-unscale
+    // + post-clip would change box areas whenever a box extends past the
+    // image edge, biasing NMS toward suppressing edge detections. Pre-
+    // clip is the model's true box.
+    constexpr float kIoUThresh = 0.5f;
+
+    // Per-survivor area precomputed once (O(N) instead of O(N^2)).
+    // Zero-area degenerate boxes get area=0; they pass through emission
+    // because the IoU numerator stays 0 against any partner, but the
+    // `uni > 0` guard below specifically protects against the
+    // both-degenerate (a_area == b_area == 0) divide-by-zero case.
+    std::vector<float> areas(survivors.size(), 0.f);
+    for (size_t k = 0; k < survivors.size(); ++k) {
+        const auto& s = survivors[k];
+        float w = s.lx2 - s.lx1;
+        float h = s.ly2 - s.ly1;
+        if (w > 0.f && h > 0.f) areas[k] = w * h;
+    }
+
+    std::vector<bool> keep(survivors.size(), true);
+    for (size_t i = 0; i < survivors.size(); ++i) {
+        if (!keep[i]) continue;
+        const auto& a = survivors[i];
+        float a_area = areas[i];
+        for (size_t j = i + 1; j < survivors.size(); ++j) {
+            if (!keep[j]) continue;
+            const auto& b = survivors[j];
+            if (b.cls_id != a.cls_id) continue;
+            float ix1 = std::max(a.lx1, b.lx1);
+            float iy1 = std::max(a.ly1, b.ly1);
+            float ix2 = std::min(a.lx2, b.lx2);
+            float iy2 = std::min(a.ly2, b.ly2);
+            float iw = std::max(0.f, ix2 - ix1);
+            float ih = std::max(0.f, iy2 - iy1);
+            float inter = iw * ih;
+            float uni = a_area + areas[j] - inter;
+            // `uni > 0` guard handles the both-degenerate
+            // (a_area == b_area == 0) case to avoid div-by-zero.
+            if (uni > 0.f && (inter / uni) > kIoUThresh) {
+                keep[j] = false;
+            }
+        }
+    }
+
+    // Unscale + clip survivors that passed NMS.
+    for (size_t i = 0; i < survivors.size(); ++i) {
+        if (!keep[i]) continue;
+        const auto& s = survivors[i];
+
+        float x1 = (s.lx1 - pad_w) / scale;
+        float y1 = (s.ly1 - pad_h) / scale;
+        float x2 = (s.lx2 - pad_w) / scale;
+        float y2 = (s.ly2 - pad_h) / scale;
 
         x1 = std::max(0.f, std::min(x1, static_cast<float>(orig_w)));
         y1 = std::max(0.f, std::min(y1, static_cast<float>(orig_h)));
         x2 = std::max(0.f, std::min(x2, static_cast<float>(orig_w)));
         y2 = std::max(0.f, std::min(y2, static_cast<float>(orig_h)));
 
-        dets.push_back({cls_id, conf, x1, y1, x2, y2});
+        dets.push_back({s.cls_id, s.conf, x1, y1, x2, y2});
     }
 
     return dets;

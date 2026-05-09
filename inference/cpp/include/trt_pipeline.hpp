@@ -53,9 +53,11 @@ public:
     TRTDetector(const TRTDetector&) = delete;
     TRTDetector& operator=(const TRTDetector&) = delete;
 
-    // Run detection on a BGR frame. Both supported arches are NMS-free at
-    // the public surface (YOLO26 by training; DEIM by the deploy top-K) —
-    // no post-hoc NMS is applied here.
+    // Run detection on a BGR frame. YOLO26 is NMS-free by training. DEIM-
+    // D-FINE adds a runtime per-class IoU NMS @ 0.5 after its deploy
+    // top-K (see postprocessDeim) — Dense-O2O training emits multiple
+    // queries per target, producing near-but-not-identical box outputs
+    // that the deploy graph's flatten-then-topk does not collapse.
     std::vector<Detection> detect(const cv::Mat& frame);
 
     float conf_thresh() const { return conf_thresh_; }

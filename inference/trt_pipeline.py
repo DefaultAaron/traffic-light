@@ -754,8 +754,11 @@ class TRTDetector:
       - .onnx   → ONNX Runtime
 
     Architecture (YOLO26 vs DEIM-D-FINE) is auto-detected from tensor names.
-    Both arches are NMS-free as exposed: YOLO26 by training, DEIM by the
-    deploy postprocessor's top-K. Output type and unscale math are shared.
+    YOLO26 is NMS-free by training. DEIM-D-FINE's deploy top-K is followed
+    by a runtime per-class IoU NMS @ 0.5 (see _postprocess_deim) — Dense-
+    O2O training emits multiple queries per target, producing near-but-
+    not-identical box outputs that flatten-then-topk does not collapse.
+    Output type and unscale math are shared.
     """
 
     def __init__(
@@ -948,37 +951,67 @@ class TRTDetector:
           - labels: (N, K)  — class id per query, already top-K sorted
           - boxes : (N, K, 4) — xyxy already scaled by `orig_target_sizes`
           - scores: (N, K)  — sigmoid (focal-loss path), descending
-        We drop the batch dim, threshold scores, dedup same-query duplicates
-        in letterbox space, then unscale through the shared letterbox math.
 
-        Why dedup: postprocessor.py:59 does `topk(scores.flatten(1), K)` over
-        (query × class) score pairs, so a single high-confidence query can
-        occupy multiple top-K slots under different class labels. The bbox
-        is fetched via `bbox_pred.gather(query_idx)` (postprocessor.py:64),
-        so same-query slots produce the bit-identical letterbox box. Without
-        dedup, stronger detectors (e.g. DEIM-M) emit hundreds of (q, c)
-        duplicates per scene at conf=0.25.
+        Two-phase postprocess. Phase 1 collects per-slot survivors in
+        letterbox space after conf threshold + class validation +
+        same-query bit-identical dedup. Phase 2 runs per-class greedy IoU
+        NMS over those survivors, then unscales + clips the keepers to
+        image space.
 
-        Strict equality is correct: same source slot read twice yields the
-        same bytes (FP16→FP32 widening is deterministic). We dedup BEFORE
-        the affine unscale to (a) avoid wasted unscale on duplicates and
-        (b) justify `==` instead of an epsilon that could collapse two
+        PHASE 1 — same-query dedup. postprocessor.py:59 does
+        `topk(scores.flatten(1), K)` over (query × class) score pairs, so
+        a single high-confidence query can occupy multiple top-K slots
+        under different class labels. The bbox is fetched via
+        `bbox_pred.gather(query_idx)` (postprocessor.py:64), so same-query
+        slots produce the bit-identical letterbox box.
+
+        Strict equality is correct: same source slot read twice yields
+        the same bytes (FP16→FP32 widening is deterministic). Dedup is
+        done BEFORE the affine unscale to avoid wasted work and to
+        justify `==` instead of an epsilon that could collapse two
         genuinely distinct objects.
 
-        Cross-query duplicates (separate queries firing on the same physical
-        object with near-but-not-identical boxes) are NOT addressed here;
-        raise --conf or add IoU-based NMS if observed.
+        PHASE 2 — per-class IoU NMS @ 0.5. DEIM Dense-O2O training
+        intentionally assigns multiple queries per target, so distinct
+        queries can emit near-but-not-identical boxes for the same
+        physical object; phase 1's strict-equality dedup never catches
+        these. Without NMS, DEIM-M emits ~30 detections per frame at
+        conf=0.25 on busy traffic-light scenes (most are cross-query
+        duplicates).
 
-        Residual: keying on box (proxy for query identity) means two DISTINCT
-        queries that emit bit-identical boxes (e.g. FP16 quantization) are
-        collapsed onto the highest-scored class. In expected DEIM behavior
-        this is usually same-object duplication (Dense O2O training assigns
-        multiple queries to the same target) and degrades like NMS at IoU=
-        1.0. If this is observed to affect class state (e.g. unexplained
-        class flips or dropped rare-class detections), the strictly-correct
-        fix is to export `query_idx` as a 4th DEIM deploy output and dedup
-        on it — DEIM upstream change + re-export of every engine + break of
-        the 3-output construction-time gate, out of scope here.
+        Per-class (NOT class-agnostic): adjacent traffic lights of
+        different states (e.g. red next to yellow) must not suppress
+        each other — that would corrupt the per-class AP signal the
+        locked plan's safety-class guardrail keys on.
+
+        Threshold 0.5 — RT-DETR / D-FINE postprocessors use 0.45–0.5.
+        DEIM upstream's deploy mode runs NO NMS at all
+        (DEIM/engine/deim/postprocessor.py:75 returns labels/boxes/scores
+        raw from topk), which is precisely why this hotfix is needed.
+        Hardcoded; if a future round wants per-detector tuning, lift to
+        a TRTDetector ctor arg alongside conf_thresh. Re-evaluate the
+        0.5 choice if a future round adds dense rows of small (<8px)
+        targets where adjacent objects routinely sit at IoU > 0.5.
+
+        IoU computed in letterbox space (pre-clip). Doing it post-clip
+        would change box areas whenever a box extends past the image
+        edge, biasing NMS toward suppressing edge detections.
+
+        Float32 arithmetic for NMS — bit-parity with the C++ runtime
+        (which uses `float` end-to-end). A naive Python implementation
+        would let intermediates widen to float64 and disagree with C++
+        on borderline IoU pairs near the 0.5 boundary. We materialize
+        survivor boxes + areas as np.float32 arrays before phase 2 and
+        keep the IoU math in float32 throughout.
+
+        C++ parity: equivalent two-phase pipeline in
+        inference/cpp/src/trt_pipeline.cpp postprocessDeim() —
+        DeimSurvivor struct + same per-class IoU loop.
+
+        Residual of phase 1: two DISTINCT queries that emit bit-identical
+        boxes (e.g. FP16 quantization) collapse onto the highest-scored
+        class. Degrades like NMS at IoU=1.0; the strictly-correct fix is
+        to export `query_idx` as a 4th DEIM deploy output (out of scope).
         """
         for k in ("labels", "boxes", "scores"):
             if outputs[k].shape[0] != 1:
@@ -990,20 +1023,50 @@ class TRTDetector:
         boxes = outputs["boxes"][0]
         scores = outputs["scores"][0]
 
-        keep = scores >= self.conf_thresh
-        if not np.any(keep):
+        keep_score = scores >= self.conf_thresh
+        if not np.any(keep_score):
             return []
 
-        labels = labels[keep]
-        boxes = boxes[keep]
-        scores = scores[keep]
+        labels = labels[keep_score]
+        boxes = boxes[keep_score]
+        scores = scores[keep_score]
+
+        # PHASE 0 — score-desc sort BEFORE phase 1 dedup. Sorting before
+        # dedup ensures the dedup naturally keeps the HIGHEST-CONFIDENCE
+        # slot for any bit-identical letterbox-box tuple (the first one
+        # encountered in sorted order). Doing this AFTER dedup would
+        # only fix NMS ordering, but leave the dedup itself trusting
+        # DEIM's `torch.topk(sorted=True)` contract for class-label
+        # selection — which we explicitly want to stop depending on,
+        # per the production-correctness amendment below.
+        #
+        # np.argsort with kind='stable' preserves the original topk
+        # tie-break order on exact-conf ties (rare but possible at FP16
+        # quantization boundaries).
+        order = np.argsort(-scores, kind="stable")
+        labels = labels[order]
+        boxes = boxes[order]
+        scores = scores[order]
 
         nc = len(CLASS_NAMES)
-        # Letterbox-box dedup buffer for same-query duplicates — see
-        # docstring. C++ parity: equivalent `seen_lbox` vector in
-        # inference/cpp/src/trt_pipeline.cpp postprocessDeim().
+
+        # PHASE 1 — collect survivors after same-query bit-identical
+        # letterbox-box dedup. Parallel lists materialize the float32
+        # NMS arrays below.
+        #
+        # INVARIANT (enforced, not trusted): the resulting cls_list /
+        # conf_list / box_list are in score-descending order, because
+        # we iterate the phase-0-sorted arrays and only DROP entries
+        # (never reorder). Phase 2 greedy NMS depends on this. DEIM's
+        # `torch.topk(sorted=True)` already provides the order, but
+        # the explicit phase-0 sort means (a) we don't depend on that
+        # upstream contract continuing to hold across DEIM versions,
+        # and (b) we don't need a `__debug__`-only assert that would
+        # compile out under `python -O`.
         seen_lbox: set[tuple[float, float, float, float]] = set()
-        detections: list[Detection] = []
+        cls_list: list[int] = []
+        conf_list: list[float] = []
+        box_list: list[tuple[float, float, float, float]] = []
         for cls_id, (lx1, ly1, lx2, ly2), conf in zip(labels.tolist(), boxes, scores.tolist()):
             cls_id = int(cls_id)
             # DEIM may emit cls_id == nc for "no object"; drop instead of
@@ -1015,12 +1078,73 @@ class TRTDetector:
             if lbox in seen_lbox:
                 continue
             seen_lbox.add(lbox)
+            cls_list.append(cls_id)
+            conf_list.append(float(conf))
+            box_list.append(lbox)
+
+        n = len(cls_list)
+        if n == 0:
+            return []
+
+        # Phase 2: per-class greedy IoU NMS @ 0.5 in float32.
+        # O(N^2) — N is bounded by num_top_queries=300 and is ~30 in
+        # practice on busy DEIM-M frames after phase 1. Worst-case
+        # upper-triangular pair count is N(N-1)/2 ≈ 45k at 300;
+        # realistic ~900/frame at 30 FPS is ~27k/s; trivially sub-ms.
+        classes = np.asarray(cls_list, dtype=np.int32)
+        boxes_lb = np.asarray(box_list, dtype=np.float32)
+        # Per-survivor area precomputed once (O(N) instead of O(N^2)).
+        # Zero-area degenerate boxes get area=0; they pass through
+        # emission because the IoU numerator stays 0 against any
+        # partner, but the `uni > 0` guard below specifically protects
+        # against the both-degenerate (a_area == b_area == 0)
+        # divide-by-zero case.
+        widths = np.maximum(np.float32(0), boxes_lb[:, 2] - boxes_lb[:, 0])
+        heights = np.maximum(np.float32(0), boxes_lb[:, 3] - boxes_lb[:, 1])
+        areas = widths * heights
+
+        IOU_THRESH = np.float32(0.5)
+        zero_f32 = np.float32(0)
+        keep_nms = np.ones(n, dtype=bool)
+        for i in range(n):
+            if not keep_nms[i]:
+                continue
+            ci = classes[i]
+            ax1, ay1, ax2, ay2 = boxes_lb[i]
+            a_area = areas[i]
+            for j in range(i + 1, n):
+                if not keep_nms[j]:
+                    continue
+                if classes[j] != ci:
+                    continue
+                bx1, by1, bx2, by2 = boxes_lb[j]
+                ix1 = max(ax1, bx1)
+                iy1 = max(ay1, by1)
+                ix2 = min(ax2, bx2)
+                iy2 = min(ay2, by2)
+                iw = ix2 - ix1
+                ih = iy2 - iy1
+                if iw <= zero_f32 or ih <= zero_f32:
+                    continue
+                inter = iw * ih
+                uni = a_area + areas[j] - inter
+                # `uni > 0` guard handles the both-degenerate
+                # (a_area == b_area == 0) case to avoid div-by-zero.
+                if uni > zero_f32 and (inter / uni) > IOU_THRESH:
+                    keep_nms[j] = False
+
+        detections: list[Detection] = []
+        for i in range(n):
+            if not keep_nms[i]:
+                continue
+            lx1, ly1, lx2, ly2 = boxes_lb[i]
             x1, y1, x2, y2 = self._unscale_clip(
-                lbox[0], lbox[1], lbox[2], lbox[3],
+                float(lx1), float(ly1), float(lx2), float(ly2),
                 scale, pad, orig_shape,
             )
             detections.append(Detection(
-                class_id=cls_id, confidence=float(conf),
+                class_id=int(classes[i]),
+                confidence=conf_list[i],
                 x1=x1, y1=y1, x2=x2, y2=y2,
             ))
 
