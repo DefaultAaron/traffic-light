@@ -266,7 +266,7 @@ Transformer (在 GRU 基础上换头)  ← §2.5
 
 > 与 [`additional_components_plan.md`](additional_components_plan.md) §一 五步生命周期约定一致。HMM 仅在 §0.2 启动判定行 2/3（边缘类别跳变 / 非法状态转移）实测出现后启动；与 §1 TSM 触发条件互不相同。
 
-- [ ] **a. 脚手架** — `inference/temporal/__init__.py`（按 §7 文件改动清单 deferred）+ `inference/temporal/hmm.py` 转移矩阵 + Viterbi 接口（NEW，deferred）；C++ 集成接口 `inference/cpp/include/temporal.hpp` + `inference/cpp/src/temporal_hmm.cpp`（HMM 纯矩阵乘路径，与 §2.4 GRU TRT-wrapper 路径 `temporal_gru.cpp` 分离，详见 §7 表）。配置：`configs/temporal_hmm.yaml` 声明 `transition_matrix_path` / `viterbi_window` / `laplace_alpha` / `illegal_transition_set` / `illegal_transition_policy {hard_zero, downweight}`。**当前未落地**（HMM 触发条件未达成）。
+- [ ] **a. 脚手架（2026-05-09 amendment：消融位面 only，不进 `inference/`）** — 落地至 `components/hmm_smoother/`，与 `components/temporal_shift_module/` (TSM) 和 `components/knowledge_distillation/` (KD) 同位面。**不修改 `inference/tracker/smoother.py` 或任何 `inference/cpp/` 文件**；当前部署管线（ByteTrack + 固定 EMA）保持不变，HMM 仅在消融 runner 中以 JSONL replay 形式与 EMA 做 A/B。子目录契约：`modules/`（transition 矩阵 + observation 模型 + forward-backward / Viterbi 推理）、`data/`（从 `demo --json` JSONL 估计 transition counts）、`gates/`（c-stage 验收门 + d-stage 4-case 决策规则 executor）、`runners/`（Plan A 固定 EMA vs Plan A + HMM 消融 runner）。配置：`configs/temporal_hmm.yaml` 声明 `transition_matrix_path` / `viterbi_window` / `laplace_alpha` / `illegal_transition_set` / `illegal_transition_policy {hard_zero, downweight}`。**部署管线集成（即原 `inference/temporal/__init__.py` + `inference/temporal/hmm.py` + `inference/cpp/include/temporal.hpp` + `inference/cpp/src/temporal_hmm.cpp` 路径）仅在本计划 §2.2.1 d 阶段判 `deploy` 后启动**（独立的部署集成 round；本计划 §7 文件改动清单的 `inference/temporal/` 行受此 deploy gating 约束，scaffold 阶段不创建这些路径）。
 - [ ] **b. 实现** — 转移矩阵估计：从主线训练数据 + ByteTrack 多数投票轨迹离线统计（C×C 频率归一化 + Laplace 平滑）；Python 实现 forward-backward / Viterbi；C++ 推理（纯矩阵乘，无 ONNX/TRT 风险）；接入 `TrackedDetection.class_probs` 字段（与现有 EMA 二选一开关）。
 - [ ] **c. 消融** — A/B 对照（Plan A 固定 EMA vs Plan A + HMM）。**评估协议（pre-committed，必须于 c 阶段开始前锁定）**：
     - **eligible tracks**：track length ≥ 5 帧（短轨迹的跳变率噪声过大），ByteTrack ID 在 evaluation 窗口内未发生 ID switch（switch 后视为新 track）。ID switch 不算跳变（避免 tracker artifact 污染 HMM 信号）。
@@ -280,6 +280,7 @@ Transformer (在 GRU 基础上换头)  ← §2.5
     - **deploy**：跳变率 −50% **AND** 非法转移计数 → 0 **AND** 总 mAP / 安全类 AP 不退化（−0.2 pp 容忍）。**例外（避免 tracker artifact 假 drop）**：若非法转移残留全部可追溯到 ByteTrack ID switch / 短轨迹（即在 eligible tracks 上为 0 但宏统计 ≠ 0），仍判 deploy 并在报告 notes 中说明。
     - **defer (升级 §2.3 AdaEMA)**：跳变率改善 20-50% **OR** 非法转移率（计数 / total transitions）改善 ≥ 50% 但 ≠ 0 —— 进入 §2.3 自适应 EMA 升级（按 §2.1 选择哲学梯子）。
     - **drop (HMM 表达不足)**：跳变率改善 < 20% **AND** 非法转移仅靠 hard_zero mask 消除（即 HMM 学习的转移矩阵未实际对跳变信号产生作用）—— 升级**优先 §2.3 AdaEMA**（按 §2.1 哲学梯子顺序）；仅当失败分析显示 first-order Markov 是真正限制因素（如观测到长程依赖、duration 强约束、复杂状态机）才直接跳到 §2.4 GRU / §2.5 Transformer，跳级理由必须在报告中显式记录。
+    - **(2026-05-09 scaffold-side amendment, B2 review C1)** 上述三 case 按 **deploy → defer → drop 顺序求值（first-match cascade）**；drop 为 catch-all 分支，任何同时不满足 deploy 与 defer 显式条件的合法输入（如 deploy 三谓词中仅 mAP 回归而 flicker 改善 ≥ 50%、或 flicker 改善但 illegal-rate 既未到 0 又未达 ≥ 50% 改善）均归 drop。`executor_error` 仅用于**输入畸形**（NaN / 字段缺失 / 阈值范围越界 / `total_transitions == 0`），不用于合法但未明显改善的输入。边界值约定：flicker 改善 = 20% 归 defer（闭区间下界）；flicker 改善 = 50% 归 defer（闭区间上界）；illegal-rate 改善 = 50% 归 defer。
 - [ ] **e. 报告** — 对应 phase report（HMM 启动时所属 round）子节，含转移矩阵可视化（矩阵打印为 §2.2 列出的可解释性强项）+ 跳变率对照 + 非法转移消除证据 + 是否进 §2.3+ 升级路径的明示理由。
 
 ### 2.3 自适应 EMA α — 最小可行可学习时序模型
@@ -615,18 +616,18 @@ data/
 
 | 文件 | 改动 |
 |---|---|
-| `inference/temporal/__init__.py` | 新建包 |
-| `inference/temporal/hmm.py` | 转移矩阵 + Viterbi（§2.2；纯 Python/numpy，无 ONNX/TRT） |
+| `inference/temporal/__init__.py` | 新建包（**deploy-gated** per §2.2.1 a 2026-05-09 amendment：仅在 §2.2.1 d 判 `deploy` 后启动；scaffold 阶段在 `components/hmm_smoother/` 完成）|
+| `inference/temporal/hmm.py` | 转移矩阵 + Viterbi（§2.2；纯 Python/numpy，无 ONNX/TRT）（**deploy-gated**，同上）|
 | `scripts/fit_temporal_hmm.py` | 离线转移矩阵估计（输入：主线训练数据 + ByteTrack 多数投票轨迹；输出：`runs/_hmm_transition_matrix.{json,npy}` + 元数据 含 laplace_alpha / illegal_transition_policy / eligible-track filters / source replay+data SHA256）。c 阶段 α 敏感性扫描入口 |
 | `runs/_hmm_transition_matrix.{json,npy}` | 估计输出 + 元数据 artifact；HMM C++ runtime 加载此文件 |
-| `configs/temporal_hmm.yaml` | HMM Laplace α（默认 0.1） + illegal_transition_set + illegal_transition_policy + 敏感性扫描值集；transition_matrix_path（指向上述 artifact）；§2.2.1 引用 |
+| `configs/temporal_hmm.yaml` | HMM Laplace α（默认 0.1） + illegal_transition_set + illegal_transition_policy + 敏感性扫描值集；transition_matrix_path（指向上述 artifact）；§2.2.1 引用（**当前 scaffold/ablation-only**，C3 iter-3 NEW-MINOR 6 2026-05-09：消费方仅 `components/hmm_smoother/`；deploy 决策落地时必须显式 (a) 重新绑定本文件为 deploy-time 配置或 (b) 在部署集成 round 创建独立的 deploy 配置文件，避免 Python 消融 vs C++ 运行时之间的静默默认 drift）|
 | `inference/temporal/adaptive_ema.py` | 自适应 α MLP（§2.3） |
 | `inference/temporal/gru_head.py` | GRUClassHead（§2.4） |
-| `inference/temporal/state.py` | Per-track state container（Python） |
+| `inference/temporal/state.py` | Per-track state container（Python）（**deploy-gated** per §2.2.1 a 2026-05-09 amendment：HMM-related 部分仅在 §2.2.1 d 判 `deploy` 后启动；GRU 路径见 §2.4 触发条件）|
 | `scripts/train_gru_head.py` | 训练循环（§2.4.2） |
 | `scripts/export_gru_head.py` | ONNX 导出（§2.4.3） |
-| `inference/cpp/include/temporal.hpp` | C++ 接口（HMM 路径 + GRU 路径共用接口） |
-| `inference/cpp/src/temporal_hmm.cpp` | HMM 纯矩阵乘 + Viterbi forward；per-track state map；无 TRT 依赖 |
+| `inference/cpp/include/temporal.hpp` | C++ 接口（HMM 路径 + GRU 路径共用接口）（HMM 部分 **deploy-gated** per §2.2.1 a）|
+| `inference/cpp/src/temporal_hmm.cpp` | HMM 纯矩阵乘 + Viterbi forward；per-track state map；无 TRT 依赖（**deploy-gated**，同上）|
 | `inference/cpp/src/temporal_gru.cpp` | GRU TRT engine wrapper + per-track hidden state map（§2.4） |
 | `inference/cpp/src/demo.cpp` | `--gru-engine path` 选项；启用时旁路 EMA |
 | `tests/test_gru_head.py` | Python forward vs C++ TRT 数值 diff |

@@ -1,0 +1,86 @@
+# HMM smoother — pre-committed config for the c-stage ablation.
+#
+# Authoritative spec: docs/planning/temporal_optimization_plan.md §2.2 + §2.2.1.
+# This config is consumed ONLY by components/hmm_smoother/ (ablation tree).
+# It does NOT affect the deployment pipeline (inference/tracker/smoother.py).
+#
+# All knobs are pre-committed: changes between fit time and eval time
+# invalidate the run. The c-stage sensitivity sweep over `laplace_alpha`
+# is driven by the runner CLI, not by editing this file mid-run.
+#
+# This file is the runtime SOURCE OF TRUTH for every knob (B2 review S5):
+# function-level Python defaults in components/hmm_smoother/ exist only as
+# documentation; the runner MUST pass values explicitly from this YAML.
+
+# State-space size. Must match the detector's class count for the JSONL
+# replay being consumed. R2 nc range is 10–14 per project memory; default
+# `null` forces an explicit override at run time so a stale value can't
+# silently mismatch the replay.
+num_classes: null
+
+# Path to a pre-fit transition matrix (.npy, shape (C, C), row-stochastic).
+# `null` means the runner fits one from `--fit` JSONL on the fly. When set,
+# the runner validates shape + row-sum + illegal-cell policy against this
+# config before use; mismatch is a hard fail, not a silent override.
+transition_matrix_path: null
+
+# Laplace pseudo-count per cell. Plan default 0.1 (conflictor iter-2
+# 2026-05-09: α=1.0 over C=14 injects ~50% prior mass on sparse TL data).
+# c-stage sweeps {0.01, 0.1, 1.0}; this value is the headline default.
+# HARD CONSTRAINT (C3 NEW-MINOR 6 2026-05-09): MUST be one of {0.01, 0.1, 1.0}.
+# `load_hmm_yaml` rejects any other value rather than silently widening the
+# pre-committed sweep. To deviate, amend the plan §2.2 sweep set first, then
+# update _hmm_decision_schema.json's enum, this comment, and the loader.
+laplace_alpha: 0.1
+
+# Forbidden (src_class, dst_class) transitions. Initial set is empty here so
+# the dataset curator must supply it explicitly per R2 manifest semantics
+# (e.g. "redLeft → greenLeft without yellowLeft" is forbidden, but the
+# concrete class-ID pairs depend on the active data.yaml class ordering).
+illegal_transition_set: []
+
+# How `illegal_transition_set` cells are treated in the transition matrix.
+#   hard_zero  : forbidden cells → 0; row renormalized over legal targets.
+#                Plan default; aligns with §0.2 row 3 trigger condition.
+#   downweight : forbidden cells keep Laplace pseudo-count only.
+illegal_transition_policy: hard_zero
+
+# Viterbi window length (max sequence length per call). The runner chunks
+# tracks longer than this. `null` = unlimited (one call per track).
+# Rationale (B2 review S4 2026-05-09): no plan §2.2 mention; this knob is
+# a memory-bound carry-forward — long replays may exceed numpy in-place
+# log-space buffers on Orin. b-stage may set per profiling; if profiling
+# shows no benefit, remove this knob in a follow-up plan amendment.
+viterbi_window: null
+
+# Default inference mode for the candidate side of the A/B.
+# Sweep across both modes is driven by the runner; this is the headline
+# default reflected in `runs/_hmm_decisions.json` if the sweep agrees.
+inference_mode: viterbi
+
+# Eligible-tracks rule (plan §2.2.1 c). Tracks shorter than this are
+# dropped from the metric computation. Default 5 per the plan.
+min_track_length: 5
+
+# mAP / safety-class AP regression tolerance (plan §2.2.1 d 2026-05-09;
+# B2 review I5). The deploy gate fires only when the upstream eval verdict
+# satisfies `delta_mAP_pp >= -map_regression_tolerance_pp`. Lift this knob
+# to the YAML so b-stage doesn't plant 0.2 as a magic number.
+map_regression_tolerance_pp: 0.2
+
+# Gap policy when fitting transition counts on tracks with missed frames.
+#   strict : drop transition pairs that span a frame gap > 1.
+#   bridge : count (i → j) regardless of gap (treat held-state).
+gap_policy: bridge
+
+# Observation likelihood mode (must agree with the JSONL fields present).
+#   soft : use class_probs vector per frame.
+#   hard : use raw_class_id + raw_confidence (synthesize a vector).
+observation_mode: soft
+
+# Emission-vector epsilon (kept strictly positive so any state stays
+# reachable in Viterbi). Must satisfy 0 < epsilon < 1 / num_classes.
+# HARD-mode guidance (B2 review I2 2026-05-09): default 1e-6 is fine for
+# SOFT mode but rail-pins MAP paths in HARD mode at C ≥ 10. If
+# `observation_mode: hard`, set this to `1.0e-3` (or `1 / num_classes / 100`).
+observation_epsilon: 1.0e-6
