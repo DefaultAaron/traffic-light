@@ -1,0 +1,55 @@
+# §四 hard-negative-mining ablation config (a-stage scaffold).
+#
+# Sister-file precedent: configs/copy_paste_balance.yaml (locked iter-11
+# 2026-05-09). Plan reference:
+# docs/planning/additional_components_plan.md §四.
+#
+# Default behavior preservation: this YAML is consumed ONLY by the a-stage
+# scaffold (mining / verification / d-stage runner). The active training
+# pipeline does NOT route through this config; the bg/ directory is
+# injected via the project's data.yaml (Ultralytics convention or DEIM
+# empty-image rows). NO main.py training-time CLI flag is required at
+# a-stage.
+#
+# Frozen-manifest contract (plan §4.7 verbatim — anti-gaming):
+#   * confidence_threshold = 0.25; nms_iou_threshold = 0.5 (locked at
+#     the FrozenEvalManifest dataclass layer; YAML deviation is rejected).
+#   * image SHA256 + label_source + has_real_light flag are recorded
+#     PER-IMAGE in runs/_hard_negative_eval_manifest.json.
+#   * The §4.7 manifest is shared with §3.7 (copy-paste-balance
+#     rare-related FP denominator).
+
+# Schema version — forward-compat discriminator. b-stage / R3 migrations
+# bump this and drop legacy-key support; loader hard-fails on any value
+# other than "1".
+schema_version: "1"
+
+# Class set — must match the active R2 data.yaml.
+# data_yaml_sha256 is the load-bearing class-set provenance anchor — runner
+# Step 0 cross-checks this against per-arm eval JSONs (C3 iter-1 NEW-MAJOR
+# 1 2026-05-10). Stamped into this YAML by the fit-time pipeline.
+data_yaml_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # PLACEHOLDER — fit-time pipeline overwrites with SHA256 of active data.yaml
+num_classes: null         # set explicitly by loader / runner (rejected as null at __post_init__)
+class_names: []           # populated to length == num_classes by the loader
+
+# Mining-side knobs (consumed by modules/miner.mine_candidates).
+baseline_weights_path: null  # R1 baseline checkpoint; b-stage sets via CLI / runner
+mining_sources:               # subset of {demo8, demo11, demo13, r2_self}; plan §4.1
+  - demo8
+  - demo11
+  - demo13
+  - r2_self
+output_candidates_path: null  # b-stage: runs/_hard_negative_candidates.json
+                              # (renamed from `candidates_output_path` per B2 review I5
+                              # 2026-05-10; loader maps the legacy key for one transition.)
+
+# Verification-side knobs (plan §4.5; consumed by modules/verifier.run_verification).
+min_sample_fraction: 0.10                # plan-pinned (10% sample floor); deviation rejected
+max_true_positive_missed_rate: 0.05      # within-sample ceiling; plan §4.5 risk
+
+# Frozen-manifest path (consumed by runners/ablation.run_ablation).
+frozen_manifest_path: null  # b-stage: runs/_hard_negative_eval_manifest.json
+
+# Decision-rule tolerance (plan §4.7; default 0.2 pp; ceiling 0.5 pp
+# mirroring §3.7 / §4.7 drop threshold for total mAP regression).
+map_regression_tolerance_pp: 0.2

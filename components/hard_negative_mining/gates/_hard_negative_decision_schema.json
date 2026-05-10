@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://traffic-light.local/schemas/_hard_negative_decision.json",
+  "title": "Hard-negative-mining ablation decision artifact",
+  "description": "OUTPUT-ONLY schema for the final runs/_hard_negative_decision.json artifact (plan docs/planning/additional_components_plan.md §4.7). Sister-file precedent: components/copy_paste_balance/gates/_copy_paste_decision_schema.json (locked iter-11 2026-05-09). 2-arm cascade (no_hn baseline vs with_hn candidate); MetricsBlock split into BaselineMetricsBlock (is_baseline_reference=true + all-zero deltas + map_no_regression=true) and CandidateMetricsBlock (is_baseline_reference=false). headline_arm enum is single-value 'with_hn' since the baseline arm carries no decision. Validation library: jsonschema (Draft-7).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "config_yaml_sha256",
+    "data_yaml_sha256",
+    "fp_manifest_sha256",
+    "eval_manifest_sha256",
+    "headline_arm",
+    "headline_metrics",
+    "headline_decision",
+    "notes",
+    "no_hn",
+    "with_hn"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "config_yaml_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "data_yaml_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fp_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA256 of the §4.7 frozen FP eval manifest (shared with §3.7). Runner enforces equality across this top-level field, every metrics block's fp_manifest_sha256, and the manifest file's actual hash."
+    },
+    "eval_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "headline_arm": {
+      "type": "string",
+      "enum": ["with_hn"],
+      "description": "'no_hn' is REJECTED at the schema boundary because the baseline reference cell carries no decision. The runtime layer rejects 'no_hn' at the runner-config boundary; mirror that contract here. The single-element enum captures that with_hn is the only legal headline (this differs from §3.7's two-element enum because §四 has only one candidate arm)."
+    },
+    "headline_metrics": { "$ref": "#/definitions/CandidateMetricsBlock" },
+    "headline_decision": {
+      "type": "string",
+      "enum": ["deploy", "defer", "drop", "executor_error"]
+    },
+    "notes": { "type": "string", "minLength": 1 },
+    "no_hn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics", "notes"],
+      "properties": {
+        "metrics": { "$ref": "#/definitions/BaselineMetricsBlock" },
+        "notes": { "type": "string", "minLength": 1 }
+      },
+      "description": "Baseline reference; no decision is computed (the rule is undefined on a self-comparison). All MetricsBlock delta fields are constrained to exactly 0 by BaselineMetricsBlock."
+    },
+    "with_hn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics", "decision", "notes"],
+      "properties": {
+        "metrics": { "$ref": "#/definitions/CandidateMetricsBlock" },
+        "decision": {
+          "type": "string",
+          "enum": ["deploy", "defer", "drop", "executor_error"]
+        },
+        "notes": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "description": "C3 iter-1 NEW-MAJOR 2 2026-05-10: encode decision-vs-verdict consistency at the schema layer. Plan §4.7 requires total mAP no-regression for both deploy and defer; a cell with decision in {deploy, defer} AND metrics.map_no_regression=false is malformed. Previously this check lived only in assert_artifact_invariants() — a schema-only consumer would silently accept the malformed artifact.",
+          "if": {
+            "properties": { "decision": { "enum": ["deploy", "defer"] } }
+          },
+          "then": {
+            "properties": {
+              "metrics": {
+                "properties": { "map_no_regression": { "const": true } }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "description": "C3 iter-1 NEW-MAJOR 2 2026-05-10: same decision-vs-verdict consistency at the top-level headline. headline_decision in {deploy, defer} requires headline_metrics.map_no_regression=true.",
+      "if": {
+        "properties": { "headline_decision": { "enum": ["deploy", "defer"] } }
+      },
+      "then": {
+        "properties": {
+          "headline_metrics": {
+            "properties": { "map_no_regression": { "const": true } }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "MetricsBlockCommon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fp_drop_frac",
+        "real_light_recall_delta_pp",
+        "total_map_delta_pp",
+        "is_baseline_reference",
+        "map_no_regression",
+        "map_regression_tolerance_pp",
+        "eval_manifest_sha256",
+        "fp_manifest_sha256",
+        "data_yaml_sha256"
+      ],
+      "properties": {
+        "fp_drop_frac": {
+          "type": "number",
+          "minimum": -10.0,
+          "maximum": 1.0,
+          "description": "Signed fraction; +0.5 = 50% reduction; negative = FP rose. The math admits any value in (-inf, 1]; the [-10, 1] range is a TRIPWIRE for catastrophic candidates (FP rose by > 10x relative to baseline). Mirror at the dataclass layer (ArmMetrics._FP_DROP_FRAC_MIN). 1.0 is the absolute ceiling = 100% drop."
+        },
+        "real_light_recall_delta_pp": { "type": "number", "minimum": -100, "maximum": 100 },
+        "total_map_delta_pp": { "type": "number", "minimum": -100, "maximum": 100 },
+        "is_baseline_reference": { "type": "boolean" },
+        "map_no_regression": {
+          "type": "boolean",
+          "description": "Upstream eval verdict for THIS arm vs baseline. Per-cell so the artifact carries the verdict that drove the decision. For BaselineMetricsBlock this is constrained to const true (self-comparison)."
+        },
+        "map_regression_tolerance_pp": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 0.5,
+          "description": "Tolerance applied when computing map_no_regression. Cap at 0.5 mirrors §3.7/§4.7 drop threshold for total mAP regression — beyond that the deploy guard tolerates regressions the catch-all rejects."
+        },
+        "eval_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fp_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "data_yaml_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Source data.yaml hash. Class-label provenance — runner enforces equality between top-level data_yaml_sha256, the no_hn block's hash, and the with_hn block's hash."
+        }
+      }
+    },
+    "BaselineMetricsBlock": {
+      "description": "no_hn arm's metrics block. is_baseline_reference is fixed true; every delta field is fixed 0 (the baseline is constructed by self-comparison; non-zero deltas indicate a runner construction bug). map_no_regression is fixed true (the baseline self-comparison has no regression possible).",
+      "allOf": [
+        { "$ref": "#/definitions/MetricsBlockCommon" },
+        {
+          "properties": {
+            "is_baseline_reference": { "const": true },
+            "fp_drop_frac": { "const": 0 },
+            "real_light_recall_delta_pp": { "const": 0 },
+            "total_map_delta_pp": { "const": 0 },
+            "map_no_regression": { "const": true }
+          }
+        }
+      ]
+    },
+    "CandidateMetricsBlock": {
+      "description": "with_hn arm's metrics block. is_baseline_reference is fixed false so a candidate cell can't silently masquerade as baseline.",
+      "allOf": [
+        { "$ref": "#/definitions/MetricsBlockCommon" },
+        {
+          "properties": {
+            "is_baseline_reference": { "const": false }
+          }
+        }
+      ]
+    }
+  }
+}
