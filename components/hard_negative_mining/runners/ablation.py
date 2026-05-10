@@ -4,6 +4,14 @@ Drives the d-stage flow end-to-end:
 
   0. Cross-artifact equality (the runner is the only layer that holds
      all of: config YAML + frozen FP manifest file + per-arm eval JSONs).
+
+     Note (B2 final-review I2 2026-05-10): ``config_yaml_sha256`` is
+     a TOP-LEVEL ONLY field on the output artifact — single-source
+     artifact, no per-cell mirror by design. Do NOT add a per-cell
+     ``config_yaml_sha256`` "for symmetry"; the schema would reject it
+     and the cross-block equality pattern doesn't apply (only one
+     config is consumed per ablation run).
+
      Hard-fail unless ALL of:
 
        * ``frozen_manifest.manifest_sha256`` matches the on-disk file's

@@ -111,6 +111,12 @@ class HardNegativeMiningYamlConfig:
     # the rest are pinned as ClassVars on DecisionInputs).
     map_regression_tolerance_pp: float
 
+    # B2 final-review S3 2026-05-10: this literal MUST be kept in sync
+    # with the schema's const at
+    # _hard_negative_decision_schema.json#/properties/schema_version/const.
+    # JSON Schema can't import Python constants, so the two layers are
+    # documented anchors rather than referentially linked. R3 cutover to
+    # "2" must edit BOTH sites in lock-step.
     _LOCKED_SCHEMA_VERSION: ClassVar[str] = "1"
     _ALLOWED_MINING_SOURCES: ClassVar[tuple[str, ...]] = PLAN_MINING_SOURCES
     _LOCKED_MIN_SAMPLE_FRACTION: ClassVar[float] = PLAN_LOCKED_MIN_SAMPLE_FRACTION

@@ -296,6 +296,14 @@ class DecisionInputs:
             )
         # Cross-side equality on tolerance (runner-side knob; identical
         # across arms) and verdict-vs-arm consistency.
+        # B2 final-review S1 2026-05-10: the next two checks plus the
+        # cross-side equality below are TRANSITIVELY equal — given:
+        #   baseline.tolerance == candidate.tolerance
+        #   self.tolerance     == candidate.tolerance
+        # they imply self.tolerance == baseline.tolerance trivially.
+        # The redundancy is INTENTIONAL (mirrors I12's redundancy
+        # rationale): every consuming layer must independently witness
+        # its precondition. Do NOT consolidate these to a single check.
         if self.baseline.map_regression_tolerance_pp != self.candidate.map_regression_tolerance_pp:
             raise ValueError(
                 f"baseline.map_regression_tolerance_pp != "

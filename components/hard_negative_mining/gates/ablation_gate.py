@@ -157,6 +157,11 @@ class ArmMetrics:
                     f"{field_name} must be in [{lo}, {hi}]; got {field_value}"
                 )
         # Baseline-reference invariant: all delta fields exactly 0.
+        # B2 final-review S2 2026-05-10: this block mirrors the schema's
+        # BaselineMetricsBlock allOf overlay (const-zero deltas + const-true
+        # map_no_regression) at _hard_negative_decision_schema.json. Both
+        # layers MUST move in lock-step if §4.7 is ever amended to allow
+        # non-zero baseline deltas.
         if self.is_baseline_reference:
             for field_name, field_value in (
                 ("fp_drop_frac", self.fp_drop_frac),
