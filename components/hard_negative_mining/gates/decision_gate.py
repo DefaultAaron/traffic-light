@@ -19,6 +19,17 @@ loop):
 
   * defer  : 0.20 ≤ fp_drop_frac < 0.50
               AND real_light_recall_delta_pp ≥ −0.5.
+              **Plan-prose ambiguity resolution (B2 review S2 2026-05-10)**:
+              plan §4.7 line 137 says "FP 仅降 20-50%" — Chinese-prose
+              "20-50%" is genuinely ambiguous (could be inclusive both
+              ends OR inclusive lower / exclusive upper). The impl
+              resolves to ``[0.20, 0.50)`` (inclusive lower, EXCLUSIVE
+              upper) so 0.50 cleanly belongs to deploy via the
+              non-strict "≥ 0.50" guard — first-match cascade would
+              mask the overlap, but explicit dataclass thresholds
+              make the partition unambiguous. Future plan revisions
+              that intend inclusive-both-ends MUST re-run the §四
+              adversarial loop.
               **Codex stop-gate fix 2026-05-10**: defer is plan-legal
               even when total mAP regressed past the tolerance. Plan
               §4.7 defer gate is GATED SOLELY on fp_drop range +
@@ -55,8 +66,13 @@ greater-than for every drop trigger and ≥ for deploy/defer guards):
   * real_light_recall_delta_pp = -0.5 exactly → drop trigger does NOT fire
                                             (drop requires "< −0.5pp", strict)
   * real_light_recall_delta_pp = -0.5001 → drop trigger FIRES
-  * total_map_delta_pp = −0.2pp (default tol) → deploy guard PASSES
-                                            (matches "≥ −0.2pp")
+  * total_map_delta_pp = −0.2pp (default tol) → deploy mAP sub-guard
+                                            PASSES (matches "≥ −0.2pp");
+                                            defer is mAP-agnostic per
+                                            plan §4.7 — actual outcome
+                                            depends on (fp_drop, recall)
+                                            jointly, NOT on the mAP
+                                            value alone.
   * total_map_delta_pp = −0.5pp   → no literal drop on mAP regression
                                     in §4.7; outcome depends on
                                     (fp_drop, recall):
@@ -374,16 +390,30 @@ def apply_decision_rule(inputs: DecisionInputs) -> DecisionResult:
     ``ValueError`` is reserved for hard programmer errors (wrong
     dataclass type, etc.) and DOES propagate.
 
-    Middle-case framing: the §四 plan prose enumerates 3 cases (deploy
-    / defer / drop) and is more cleanly partitioned than §3.7 — the
-    fp_drop_frac thresholds at 0.50 and 0.20 with strict / non-strict
-    semantics fully cover the [−∞, ∞) range. The cascade catch-all
-    captures the remaining cases (e.g. recall-improving but mAP-
-    regressing) that don't trigger a literal drop but also fail the
-    deploy guard's mAP-no-regression check. The runner records the
-    triggering condition in ``DecisionResult.notes`` so reviewers can
-    distinguish "literal drop" (recall regress / FP gain insufficient)
-    from "implicit drop" (mAP regression beyond tolerance).
+    Middle-case framing (C3 iter-1 NEW-MINOR fix 2026-05-10): the §四
+    plan prose enumerates 3 cases (deploy / defer / drop) and is more
+    cleanly partitioned than §3.7 — the fp_drop_frac thresholds at
+    0.50 and 0.20 with strict / non-strict semantics fully cover the
+    [−∞, ∞) range.
+
+    The cascade catch-all sweeps into drop ONLY the
+    ``(fp_drop_frac ≥ 0.50, recall_delta ≥ −0.5pp, mAP regress)``
+    corner: deploy fails on its mAP-no-regression sub-guard, defer
+    fails because fp_drop is OUTSIDE [0.20, 0.50), and the literal
+    drop triggers (recall < −0.5pp, fp_drop < 0.20) don't fire either
+    — cascade order forces drop. b-stage MUST NOT extend this
+    catch-all to the
+    ``(fp_drop_frac ∈ [0.20, 0.50), recall_delta ≥ −0.5pp, mAP regress)``
+    case: per plan §4.7 line 137, that case is DEFER (defer is
+    mAP-agnostic; cargo-culting §3.7's "defer requires mAP
+    no-regression" constraint into §四 is the exact divergence the
+    Codex stop-gate caught on commit `e802250`).
+
+    The runner records the triggering condition in
+    ``DecisionResult.notes`` so reviewers can distinguish "literal
+    drop" (recall regress / FP gain insufficient) from "catch-all
+    drop" (fp_drop ≥ 0.50 + mAP regression beyond tolerance — the
+    only legitimate mAP-driven catch-all path).
 
     Baseline-reference rejection: ``DecisionInputs.__post_init__``
     rejects ``candidate.is_baseline_reference=True`` at construction;
