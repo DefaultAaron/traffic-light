@@ -18,21 +18,29 @@ loop):
                   default 0.2pp).
 
   * defer  : 0.20 ≤ fp_drop_frac < 0.50
-              AND real_light_recall_delta_pp ≥ −0.5
-              AND no drop trigger fires.
+              AND real_light_recall_delta_pp ≥ −0.5.
+              **Codex stop-gate fix 2026-05-10**: defer is plan-legal
+              even when total mAP regressed past the tolerance. Plan
+              §4.7 defer gate is GATED SOLELY on fp_drop range +
+              recall floor; mAP regression is NOT a defer guard.
+              (Compare §3.7 sister where defer DOES require mAP
+              no-regression — the §3.7 plan prose explicitly states
+              that constraint; §四 plan prose does not. Do not
+              cargo-cult the §3.7 constraint into §四.)
               Action: re-evaluate in R3 with broader / re-tuned mining
               (plan §4.7 defer prose).
 
-  * drop   : catch-all. Any legitimate input that does NOT match deploy
-              or defer falls into drop. This explicitly includes the
-              plan's literal drop triggers:
+  * drop   : catch-all. Plan §4.7 literal drop triggers:
                 - real_light_recall_delta_pp < −0.5
                 - fp_drop_frac < 0.20
-              AND the implicit "total mAP regression" path: a candidate
-              that improves FP and recall but regresses total mAP past
-              the tolerance falls into drop via the catch-all (the
-              cascade order deploy → defer → drop captures this BY
-              DESIGN — deploy's mAP-no-regression guard excludes it).
+              The cascade order deploy → defer → drop also sweeps
+              into drop the (fp_drop ≥ 0.50, mAP regress, recall OK)
+              corner that plan §4.7 leaves implicit (deploy fails on
+              mAP guard; defer fails on fp_drop ≥ 0.50; literal drop
+              triggers don't fire either — catch-all puts it in drop
+              by construction). Note: the (fp_drop ∈ [0.20, 0.50),
+              mAP regress, recall OK) case is DEFER per plan, not
+              drop — defer is mAP-agnostic.
 
 Boundary semantics (mirrors §3.7 gate; plan §4.7 prose uses strict
 greater-than for every drop trigger and ≥ for deploy/defer guards):
@@ -49,10 +57,15 @@ greater-than for every drop trigger and ≥ for deploy/defer guards):
   * real_light_recall_delta_pp = -0.5001 → drop trigger FIRES
   * total_map_delta_pp = −0.2pp (default tol) → deploy guard PASSES
                                             (matches "≥ −0.2pp")
-  * total_map_delta_pp = −0.5pp   → drop trigger does NOT fire (no
-                                    explicit literal drop on mAP regression
-                                    in §4.7; the catch-all sweeps it up
-                                    via the deploy gate's mAP guard)
+  * total_map_delta_pp = −0.5pp   → no literal drop on mAP regression
+                                    in §4.7; outcome depends on
+                                    (fp_drop, recall):
+                                      fp_drop ∈ [0.20, 0.50), recall
+                                      ≥ −0.5pp → DEFER (defer is
+                                      mAP-agnostic per plan §4.7)
+                                      fp_drop ≥ 0.50, recall ≥ −0.5pp
+                                      → catch-all DROP (deploy fails
+                                      on mAP; defer fails on fp range)
 
 Executor semantics (B2 review C2 2026-05-10 clarification): cases
 evaluated in order ``deploy → defer → drop``; first match wins.

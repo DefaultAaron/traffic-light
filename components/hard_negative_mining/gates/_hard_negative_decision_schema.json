@@ -75,9 +75,9 @@
       },
       "allOf": [
         {
-          "description": "C3 iter-1 NEW-MAJOR 2 2026-05-10: encode decision-vs-verdict consistency at the schema layer. Plan §4.7 requires total mAP no-regression for both deploy and defer; a cell with decision in {deploy, defer} AND metrics.map_no_regression=false is malformed. Previously this check lived only in assert_artifact_invariants() — a schema-only consumer would silently accept the malformed artifact.",
+          "description": "Codex stop-gate fix 2026-05-10: encode decision-vs-verdict consistency at the schema layer for DEPLOY ONLY. Plan §4.7 requires total mAP no-regression as a deploy guard but NOT as a defer guard (defer is gated solely on fp_drop in [20%, 50%) AND recall_delta ≥ −0.5 pp; a defer cell with mAP regression is plan-legal). The earlier iter-1 if/then covered both deploy and defer — that mistakenly extended a §3.7 sister constraint into §四 where the plan prose excludes it.",
           "if": {
-            "properties": { "decision": { "enum": ["deploy", "defer"] } }
+            "properties": { "decision": { "const": "deploy" } }
           },
           "then": {
             "properties": {
@@ -92,9 +92,9 @@
   },
   "allOf": [
     {
-      "description": "C3 iter-1 NEW-MAJOR 2 2026-05-10: same decision-vs-verdict consistency at the top-level headline. headline_decision in {deploy, defer} requires headline_metrics.map_no_regression=true.",
+      "description": "Codex stop-gate fix 2026-05-10: same decision-vs-verdict consistency at the top-level headline — DEPLOY ONLY (defer is plan-legal with mAP regression).",
       "if": {
-        "properties": { "headline_decision": { "enum": ["deploy", "defer"] } }
+        "properties": { "headline_decision": { "const": "deploy" } }
       },
       "then": {
         "properties": {

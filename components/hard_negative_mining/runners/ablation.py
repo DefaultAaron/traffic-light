@@ -300,10 +300,16 @@ def assert_artifact_invariants(artifact: dict) -> None:
          from with_hn but with optional override" silently re-opens
          the verdict-mismatch gap; this explicit invariant survives that
          refactor.
-      9. **Decision-vs-verdict consistency**: per plan §4.7, both
-         deploy and defer require total mAP no-regression. A cell with
-         ``decision in {"deploy", "defer"}`` AND
-         ``metrics.map_no_regression == False`` is malformed.
+      9. **Decision-vs-verdict consistency (Codex stop-gate fix
+         2026-05-10)**: plan §4.7 deploy gate requires total mAP
+         no-regression; plan §4.7 defer gate does NOT (defer is gated
+         solely on fp_drop ∈ [20%, 50%) AND recall_delta ≥ −0.5 pp).
+         Therefore a cell with ``decision == "deploy"`` AND
+         ``metrics.map_no_regression == False`` is malformed; defer +
+         regression is plan-legal. The §3.7 sister's parallel check
+         covers both deploy and defer because §3.7's plan prose
+         explicitly extends mAP no-regression to defer; do NOT
+         carry that constraint into §四.
 
     Args:
         artifact: the candidate output dict, post-aggregation,
@@ -421,24 +427,30 @@ def assert_artifact_invariants(artifact: dict) -> None:
             f"({canonical_eval_manifest})"
         )
 
-    # Decision-vs-verdict consistency: deploy/defer require map_no_regression.
-    # drop is compatible with regression (the catch-all sweeps a regressing-
-    # mAP candidate into drop).
+    # Codex stop-gate fix 2026-05-10: decision-vs-verdict consistency for
+    # DEPLOY ONLY. Plan §4.7 deploy gate requires total mAP no-regression;
+    # plan §4.7 defer gate does NOT (defer is gated solely on fp_drop in
+    # [20%, 50%) AND recall_delta ≥ −0.5 pp). The earlier iter-1 check
+    # rejected defer-with-regression too, mistakenly carrying the §3.7
+    # sister's "defer requires mAP no-regression" constraint into §四
+    # where the plan prose excludes it. drop is compatible with mAP
+    # regression by design (drop is the catch-all).
     decision = with_hn["decision"]
     metrics = with_hn["metrics"]
-    if decision in ("deploy", "defer") and metrics["map_no_regression"] is not True:
+    if decision == "deploy" and metrics["map_no_regression"] is not True:
         raise ValueError(
             f"with_hn.decision={decision!r} is incompatible with "
             f"metrics.map_no_regression={metrics['map_no_regression']!r} — "
-            f"plan §4.7 requires total mAP no-regression for both deploy "
-            f"and defer; a cell that regressed total mAP MUST land on drop "
-            f"(malformed decision artifact)"
+            f"plan §4.7 deploy gate requires total mAP no-regression; a "
+            f"cell that regressed total mAP MUST land on defer (if other "
+            f"defer guards pass) or drop, not deploy (malformed decision "
+            f"artifact)"
         )
     # Same check on the headline (it must mirror with_hn but we re-check
     # in case headline copy was correct but the verdict is still inconsistent).
     headline_metrics = artifact["headline_metrics"]
     headline_decision = artifact["headline_decision"]
-    if headline_decision in ("deploy", "defer") and headline_metrics["map_no_regression"] is not True:
+    if headline_decision == "deploy" and headline_metrics["map_no_regression"] is not True:
         raise ValueError(
             f"headline_decision={headline_decision!r} is incompatible with "
             f"headline_metrics.map_no_regression="
