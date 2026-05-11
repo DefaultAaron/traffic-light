@@ -226,7 +226,7 @@ Executor-side gate：
 | **KD A1 wall-clock** | **active** | R1 单 epoch YOLO26s / DEIM-D-FINE-S 双路径 scratch 训练时长基线 | `runs/rehearsal_kd_A1_walltime_estimate.json` |
 | **KD A2a R1** | **active**（new）| YOLO26m → YOLO26s cls-logit KL on R1 数据，验证 §七 runner + 5 gates 流程 | `runs/rehearsal_kd_A2a_R1.json` |
 | **KD A2b R1** | **active**（new）| DEIM-M → DEIM-S LD on FDR + cls-logit on R1 数据；同时记录 DEIM-S 推理 demo4/10/12/15 burst 抖动 baseline（供 R2 close 后 §六 Gate #6 deploy-tuning 触发对比，**不阻塞** A2b ship-decision） | `runs/rehearsal_kd_A2b_R1.json` |
-| KD A6 R1 spike | gated on A6 投影层设计 | DEIM-M → YOLO26s 跨架构 PoC 设计 1-day spike | `runs/rehearsal_kd_A6_design_spike.json` |
+| KD A6 R1 spike | **complete**（2026-05-11，path=γ）| DEIM-M → YOLO26s 跨架构 PoC 设计 spike 完成；YOLO26 学生侧 `reg_max=1` 无原生 DFL → 选 γ 路径（Integral 坍缩 + bbox KD + cls-logit KL + PKD FPN 投影 conv）；A6 维持 P1；详见 `docs/planning/kd_a6_design_spike.md` | `runs/rehearsal_kd_A6_design_spike.json` |
 | TSM 1-A | active | R1 demo + synthetic clip | `runs/rehearsal_tsm_phase_1a_concept.json` |
 | HMM | active | synthetic flicker / transition fixture | `runs/rehearsal_hmm_smoother_synthetic.json` |
 | SAHI | gated §六 a-stage | R1 demo | `runs/rehearsal_sahi_R1_demo.json` |
