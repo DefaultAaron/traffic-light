@@ -137,6 +137,7 @@ def build_kd_train_one_epoch(
     ld_lambda: float,
     kd_temperature: float,
     reg_max: int,
+    kd_call_counter: list[int] | None = None,
 ):
     """Return a drop-in replacement for DEIM's `train_one_epoch` with KD injection.
 
@@ -144,7 +145,14 @@ def build_kd_train_one_epoch(
     function preserves DEIM's AMP, EMA, warmup, max-norm clipping, and metric
     logging behavior. The only inserted lines are the teacher forward and the
     KD-term merge into `loss_dict`.
+
+    `kd_call_counter`: optional shared mutable counter (list of one int).
+    Incremented on every successful `_kd_terms` invocation. Launcher reads
+    it after training to detect zero-batch / bypass paths that would otherwise
+    silently record `completed` without applying KD. None = no tracking.
     """
+    if kd_call_counter is None:
+        kd_call_counter = [0]
     # Lazy import — DEIM modules only resolvable inside DEIM venv at runtime.
     from torch.utils.tensorboard import SummaryWriter
     from torch.cuda.amp.grad_scaler import GradScaler
@@ -222,6 +230,7 @@ def build_kd_train_one_epoch(
                         reg_max=reg_max,
                     )
                     loss_dict.update(kd)
+                    kd_call_counter[0] += 1
 
                 loss = sum(loss_dict.values())
                 scaler.scale(loss).backward()
@@ -248,6 +257,7 @@ def build_kd_train_one_epoch(
                     reg_max=reg_max,
                 )
                 loss_dict.update(kd)
+                kd_call_counter[0] += 1
 
                 loss = sum(loss_dict.values())
                 optimizer.zero_grad()
@@ -298,6 +308,7 @@ def install(
     ld_lambda: float = 1.0,
     kd_temperature: float = 2.0,
     reg_max: int = 32,
+    kd_call_counter: list[int] | None = None,
 ) -> list[str]:
     """Monkey-patch DEIM's `train_one_epoch` with the KD-augmented version.
 
@@ -334,6 +345,7 @@ def install(
         ld_lambda=ld_lambda,
         kd_temperature=kd_temperature,
         reg_max=reg_max,
+        kd_call_counter=kd_call_counter,
     )
 
     patched: list[str] = []

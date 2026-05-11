@@ -256,10 +256,29 @@ def main() -> int:
 
     started = _now_iso()
     t0 = time.monotonic()
-    proc = subprocess.run(argv, check=False)
+    # Capture stdout so we can scrape the KD_CALL_COUNT sentinel emitted by
+    # deim_kd_launch. We tee to our own stdout AFTER the subprocess returns so
+    # the operator still sees DEIM progress (it streams after the run). The
+    # subprocess returncode is the source of truth; the scrape is observability,
+    # not control flow.
+    proc = subprocess.run(argv, check=False, capture_output=True, text=True)
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
     t1 = time.monotonic()
     finished = _now_iso()
     wall = t1 - t0
+
+    # Scrape KD_CALL_COUNT from launcher stdout. If the launcher's terminal
+    # sentinel fired, we have a verifiable per-batch KD invocation count;
+    # if not (e.g. exception mid-train), the count is unknown → record None.
+    kd_call_count = None
+    for line in reversed(proc.stdout.splitlines()):
+        if "KD_CALL_COUNT=" in line:
+            try:
+                kd_call_count = int(line.split("KD_CALL_COUNT=", 1)[1].strip())
+            except (ValueError, IndexError):
+                pass
+            break
 
     entry = {
         "status": "completed" if proc.returncode == 0 else "failed",
@@ -275,6 +294,7 @@ def main() -> int:
         "kd_reg_max": args.kd_reg_max,
         "nproc": args.nproc,
         "port": args.port,
+        "kd_call_count": kd_call_count,
         "train_command": preview,
         "wall_clock_seconds": wall,
         "exit_code": proc.returncode,
@@ -282,7 +302,8 @@ def main() -> int:
         "run_finished_utc": finished,
     }
     _save_entry(output, key, entry)
-    print(f"A2b {key}: {entry['status']} in {wall:.2f}s (exit={proc.returncode}) → {output}")
+    kd_str = f"kd_calls={kd_call_count}" if kd_call_count is not None else "kd_calls=unknown"
+    print(f"A2b {key}: {entry['status']} {kd_str} in {wall:.2f}s (exit={proc.returncode}) → {output}")
     return proc.returncode
 
 

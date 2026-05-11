@@ -133,6 +133,11 @@ def build_kd_trainer_class(teacher_ckpt: str, kd_lambda: float, kd_temperature: 
         _teacher_ckpt = teacher_ckpt
         _kd_lambda = kd_lambda
         _kd_temperature = kd_temperature
+        # Mutable counter incremented on every kd_loss call. Read by
+        # execute_in_process AFTER model.train() returns; if zero, the entire
+        # training run never fired KD (empty dataloader, --test-only-like
+        # bypass, etc.) and we MUST refuse to record 'completed'.
+        _kd_call_count = [0]
 
         def _setup_train(self):
             super()._setup_train()
@@ -161,6 +166,7 @@ def build_kd_trainer_class(teacher_ckpt: str, kd_lambda: float, kd_temperature: 
             original_loss = student.loss
             kd_lambda_ = float(self._kd_lambda)
             kd_T = float(self._kd_temperature)
+            kd_call_count = type(self)._kd_call_count
 
             def kd_loss(batch, preds=None):
                 if preds is None:
@@ -204,6 +210,7 @@ def build_kd_trainer_class(teacher_ckpt: str, kd_lambda: float, kd_temperature: 
                     s_scores.float(), t_scores.float(), temperature=kd_T
                 )
                 total = base_loss + kd_lambda_ * kd
+                kd_call_count[0] += 1
                 return total, loss_items
 
             student.loss = kd_loss
@@ -219,6 +226,7 @@ def execute_in_process(args) -> dict:
     t0 = time.monotonic()
     error_msg = None
     rc = 0
+    kd_call_count = 0
     try:
         student_model_arg = STUDENT_INIT_TO_MODEL[args.student_init]
         model = YOLO(student_model_arg)
@@ -241,6 +249,18 @@ def execute_in_process(args) -> dict:
         if args.batch is not None:
             train_kwargs["batch"] = args.batch
         model.train(trainer=trainer_cls, **train_kwargs)
+        # Sentinel: trainer ran but did the per-batch KD loss path fire at all?
+        # Empty dataloader, val-only path, or any other bypass would leave the
+        # counter at 0 — refuse to record success in that case.
+        kd_call_count = int(trainer_cls._kd_call_count[0])
+        if kd_call_count == 0:
+            raise RuntimeError(
+                "A2a KD rehearsal completed without ever invoking kd_loss "
+                "(kd_call_count=0). Likely cause: empty/misconfigured train "
+                "split, or a code path that bypassed the per-batch loop. "
+                "Refusing to record 'completed' — a no-KD rehearsal contradicts "
+                "the A2a contract."
+            )
     except Exception as exc:
         rc = 1
         error_msg = f"{type(exc).__name__}: {exc}"
@@ -250,6 +270,7 @@ def execute_in_process(args) -> dict:
         "status": "completed" if rc == 0 else "failed",
         "wall_clock_seconds": t1 - t0,
         "exit_code": rc,
+        "kd_call_count": kd_call_count,
         "error": error_msg,
         "run_started_utc": started,
         "run_finished_utc": _now_iso(),
@@ -352,6 +373,7 @@ def main() -> int:
         "seed": args.seed,
         "kd_lambda": args.kd_lambda,
         "kd_temperature": args.kd_temperature,
+        "kd_call_count": result["kd_call_count"],
         "invocation": cmd_preview,
         "wall_clock_seconds": result["wall_clock_seconds"],
         "exit_code": result["exit_code"],
@@ -360,7 +382,7 @@ def main() -> int:
         "run_finished_utc": result["run_finished_utc"],
     }
     _save_entry(output, f"yolo26s_seed{args.seed}", entry)
-    print(f"A2a yolo26s_seed{args.seed}: {entry['status']} in {result['wall_clock_seconds']:.2f}s → {output}")
+    print(f"A2a yolo26s_seed{args.seed}: {entry['status']} kd_calls={result['kd_call_count']} in {result['wall_clock_seconds']:.2f}s → {output}")
     return result["exit_code"]
 
 

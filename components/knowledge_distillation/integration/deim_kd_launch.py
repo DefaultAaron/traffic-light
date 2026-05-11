@@ -357,6 +357,16 @@ def main() -> int:
             "mismatch student (global-rank-keyed). Single-node torchrun only."
         )
 
+    # Reject --test-only: it skips train_one_epoch entirely (DEIM/train.py:51-54
+    # routes to solver.val()), so _kd_terms never runs, but the launcher still
+    # returns 0 and the rehearsal records 'completed' with no KD applied.
+    if "--test-only" in remaining:
+        raise RuntimeError(
+            "deim_kd_launch: --test-only bypasses train_one_epoch → KD never "
+            "fires → silent no-op rehearsal. Use DEIM/train.py directly for "
+            "eval-only runs; A2b KD rehearsal must actually train."
+        )
+
     # Validate resume value forms first (rejects empty `--resume=` etc. that
     # are token-shaped but DEIM treats as falsey-fresh). After this passes,
     # _is_resume_arg correctly partitions argv into resume vs fresh launches.
@@ -424,12 +434,14 @@ def main() -> int:
     # both det_engine AND det_solver (the latter binds train_one_epoch locally
     # at import time — patching only det_engine would miss det_solver's copy).
     from components.knowledge_distillation.integration.deim_kd_engine import install
+    kd_call_counter = [0]
     patched = install(
         teacher=teacher,
         kd_lambda=kd_args.kd_lambda,
         ld_lambda=kd_args.ld_lambda,
         kd_temperature=kd_args.kd_temperature,
         reg_max=kd_args.kd_reg_max,
+        kd_call_counter=kd_call_counter,
     )
     print(
         f"[deim_kd_launch] KD patch installed: kd_lambda={kd_args.kd_lambda} "
@@ -442,6 +454,21 @@ def main() -> int:
     # mutated sys.argv, then calls main(args). Direct `import train; train.main()`
     # fails because train.main requires the parsed Namespace positional.
     runpy.run_path("train.py", run_name="__main__")
+
+    # Final sentinel: training returned without exception, but did KD fire?
+    # Empty dataloader, resume-at-target-epoch, or any other zero-batch path
+    # would leave kd_call_counter[0] == 0. Refuse to record success.
+    if kd_call_counter[0] == 0:
+        raise RuntimeError(
+            "deim_kd_launch: A2b KD rehearsal completed without ever invoking "
+            "_kd_terms (kd_call_counter=0). Likely causes: empty train split, "
+            "resume from a checkpoint at-or-past --epoches target, or a code "
+            "path that bypassed train_one_epoch. Refusing to record 'completed' "
+            "— a no-KD rehearsal contradicts the A2b contract."
+        )
+    print(f"[deim_kd_launch] KD applied to {kd_call_counter[0]} batches across training.")
+    # Echo KD sentinel for the runner to scrape (see deim_logit_localization_kd.execute).
+    print(f"[deim_kd_launch] KD_CALL_COUNT={kd_call_counter[0]}")
     return 0
 
 
