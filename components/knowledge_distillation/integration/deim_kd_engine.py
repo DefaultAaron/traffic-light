@@ -72,11 +72,20 @@ def _kd_terms(
     s_logits = student_out.get("pred_logits")
     t_logits = teacher_out.get("pred_logits")
     if s_logits is None or t_logits is None:
+        # `pred_logits` is emitted in BOTH train + eval branches of
+        # DFINETransformer.forward (dfine_decoder.py:754-758), so its absence
+        # is NOT a train-mode regression. Missing pred_logits → the teacher /
+        # student output is not a DEIM decoder dict at all (wrong module type,
+        # wrong unwrap, DEIM API change, etc.). Include the actual key set in
+        # the diagnostic — single most useful debug fact.
+        which = "student" if s_logits is None else "teacher"
+        actual_keys = sorted((student_out if s_logits is None else teacher_out).keys())
         raise RuntimeError(
-            f"A2b _kd_terms: 'pred_logits' missing from "
-            f"{'student' if s_logits is None else 'teacher'} output. "
-            "DEIM decoder must run in train mode to emit pred_logits — verify "
-            "freeze_bn_in_train_mode(teacher) was called and teacher cfg matches."
+            f"A2b _kd_terms: 'pred_logits' missing from {which} output. "
+            f"Output dict keys = {actual_keys}. "
+            "Verify the model is DEIM's DFINETransformer and the forward "
+            "returned the standard decoder dict (pred_logits in both train + eval "
+            "modes per dfine_decoder.py:754-758)."
         )
     if s_logits.shape != t_logits.shape:
         raise RuntimeError(
@@ -91,12 +100,21 @@ def _kd_terms(
     s_corners = student_out.get("pred_corners")
     t_corners = teacher_out.get("pred_corners")
     if s_corners is None or t_corners is None:
+        # `pred_corners` IS train-mode-gated (dfine_decoder.py:754-756 only).
+        # Missing → train-mode regression. Most likely cause: BN-freeze path
+        # stopped re-asserting decoder.training=True between batches, OR
+        # something flipped teacher to eval mode after install(). Denoising-
+        # arm crashes surface inside the decoder forward BEFORE _kd_terms
+        # runs, so denoising is a secondary suspect at this raise site.
+        which = "student" if s_corners is None else "teacher"
+        actual_keys = sorted((student_out if s_corners is None else teacher_out).keys())
         raise RuntimeError(
-            f"A2b _kd_terms: 'pred_corners' missing from "
-            f"{'student' if s_corners is None else 'teacher'} output. "
-            "DEIM decoder train-mode branch must emit pred_corners (FDR logits); "
-            "verify teacher is in train mode (decoder.training=True) and "
-            "decoder.num_denoising=0 (to avoid denoising-target crash)."
+            f"A2b _kd_terms: 'pred_corners' missing from {which} output. "
+            f"Output dict keys = {actual_keys}. "
+            "DEIM decoder train-mode branch (dfine_decoder.py:754-756) must "
+            "be active. Verify freeze_bn_in_train_mode({which}) was called and "
+            "decoder.training=True. Secondary: confirm decoder.num_denoising=0 "
+            "(otherwise the denoising arm would crash first, not here)."
         )
     if s_corners.shape != t_corners.shape:
         raise RuntimeError(

@@ -153,8 +153,10 @@ def main() -> int:
                     help="DEIM YAML for student (e.g. .../deim_hgnetv2_s_traffic_light.yml)")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--kd-lambda", type=float, default=1.0)
-    ap.add_argument("--ld-lambda", type=float, default=1.0)
+    ap.add_argument("--kd-lambda", type=float, default=1.0,
+                    help="cls-logit KL weight (default 1.0; MUST be > 0 for A2b)")
+    ap.add_argument("--ld-lambda", type=float, default=1.0,
+                    help="LD-on-FDR KL weight (default 1.0; MUST be > 0 for A2b)")
     ap.add_argument("--kd-temperature", type=float, default=2.0)
     ap.add_argument("--kd-reg-max", type=int, default=32)
     ap.add_argument("--nproc", type=int, default=1, help="torchrun --nproc_per_node")
@@ -166,6 +168,17 @@ def main() -> int:
     grp.add_argument("--dry-run", action="store_true")
     grp.add_argument("--execute", action="store_true")
     args = ap.parse_args()
+
+    if args.kd_lambda <= 0 or args.ld_lambda <= 0:
+        ap.error(
+            f"--kd-lambda AND --ld-lambda must both be > 0 for A2b KD rehearsal "
+            f"(got kd_lambda={args.kd_lambda}, ld_lambda={args.ld_lambda}). "
+            "Zero / negative weight = silent no-op on that head — the rehearsal "
+            "would complete without applying that KD signal. The A2b cell is "
+            "joint LD-on-FDR + cls-logit KL by spec (§七 v2); single-head KD "
+            "needs its own cell. Use deim_baseline_golsd_off runner for the "
+            "no-external-KD ablation (A0)."
+        )
 
     if args.output is None:
         if not args.rehearsal_on_r1:

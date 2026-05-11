@@ -31,8 +31,9 @@ Notes:
   `pred_corners` shape (B, num_queries, 4*(reg_max+1)) where num_queries=300
   and reg_max=32 by default. KD is shape-aligned without further projection.
 - If teacher num_queries differs from student, the per-batch shape gate in
-  deim_kd_engine._kd_terms silently skips KD on that mismatch; the caller
-  must pin num_queries equal across teacher/student configs.
+  deim_kd_engine._kd_terms now ABORTS the run with a structured RuntimeError
+  (fail-loud, not silent-skip). Caller MUST pin num_queries equal across
+  teacher / student configs before launch.
 """
 from __future__ import annotations
 

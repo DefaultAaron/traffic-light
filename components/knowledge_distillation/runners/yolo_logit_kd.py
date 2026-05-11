@@ -270,7 +270,10 @@ def main() -> int:
     ap.add_argument("--device", type=str, default=None)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--kd-lambda", type=float, default=1.0,
-                    help="cls-logit KL loss weight (default 1.0)")
+                    help="cls-logit KL loss weight (default 1.0; MUST be > 0 — "
+                         "zero-weight KD = silent no-op, defeats A2a rehearsal's "
+                         "purpose of validating KD wiring. Use scratch_baseline "
+                         "runner for the kd_lambda=0 ablation.)")
     ap.add_argument("--kd-temperature", type=float, default=2.0,
                     help="softmax temperature for KL (default 2.0)")
     ap.add_argument("--rehearsal-on-r1", action="store_true",
@@ -281,6 +284,14 @@ def main() -> int:
     grp.add_argument("--dry-run", action="store_true")
     grp.add_argument("--execute", action="store_true")
     args = ap.parse_args()
+
+    if args.kd_lambda <= 0:
+        ap.error(
+            f"--kd-lambda must be > 0 for A2a KD rehearsal (got {args.kd_lambda}). "
+            "Zero / negative weight = silent no-op = the rehearsal would complete "
+            "without ever applying KD signal, defeating its purpose. Use "
+            "scratch_baseline runner for the no-KD ablation cell (A1)."
+        )
 
     if args.output is None:
         if not args.rehearsal_on_r1:
