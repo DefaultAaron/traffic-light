@@ -150,12 +150,17 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 ## 七、知识蒸馏 KD
 
+### 部署侧约束（2026-05-11 锁定）
+
+- **学生侧只能是 S**：DEIM-D-FINE-S + YOLO26s **双轨同时作为部署候选**；M / L 仅作教师 / 上限基准。
+- **部署侧参数调优时机：R2 close 后按需触发**，**不阻塞** KD 消融周期或 ship-decision。R1 demo 视检观察 DEIM-S/M 稳定性弱于 YOLO（同物体置信度逐帧抖动 + 长尾 bbox 漂移 + demo8 假阳拒识弱于 YOLO26m）；YOLO 侧亦可能在 R2 数据下出现新的稳定性 / 召回失衡。调优在 §pre-deploy AGV 阶段执行，调优维度：conf 阈值、NMS、（DEIM 专属）FDR `reg_max`、训练 mixup / mosaic `stop_epoch`、（YOLO 专属）anchor sensitivity / `cls_pw`。具体触发逻辑见 §KD 验收门 Gate #6。
+
 ### 行动项
 
 - [x] a1. `components/knowledge_distillation/` scaffold v1.3 LANDED；B2 + C3 AGREED。
-- [ ] a2. 首个 KD cell 前落地：`scripts/_kd_decision_schema.json`、`scripts/_kd_decide_cell.py`、export sidecar 字段。
+- [ ] a2. 首个 KD cell 前落地：`scripts/_kd_decision_schema.json`、`scripts/_kd_decide_cell.py`、export sidecar 字段（含 `student_arch ∈ {yolo26_s, deim_dfine_s}`、`burst_jitter_demo_4_10_12_15_max_pp`、`hard_neg_fp_rate_demo_8_11_13` — 后两项为推理 baseline 记录字段，不进 KD ship-decision，供 §pre-deploy AGV `pre_deploy_AGV_integration.md` 的 deploy-tuning trigger 比较）。
 - [ ] b. 替换 runner stubs；按 cell 矩阵分批推进。
-- [ ] c. A0-A7 消融；应用 5 项验收门。
+- [ ] c. A0-A7 消融；应用 6 项验收门。
 - [ ] d. 写 `runs/_kd_decisions.json`。
 - [ ] e. R2 phase report KD 子节。
 
@@ -164,12 +169,13 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 | 项 | 规则 |
 |---|---|
 | 主路径 | M 教师：YOLO26-m / DEIM-D-FINE-M |
-| A7 | L tier only：YOLO26-l / DEIM-D-FINE-L |
+| A7 | L tier：YOLO26-l / **DEIM-D-FINE-L**（in training，预计 R2 启动前 `runs/detect/deim_dfine_l-r1/best_stg2.pth` 落地）|
 | X/XL | 排除 |
-| A7 触发 | 稀有安全类 AP 未达 R3 门槛 OR 4090 D capacity 允许 |
+| A7 触发 | DEIM-L 训练完成（自动解锁）OR 稀有安全类 AP 未达 R3 门槛 |
 | A7 桥接 | TAKD / ESKD / 投影 MLP 三选二 |
+| YOLO26-l 教师状态 | **不合格**：R1 best mAP50=0.850 < YOLO26-m 0.869；只用 DEIM-L 作为 L tier 教师 |
 
-容量结论：L OK；X/XL excluded。
+容量结论：DEIM-L OK；YOLO26-l 在 R1 状态下被禁用（R2 重训若超过 m 则解禁）；X/XL excluded。
 
 ### KD 验收门
 
@@ -180,22 +186,27 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 | #3 FP | demo8/11/13 背景帧 FP 不上升；与 §四 manifest 共享 |
 | #4 成本 | 每 cell wall-clock < `T_scratch_A1 × 2.0` |
 | #5 TRT + sidecar | engine 通过 eval-parity；sidecar 含 `kd_cell_id` / `kd_method` / `kd_teacher_artifact_sha256` |
+| #6 部署稳定性 trigger | **不阻塞 KD ship-decision**。R2 close 后对 ship-flagged 学生（YOLO26-s 或 DEIM-D-FINE-S）跑 demo4/10/12/15 burst 抖动 + demo8/11/13 假阳率测量；若任一指标差于 R1 baseline（DEIM 基线由 A2b rehearsal 测得，YOLO 基线由 A2a rehearsal 测得）则在 `docs/planning/pre_deploy_AGV_integration.md` 注册 deploy-tuning 任务，调优结果回写 `runs/_pre_deploy_tuning_decisions.json`。KD cells 自身 ship-decision 仅依据 Gate #1-#5 |
 
 ### Cell 矩阵
+
+学生侧锁定 S（YOLO26-s 或 DEIM-D-FINE-S）。互补家族 = YOLO 学生取 DEIM 教师 / 反之。
 
 | Cell | 学生 | 教师 | 方法栈 | 触发 | 优先级 |
 |---|---|---|---|---|---|
 | A0 | DEIM-D-FINE-S | — | GO-LSD off；no external KD | DEIM 路径 baseline | P0 |
-| A1 | 选型胜者 | — | scratch | always | P0 |
+| A1 | YOLO26-s + DEIM-D-FINE-S | — | scratch | always；双路径并行（S deployees）| P0 |
 | A2a | YOLO26-s | YOLO26-m | cls-logit KL | YOLO 家族 | P0 |
 | A2b | DEIM-D-FINE-S | DEIM-D-FINE-M | LD on FDR + cls-logit KL | DEIM 家族 | P0 |
-| A3 | 选型胜者 S | 同家族 M | PKD feature-level | always | P0 |
-| A4 | 选型胜者 S | 同家族 M | A2 + A3 | max(A2/A3) lower-CI > A1 point；安全类 delta ≥ -0.5 pp | P1 |
-| A5 | 选型胜者 S | 同家族 M → 互补家族 M | 渐进 2 教师 | A4 通过全部 5 gate | P2 |
-| A6 | 选型胜者 S | 互补家族 M | 跨架构 PKD | A4 通过全部 5 gate + 团队余力 | P2 |
-| A7 | 选型胜者 S | 同家族 L | TAKD / ESKD / projection | 独立触发；L tier only | P2 |
+| A3 | S 双路径 | 同家族 M | PKD feature-level | always | P0 |
+| A4 | S 双路径 | 同家族 M | A2 + A3 | max(A2/A3) lower-CI > A1 point；安全类 delta ≥ -0.5 pp | P1 |
+| A5 | S 双路径 | 同家族 M → 互补家族 M | 渐进 2 教师 | A4 通过全部 6 gate | P2 |
+| A6 | YOLO26-s | DEIM-D-FINE-M | 跨架构 logit + FDR↔DFL 分布对齐 + projection MLP | A4 通过全部 6 gate；**优先级提升**：DEIM 长尾教学信号 → YOLO 稳定推理路径 | P1 |
+| A7 | DEIM-D-FINE-S | **DEIM-D-FINE-L**（in training） | TAKD / ESKD / projection MLP | DEIM-L 训练完成自动解锁；仅 DEIM 学生（YOLO26-l 不合格） | P1 |
 
-Drawdown：先丢 A7，再丢 A6，最后丢 A5。P0 不可丢；A4 仅在触发条件成立时必须。
+**Drawdown 顺序更新**：先丢 A5，再丢 A4（如非触发），保留 A6 / A7（独立高价值轨道）。P0 + A6 + A7 不可同时丢。
+
+**A6 优先级上调说明（2026-05-11）**：跨架构 DEIM-M → YOLO26s 是同时利用 "DEIM 长尾召回强 + YOLO 推理稳定" 两端的唯一路径。需要 1-day 投影层设计 spike（DETR query embed ↔ YOLO 多尺度特征）+ 1-week PoC 验证长尾 recall ≥ +5 pp。PoC fail → 降级 P2。
 
 ### Runner 映射
 
@@ -211,7 +222,7 @@ Drawdown：先丢 A7，再丢 A6，最后丢 A5。P0 不可丢；A4 仅在触发
 | A6 | `components.knowledge_distillation.runners.cross_arch_feature_kd` |
 | A7 | `components.knowledge_distillation.runners.takd_large_teacher` |
 
-统一 CLI：`--config`、`--teacher-ckpt`、`--student-init {scratch,coco,r2_baseline}`、`--output-dir`、`--seed`、`--ci-method {bootstrap1000,seed5}`、`--resume`。Resume 不覆写 `SEED.txt`。
+统一 CLI：`--config`、`--teacher-ckpt`、`--student-init {scratch,coco,r2_baseline,r1_rehearsal}`、`--output-dir`、`--seed`、`--ci-method {bootstrap1000,seed5}`、`--resume`、`--rehearsal-on-r1`（pre-R2 rehearsal 标志，强制 `rehearsal_` 前缀输出）。Resume 不覆写 `SEED.txt`。
 
 ## 八、多相机融合
 

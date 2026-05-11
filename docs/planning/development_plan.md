@@ -89,6 +89,7 @@ R2 目标：
 - [ ] R2 自采 raw video + 抽帧数据冻结。
 - [ ] 冻结 `runs/_r2_val_manifest.txt`、`runs/_r2_audit_coverage.json`。
 - [ ] 冻结 `runs/_hard_negative_eval_manifest.json`。
+- [ ] 应用 §R2 训练 imgsz 决策规则 → 写 `runs/_r2_train_config.json`（`imgsz` / `multi_scale` / `bbox_width_p50` / `frac_lt_0.03`）。
 - [ ] 训练 10-14 类联合检测模型；单一模型输出交通灯 + 栏杆。
 - [ ] 导出 Orin TensorRT FP16 / 选定 precision engine。
 - [ ] 完整 demo + 5-min Orin soak。
@@ -103,13 +104,37 @@ R2 目标：
 3. DEIM-D-FINE 相对 YOLO26 最佳 +≥ 5 pp mAP50 且 Orin FP16 ≤ 50 ms/帧 → 主力切换为 DEIM。
 4. 三者差距 < 2 pp → 按许可证成本排序：DEIM > YOLOv13 > YOLO26。
 
+### R2 训练 imgsz 决策规则（2026-05-11 锁定，替代之前的"R2 锁 imgsz=1280"无条件项）
+
+R1 1280-训练实验显示同域 BSTLD/S2TLD/LISA val 上 s/m 在 1280 训练反降 −4.4 / −11.3 pp、仅 n 受益 +6.5 pp；该结论受限于 R1 数据分布（>80% 标签宽度 < 3%），**不能外推到 R2 部署域数据**（竖屏 / 手机 / 国内路况 + 新增 barrier 类预计 bbox 中位数显著更大）。R2 训练分辨率由数据分布决定，在 R2 manifest freeze 后执行：
+
+```
+输入：runs/_r2_val_manifest.txt + runs/_r2_train_manifest.txt
+计算：
+  bbox_width_p50  = R2 train+val 归一化 bbox 宽度中位数
+  frac_lt_0.03    = 宽度 < 3% 的标签占比
+
+规则：
+  if frac_lt_0.03 >= 0.50:
+      imgsz = 1280              # 小目标主导，与 R1 同档但数据已换 → 1280 训练
+  elif frac_lt_0.03 <= 0.25 and bbox_width_p50 > 0.04:
+      imgsz = 640               # 部署域 bbox 更大，省 3-4× GPU 时长
+  else:
+      imgsz = 960, multi_scale = True   # Ultralytics 随机 0.5-1.5× 缩放
+```
+
+输出：`runs/_r2_train_config.json`，字段 `{imgsz, multi_scale, bbox_width_p50, frac_lt_0.03, rule_branch}`。所有 R2 训练 wrapper 必须 read 该文件，不接受 hardcode 的 imgsz。
+
+**DEIM 注意**：R1 仅有 YOLO26 的 1280-训练数据；DEIM-S/M 在 1280 训练的行为未知。R2 启动时若决策规则选 1280，DEIM 训练前 1 epoch wall-clock 必须 sanity-check（若发散即降回 960 + multi_scale）。
+
 ### R2 部署 gate
 
 | Gate | 要求 |
 |---|---|
 | 类别 | `nc` 在 10-14；类别映射与 frozen manifest 一致 |
 | 数据 | R2 自采为唯一训练 / 评估基础 |
-| 延迟 | Orin 1280 端到端 ≤ 50 ms |
+| 训练 imgsz | 由 §R2 训练 imgsz 决策规则 派生，写 `runs/_r2_train_config.json` |
+| 延迟 | Orin 部署 imgsz 端到端 ≤ 50 ms（部署 imgsz 与训练 imgsz 不必相同，但需在 eval-parity gate 锁定）|
 | 精度奇偶 | engine 通过 eval-parity gate；sidecar 完整 |
 | 安全类 | 安全类 AP / recall 不越过各组件预承诺下限 |
 | 报告 | decision JSON + coverage-gaps + carry-forward JSON 完整 |

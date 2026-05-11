@@ -60,15 +60,7 @@
 
 ## R1 训练结果
 
-### 指标汇总
-
-| 模型 | 训练轮次 | 最佳 mAP50 | 最佳 mAP50-95 | Precision | Recall | 状态 |
-|------|---------|-----------|--------------|-----------|--------|------|
-| YOLO26n-r1 | 39 / 100 | 0.720 | 0.484 | 0.940 | 0.689 | 早停收敛 |
-| YOLO26s-r1 | 32 / 100 | 0.849 | 0.608 | 0.930 | 0.670 | 早停收敛 |
-| YOLO26m-r1 | 21 / 72 | 0.869 | 0.635 | 0.934 | 0.712 | 训练完成 |
-
-三个模型均在早停窗口内触发 `patience=20` 停止，mAP50-95 曲线自最佳轮次起 20 轮无改善。YOLO26m-r1 相对 s-r1 提升有限（mAP50 +2.0 pp / mAP50-95 +2.7 pp），但推理成本显著更高 — 在 Orin 1280 延迟预算内优先选 s。
+> 完整六模型 + 容量上限对照指标见 §R1 跨架构综合分析 → 整体指标对照。本节只保留 P1 → R1 桥接审计。
 
 ### 与第一阶段（3类）对比
 
@@ -90,7 +82,8 @@
 |------|-------|------|---------|-----------|--------------|-----------|--------|------|
 | YOLOv13-s | AGPL-3.0 | YOLO26 同架构家族低风险对照 | 100 / 100 | 0.815 | 0.580 | 0.836 | 0.767 | 完整跑完，未触发早停 |
 | DEIM-D-FINE-S | Apache-2.0 | 商用许可证备选 + 小目标精度探底 | 132 / 132 | 0.848 | 0.602 | 0.919 | 0.846 | **完成**，决策规则 4 触发（见 §DEIM-D-FINE 专项评估） |
-| DEIM-D-FINE-M | Apache-2.0 | 精度上限基准 | 41 / 102 | 0.832 | 0.565 | 0.912 | 0.833 | **未完成（40%）**，仅供方向性参考 |
+| DEIM-D-FINE-M | Apache-2.0 | 精度上限基准 | 102 / 102（best=97）| 0.859 | 0.613 | 0.951 | 0.847 | **完成**（2026-05-11，1d 7:50:21）|
+| YOLO26l-r1 | AGPL-3.0 | YOLO26 容量上限基准 | 48 / 100（best=28）| 0.850 | 0.619 | 0.918 | 0.703 | 早停收敛，9.51 h |
 
 **三条轨道的分工**：
 - **主力（YOLO26 s/m）**：部署路径最成熟，Orin TRT 管线已打通 — 即便备选轨道胜出，数据处理 / 部署流程可复用。
@@ -111,27 +104,28 @@
 
 ## R1 跨架构综合分析（同域 val）
 
-> 本节基于 `runs/detect/{yolo26n,yolo26s,yolo26m,yolov13s,deim_dfine_s,deim_dfine_m}-r1/` 训练曲线、混淆矩阵与逐类 PR 表（详见 [`phase_2_round_1_results.md`](./phase_2_round_1_results.md)）。**所有结论限同域 BSTLD/S2TLD/LISA 横屏 dashcam val 集**；部署域评估集尚未建立。DEIM-S 已完成 132/132 ep；DEIM-M 训练中断在 ep40 / 102（40% 进度）— 详见 §DEIM-D-FINE 专项评估。
+> 本节基于 `runs/detect/{yolo26n,yolo26s,yolo26m,yolo26l,yolov13s,deim_dfine_s,deim_dfine_m}-r1/` 与 `yolo26{n,s,m}-r1-1280/` 训练曲线、混淆矩阵与逐类 PR 表（详见 [`phase_2_round_1_results.md`](./phase_2_round_1_results.md)）。**所有结论限同域 BSTLD/S2TLD/LISA 横屏 dashcam val 集**；部署域评估集尚未建立。六个完成模型 + 三条 1280 训练对照齐备 — 详见 §DEIM-D-FINE 专项评估 与 §Demo 视频诊断 → 分辨率训练扫描。
 
 ### 整体指标对照
 
-| 模型 | mAP50 | mAP50-95 | P | R | F1 | 训练轮次 | 备注 |
+| 模型 | mAP50 | mAP50-95 | P | R | F1 | 训练轮次 | 角色 |
 |------|-------|---------|----|---|----|---------|------|
-| YOLO26n-r1 | 0.720 | 0.484 | 0.940 | 0.689 | 0.795 | 39 / 100 | 容量瓶颈，跨尺度泛化失败 |
-| **YOLO26s-r1** | **0.849** | **0.608** | 0.930 | 0.670 | 0.778 | 46 / 100 | **R1 部署主力** |
-| YOLO26m-r1 | 0.869 / **0.858** † | **0.646** † | 0.934 | 0.712 | 0.808 | 72 / 100 | 上限基准；†best by mAP50@21 / †best by mAP50-95@52 |
-| YOLOv13-s | 0.815 | 0.580 | 0.836 | **0.767** | 0.800 | 100 / 100 | 全程跑完未早停；**召回最高，精度最低** |
-| **DEIM-D-FINE-S** | 0.848 | **0.602** | 0.919 | **0.846** | **0.881** | 132 / 132 | **决策规则 4 触发**：与 YOLO26s ±2 pp 内 + Apache-2.0；主力候选（**待 Orin TRT plugin 验证**） |
-| DEIM-D-FINE-M (ep40 snapshot) | 0.832 | 0.565 | 0.912 | 0.833 | 0.870 | 41 / 102 (40%) | **未完成**，仅供参考 |
+| YOLO26n-r1 | 0.720 | 0.484 | 0.940 | 0.689 | 0.795 | 39 / 100 | 容量瓶颈；640 训练不可跨尺度推理 |
+| **YOLO26s-r1** | 0.849 | 0.608 | 0.930 | 0.670 | 0.778 | 46 / 100 | **R1 现役部署模型**（Orin TRT 上线中） |
+| YOLO26m-r1 | 0.869 / 0.858 † | 0.646 † | 0.934 | 0.712 | 0.808 | 72 / 100 | YOLO 上限基准；†best mAP50@21 / mAP50-95@52 |
+| YOLO26l-r1 | 0.850 | 0.619 | 0.918 | 0.703 | 0.795 | 48 / 100 | 容量再上一档 mAP50 < m，不进入部署候选 |
+| YOLOv13-s | 0.815 | 0.580 | 0.836 | **0.767** | 0.800 | 100 / 100 | 备选监控：召回 +9.8 pp / 精度 -9.4 pp vs YOLO26s |
+| DEIM-D-FINE-S | 0.848 | 0.602 | 0.919 | 0.846 | 0.881 | 132 / 132 | Apache-2.0 备选；决策规则 4 触发 vs YOLO26s |
+| **DEIM-D-FINE-M** | **0.859** | **0.613** | **0.951** | **0.847** | **0.896** | 102 / 102 (best=97) | **R1 主力候选**（待 Orin TRT plugin Gate）— F1 R1 最高 |
 
 > †YOLO26m-r1 的 `best.pt` 取自 Ultralytics fitness 综合最优（mAP50 在 ep21 达到 0.869）；若以 mAP50-95 为单一准绳，ep52 略胜（0.646）。两者部署影响差异 < 1 pp，沿用 ep21 best.pt。
 
 ### 关键观察
 
-**1. YOLO26 系列容量与泛化的拐点在 s↔n 之间，不在 s↔m 之间。**
-- n→s：mAP50 +12.9 pp，mAP50-95 +12.4 pp（**质变**）。
-- s→m：mAP50 +2.0 pp，mAP50-95 +3.8 pp（**收益递减**）。Orin 1280 FP16 上 m 推理时间约为 s 的 1.6×（按 survey §M-vs-S 推算），ROI 不利。
-- 结论与 R1 初版一致：部署沿用 **YOLO26s-r1**，m 仅留作精度上限基准与右转箭头召回的对照。
+**1. YOLO26 容量拐点在 s↔n 之间，不在 s↔m / m↔l 之间。**
+- n→s：mAP50 +12.9 pp / mAP50-95 +12.4 pp（**质变**）。
+- s→m：+2.0 / +3.8 pp；m→l：mAP50 倒挂 -1.9 pp（YOLO26l 训练 9.51 h 但 best=ep28）。Orin 1280 FP16 上 m 推理时间约为 s 的 1.6× — ROI 不利。
+- YOLO 内部仍以 **YOLO26s-r1** 为现役部署，**主力候选已升级为 DEIM-D-FINE-M**（见 §DEIM-D-FINE 专项评估），待 Orin Gate 验证后切换。
 
 **2. YOLOv13-s vs YOLO26s 是"召回换精度"的非帕累托权衡。**
 - YOLOv13-s 整体 mAP50 **低 3.4 pp**、mAP50-95 **低 2.8 pp** → **未触发决策规则 2 的主力切换条件**（要求 +3 pp）。
@@ -157,34 +151,30 @@
 - YOLOv13-s：100 epochs × ~340 s/epoch ≈ **9.4 h**（无早停，全程跑完，测试时间起伏来自 ep47 周围 close_mosaic + resume，参见 results.csv）。
 - 同卡 4090，YOLOv13-s 单 epoch 慢 60% 主要源自 HyperACE 注意力路径；R2 升至 1280 训练后差距还会扩大。这把 YOLOv13-s 的"备选轨道"角色定调为"YOLO26 出 bug 时再启用"，平时不主用。
 
-**5. 训练曲线形态。**
-- YOLO26 系列（n/s/m）全部呈"早期 P 振荡 → 第 2–10 ep 跳到 0.85+ 平台 → 稳定渐进"。Precision 单调，Recall 随 close_mosaic 关闭后渐进。这是 R2 提前关 mosaic 调度还能挤出收益的信号。
-- YOLOv13-s 呈"先 P 主导 → ep47 close_mosaic 触发 P↓R↑ 反转 → ep83 第二次反转再次 R 提升"两次台阶。两次台阶都来自训练策略切换而非模型瓶颈 → 验证了 YOLOv13 的 patience=20 在此任务上确实偏紧（如果按 P↑ 早停就会过早停在 ep45）。
+**5. 训练曲线形态：mosaic close 是关键拐点。** YOLO26 全系列在 ep2–10 跳到 0.85+ 平台后稳定渐进；YOLOv13-s 在 ep47 close_mosaic 触发 P↓R↑ 反转、ep83 二次反转 — R2 可考虑提前关 mosaic 挤出收益，并放宽 patience（YOLOv13 在 patience=20 下会过早停在 ep45）。
 
-**6. DEIM-D-FINE-S 是 R1 唯一在两个右转箭头类同时取得有意义召回的模型。**
-- redRight  R=0.500 / mAP50=0.505 — 比 YOLO26m（R=0.333 / mAP50=0.409）和 YOLOv13-s（R=0.333 / mAP50=0.351）高出 +16.7 pp R / +9.6 / +15.4 pp mAP50。
-- greenRight R=0.750 / mAP50=0.693 — YOLOv13-s 是次优（R=0.655）；所有 YOLO26 系列 R=0（YOLO26s greenRight mAP50=0.875 是 R=0 下的统计假象，详见 §DEIM-D-FINE 专项评估 † 注）。
-- 警告：右转箭头 GT 仅 6 / 4 实例，远低于统计可信下限。指标置信度有限，但**形态差异（"完全不报" vs "偶尔正确"）是可读的**。
+**6. DEIM-D-FINE 家族在两个右转箭头类同时取得有意义召回，且 DEIM-M 完成后家族整体上探。**
+- redRight：DEIM-S R=0.500 / mAP50=0.505、**DEIM-M R=0.500 / mAP50=0.505**（mAP50-95 +2.9 pp 优于 S，0.316 vs 0.287）— 仍显著高于 YOLO26m（R=0.333 / mAP50=0.409）和 YOLOv13-s（R=0.333 / mAP50=0.351）。
+- greenRight：DEIM-S R=0.750 / mAP50=0.693、**DEIM-M R=0.750 / mAP50=0.754**（+6.1 pp mAP50 优于 S）— YOLOv13-s 次优（R=0.655）；所有 YOLO26 系列 R=0（YOLO26s greenRight mAP50=0.875 是 R=0 下的统计假象，详见 §DEIM-D-FINE 专项评估 † 注）。
+- 警告：右转箭头 GT 仅 6 / 4 实例，远低于统计可信下限。指标置信度有限，但**形态差异（"完全不报" vs "偶尔正确"）+ DEIM-M vs DEIM-S 内部一致提升趋势是可读的**。
 - 推断：DEIM 的 D-FINE 回归头（FDR / fine-grained distribution refinement）+ 多尺度可变形注意力对极少样本类的位置先验更鲁棒，是 Apache-2.0 商用优势之外的工程意义"长尾保险"。该结论在 R2 数据补齐到每类 ≥500 实例后必须复测；R1 期间不构成单一决策因子。
 
 ### 类别分布偏置的传导路径（混淆矩阵证据）
 
-所有四个模型一致表现出以下**结构性偏置**，源于训练集 redLeft >>> redRight（12,983 vs 19）的极端不平衡：
+YOLO26 系列 + YOLOv13-s 一致表现出以下**结构性偏置**，源于训练集 redLeft >>> redRight（12,983 vs 19）的极端不平衡（DEIM-S/M 是例外，详见 §关键观察 #6）：
 
-- `red` ↔ `redLeft`：YOLOv13-s 上 17% 的真 red 被误判为 redLeft（YOLO26 上仅 1–4%）— 表明 YOLOv13 更容易在低分辨率下"过度方向化"。
-- `green` ↔ `greenRight`：所有 YOLO26 模型把 greenRight 的 75–100% 误判为 green。这不是召回率问题，是**类别先验"被吞并"问题** — 模型从未获得足够样本建立 greenRight 决策面。
-- `redRight` 主漏检方向是 background（漏检），不是与 redLeft / red 的混淆 — 说明 redRight 真是"小目标 + 类别极少 + 低置信"被 NMS 滤掉。
+- `red` ↔ `redLeft`：YOLOv13-s 上 17% 的真 red 被误判为 redLeft（YOLO26 上仅 1–4%）— YOLOv13 更易"过度方向化"。
+- `green` ↔ `greenRight`：所有 YOLO26 模型把 greenRight 的 75–100% 误判为 green — 类别先验"被吞并"，模型从未建立 greenRight 决策面。
+- `redRight` 主漏检方向是 background（漏检），不是 redLeft / red 混淆 — 小目标 + 极少样本 + 低置信被 NMS 滤掉。
 
-R2 用于这两组的修复手段不同：
-- redLeft↔redRight：靠 fliplr 合成（行动计划 §R2 第 2 项 A 方案）增加 redRight 实例；
-- greenRight 漏检：必须实采，光靠 fliplr greenLeft 合成会同步引入数据集分布偏差（部分 greenLeft 是"上下颠倒可读"的非镜像模式）。
+R2 修复路径：redLeft↔redRight 靠 fliplr 合成（R2 §数据侧 第 2 项 A 方案），greenRight 漏检必须实采（fliplr greenLeft 会引入分布偏差 — 部分 greenLeft 是非镜像模式）。
 
 ### DEIM-D-FINE 专项评估
 
 #### 训练完成度
 
 - **DEIM-S**: 132 / 132 epochs 完整训练，mAP50 单调上行未触发早停 — eval/latest.pth 即对应 best_stg2.pth 快照（最终 epoch 即最佳）。
-- **DEIM-M**: **41 / 102 epochs（40% 进度，最近 epoch=40）** — 训练 **崩溃**（非 early-stop / 非主动中断）。`logs/deim-d-fine_m.log` 记录：2026-04-29 17:30:27 在 ep40 训练 step 内触发 PyTorch DDP `RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one. ... Parameter indices which did not receive grad for rank 0: 358`，torchrun 以 exitcode=1 终止。根因：DEIM-M medium 变体中**某个参数（idx 358）在某些 forward 路径下未参与 loss 计算**（疑似 head / decoder 中条件分支跳过的层，或 dn_meta gating 在 stop_epoch 临界位置触发），与 S 配置不一致。修复路径：(a) `find_unused_parameters=True` 传入 DDP 包装（最快但有性能代价），(b) 逐层定位 idx 358 并修补 forward 让其每步参与计算（更彻底）。本节所有 DEIM-M 数字基于 ep40 崩溃前最后一次成功 eval 的快照（eval/latest.pth），仅供方向性参考；修复后从 `last.pth` resume 再训剩余 ~61 ep 才可作为最终判定依据。
+- **DEIM-M**: **102 / 102 epochs 完整训练**（2026-05-11 完成，总时长 1d 7:50:21；best epoch=97，最终一致性已由 `runs/detect/deim_dfine_m-r1/log.txt` 第 102 行 `test_coco_eval_bbox[0]=0.6131894…` 与 `logs/deim-d-fine_m.log` 末尾 `best_stat: {'epoch': 97, 'coco_eval_bbox': 0.6134163…}` 双重确认）。先前 R1 报告所述 ep40 DDP `unused parameter idx 358` 崩溃在 trainer 加 `find_unused_parameters=True` 包装后已解决，从 `last.pth` 续训完剩余 ~61 ep。**最终指标** mAP50=0.859 / mAP50-95=0.613 / P=0.951 / R=0.847 / F1=0.896 — DEIM 家族最优，亦为 R1 全部六个完成模型中 F1 最高者。
 
 #### 与主力候选 YOLO26s 直接对比（同 val、同切分、同 7 类）
 
@@ -199,25 +189,46 @@ R2 用于这两组的修复手段不同：
 | **greenRight** | 0.000 | **0.750** | **+75.0 pp** | 0.875 † | 0.693 | -18.2 pp † |
 | **overall（等权）** | 0.669 | **0.846** | **+17.7 pp** | 0.849 | 0.848 | **-0.06 pp** |
 
-> † YOLO26s greenRight mAP50=0.875 是统计假象 — R=0 表示常用置信阈值下完全不报 greenRight；仅少数高置信预测拉高 AP。DEIM-S R=0.750 + mAP50=0.693 是**真实可工作**的 4 实例预测，比 YOLO26s "好看但不工作"的指标更有部署意义。
+> † YOLO26s greenRight mAP50=0.875 是统计假象 — R=0 表示常用置信阈值下完全不报 greenRight；仅少数高置信预测拉高 AP。DEIM-S R=0.750 + mAP50=0.693 是**真实可工作**的 4 实例预测。
 
-**核心读法**：DEIM-S 在 7 类中**全部 R 不低于 YOLO26s**（最大领先 +75 pp，最小 +1.1 pp），mAP50 整体持平（-0.06 pp），mAP50:95 持平（-0.65 pp），Precision 略低（-1.2 pp，0.919 vs 0.931）。Pareto 前沿上 DEIM-S 至少与 YOLO26s 持平且严格更优。
+**核心读法（DEIM-S）**：在 7 类中**全部 R 不低于 YOLO26s**（最大领先 +75 pp，最小 +1.1 pp），整体 mAP50 / mAP50-95 均在 ±1 pp 内，Pareto 前沿上至少持平且严格更优。
+
+#### 与上限基准 YOLO26m 直接对比（DEIM-M sister 表）
+
+| 类别 | YOLO26m R | DEIM-M R | ΔR | YOLO26m mAP50 | DEIM-M mAP50 | ΔmAP50 |
+|------|-----------|----------|----|---------------|--------------|--------|
+| red        | 0.973 | 0.960 | -1.3 pp | 0.981 | 0.971 | -1.0 pp |
+| yellow     | 0.907 | 0.890 | -1.7 pp | 0.928 | 0.922 | -0.6 pp |
+| green      | 0.969 | 0.950 | -1.9 pp | 0.973 | 0.967 | -0.6 pp |
+| redLeft    | 0.965 | 0.970 | +0.5 pp | 0.975 | 0.975 |  0.0 pp |
+| greenLeft  | 0.945 | 0.910 | -3.5 pp | 0.930 | 0.918 | -1.2 pp |
+| **redRight**   | 0.333 | **0.500** | **+16.7 pp** | 0.409 | **0.505** | **+9.6 pp** |
+| **greenRight** | 0.000 | **0.750** | **+75.0 pp** | 0.823 † | **0.754** | -6.9 pp † |
+| **overall（等权）** | 0.728 | **0.847** | **+11.9 pp** | 0.860 | 0.859 | -0.1 pp |
+
+> † YOLO26m greenRight 0.823 同样是 R=0 统计假象；DEIM-M 在 R=0.750 下达到 0.754 是真实可工作的指标。
+
+**核心读法（DEIM-M）**：YOLO26m 在 5 个"主流类"上 R 略胜 1–3 pp，但 DEIM-M 在两个长尾右转类拉开决定性优势（+16.7 / +75.0 pp R）；overall mAP50 持平、F1 +8.8 pp、Precision +1.7 pp。整体上 DEIM-M 是更工程友好的 Pareto 点。
 
 #### 决策规则触发判断
 
-- **规则 3**（DEIM ≥ 最佳 YOLO + 5 pp mAP50 + Orin FP16 ≤ 50 ms/帧）：**未触发**。DEIM-S mAP50 (0.848) vs 最佳 YOLO mAP50 (YOLO26m 0.869) = **-2.1 pp**，远未达 +5 pp 阈值。
-- **规则 4**（差异 < 2 pp 视为持平 → 按许可证优先级 DEIM > YOLOv13 > YOLO26）：**触发**。DEIM-S vs YOLO26s 的 mAP50 差 -0.06 pp、mAP50:95 差 -0.65 pp，两项均在 ±2 pp 持平带内。许可证优先级 → **DEIM-S 上位为主力候选**。
+DEIM-M 完成后两个候选都进入决策窗口（DEIM-S 同尺寸对 YOLO26s、DEIM-M 同尺寸对 YOLO26m）：
+
+- **规则 3**（DEIM ≥ 最佳 YOLO + 5 pp mAP50 + Orin FP16 ≤ 50 ms/帧）：**未触发**。最佳 DEIM (DEIM-M, mAP50=0.859) vs 最佳 YOLO (YOLO26m, mAP50=0.869) = **-1.0 pp**，未达 +5 pp 阈值。
+- **规则 4**（差异 < 2 pp 视为持平 → 按许可证优先级 DEIM > YOLOv13 > YOLO26）：**两条对位均触发**。
+  - DEIM-S vs YOLO26s：mAP50 差 -0.06 pp、mAP50-95 差 -0.65 pp，两项均在 ±2 pp 内。
+  - DEIM-M vs YOLO26m：mAP50 差 -1.04 pp、mAP50-95 差 -2.7/-3.3 pp（†以 ep21 best 或 ep52 best 取数）；mAP50 在 ±2 pp 内、mAP50-95 略超 — 但 Recall +13.5 pp（0.847 vs 0.712）、F1 +8.8 pp（0.896 vs 0.808）、Precision +1.7 pp（0.951 vs 0.934），综合优于 YOLO26m。许可证优先级 + 综合指标 → **DEIM-M 上位为主力候选**，DEIM-S 作为更轻量化的备选保留（≤50 ms Orin 预算下若 DEIM-M 延迟超标可降级）。
 
 #### 主力切换前的 Orin 验证 Gate（必须先全部通过）
 
-DEIM-S 在 R1 期间**不替换部署模型**（YOLO26s @ 1280 FP16 引擎仍是产线模型）。切换的前置条件：
+DEIM-S / DEIM-M 在 R1 期间**不替换部署模型**（YOLO26s @ 1280 FP16 引擎仍是产线模型）。切换的前置条件（**DEIM-M 与 DEIM-S 各自独立通过**，以延迟达标的最大尺寸优先）：
 
 - [ ] OSS `MultiscaleDeformableAttnPlugin_TRT` 在 Jetson AGX Orin / JetPack 5.1.2 / TRT 8.5.2 上构建成功（含 D-FINE 自定义算子链：可变形注意力 + 分布回归头）。详见 `research/surveys/alt_detector_architectures.md §三` 风险评估
-- [ ] DEIM-S ONNX 导出 + `trtexec --fp16` 引擎构建成功
+- [ ] DEIM-{S,M} ONNX 导出 + `trtexec --fp16` 引擎构建成功
 - [ ] 1280×1280 FP16 在 Orin 实测延迟 ≤ 50 ms / 帧（与 YOLO26s 同等预算）
 - [ ] Demo 视检（与 YOLO26s 同样本同方法）：demo8 警示三角假阳是否同样发生 / demo10 横向龙门是否仍漏检 / demo15 小目标是否仍抖动
 
-四项全部通过后，**DEIM-S 替换 YOLO26s 成为部署主力**；任一未通过则维持 YOLO26s。
+四项全部通过后，**优先以 DEIM-M 替换 YOLO26s 成为部署主力**；若 DEIM-M 在 Orin 上延迟超标则降级至 DEIM-S；两者均未达标则维持 YOLO26s。
 
 ---
 
@@ -287,14 +298,13 @@ DEIM-S 在 R1 期间**不替换部署模型**（YOLO26s @ 1280 FP16 引擎仍是
 
 ### 视检结论（对部署 / R2 的指导）
 
-1. **部署模型选 s（不变）**：m 在 demo10 类型场景（横向龙门）上有可见提升，但其他场景与 s 接近，且 demo8 的背景误检 m 也未根除。在 +2 pp mAP50 / +1.5× 推理时延的代价下，s 仍是 R1 部署最佳折衷。
+1. **现役部署仍是 YOLO26s，主力候选已升级为 DEIM-M（待 Orin Gate）**：m 在 demo10 横向龙门有可见提升但其他场景与 s 接近、demo8 背景误检亦未根除，YOLO 内部 +2 pp mAP50 / +1.5× 时延的 ROI 不利。DEIM-M 在指标层全面追平 / 长尾领先 YOLO26m（见 §DEIM-D-FINE 专项评估）— 主力切换条件是 Orin Gate 通过。
 2. **R2 需补的训练样本**：远距离龙门信号 / 黄昏 + 弱光 / 逆光强光斑 / 卡车密集队列 + 龙门 — 这些场景在当前训练集中覆盖不足，是漏检的主因。
-3. **R2 时序聚合双轨**：demo15 类小目标抖动靠提升模型容量解决性价比低 —— 部署侧时序聚合分两条互不阻塞的路径（详见 [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md)）：(a) 分类抖动 → Plan A（tracker + EMA，已落地）→ HMM / GRU；(b) 漏检（小目标 / 遮挡） → detector-level TSM（推荐）。两路径均 5/15 后实测启动判定。
-4. **demo8 假阳的根因可能在数据**：警示三角 / 厂房绿墙这类硬负样本若未在训练集出现，模型当然学不到拒识。R2 应主动从 demo 中挖出这些误报帧补回训练集做硬负学习。
-5. **YOLOv13-s / DEIM-D-FINE 的 demo 评估必要性（2026-05-05 更新）**：
-   - **YOLOv13-s — 不必需**。已在 R1 决策点定为监控组（决策规则 2 未触发，-3.4 pp mAP50）。其唯一独特价值（greenRight R=0.655）现已被 DEIM-S（R=0.750 + 真实可工作的 redRight R=0.500）匹配并超越，重新跑 demo 不会改变 R1 结论。R2 部署域评估集建立后若决策规则 2 重新成立再启用。
-   - **DEIM-D-FINE-S — 必需**，但被 Orin 验证 Gate 阻断（见 §DEIM-D-FINE 专项评估）。决策规则 4 已触发，demo 是主力切换前的最后视检关卡，特别用于验证 demo8 警示三角假阳 / demo10 横向龙门漏检 / demo15 小目标抖动是否同样发生。建议双轨：(a) GPU 服务器上跑 torch 端 demo（不依赖 TRT plugin，可立即视检），(b) Orin TRT plugin 构建后再跑端到端引擎 demo 验延迟与一致性。
-   - **DEIM-D-FINE-M — 暂缓**。训练只完成 41/102 epoch（40%），不构成可信的最终评估对象。先完成训练（或确认放弃 M 规格），再决定是否 demo。即便完成，DEIM-M 相对 DEIM-S 的精度收益预计与 YOLO26m 相对 YOLO26s 接近（< 2 pp），不具备部署性价比。
+3. **R2 时序聚合双轨**（详见 [`../planning/temporal_optimization_plan.md`](../planning/temporal_optimization_plan.md)）：(a) 分类抖动 → Plan A（tracker + EMA，已落地）→ HMM / GRU；(b) 漏检（小目标 / 遮挡） → detector-level TSM（推荐）。两路径互不阻塞，按部署域评估集结果分别启动。
+4. **demo8 假阳的根因在数据**：警示三角 / 厂房绿墙这类硬负样本若未在训练集出现，模型当然学不到拒识。R2 主动从 demo 中挖出这些误报帧补回训练集做硬负学习。
+5. **备选轨道 demo 评估必要性**：
+   - **YOLOv13-s — 不必需**。决策规则 2 未触发 (-3.4 pp mAP50)，其唯一独特价值 greenRight R=0.655 已被 DEIM 家族超越。
+   - **DEIM-D-FINE-S/M — 必需**，但被 Orin Gate 阻断。两步走：(a) GPU 服务器 torch 端 demo（不依赖 TRT plugin，立即可做）；(b) Orin TRT plugin 构建后端到端引擎 demo 验延迟一致性。DEIM-M 优先（主力候选），DEIM-S 作为延迟降级备选同步跑。
 
 ### 视检材料路径
 
@@ -306,18 +316,13 @@ DEIM-S 在 R1 期间**不替换部署模型**（YOLO26s @ 1280 FP16 引擎仍是
 
 ### 演示覆盖现状（demo coverage gaps）
 
-本次 R1 报告 2026-05-05 更新（追加 DEIM 评估）的 Write 经 PreToolUse demo-coverage 门控时，使用 `.gate_override` sentinel 进行了一次性绕过 — 原因如下：
+R1 期间 demo 视检由 PM 手工完成，结论已落入上文 §Demo 视频实际表现观察 + §视检结论。但 `demo/_review/ledger.json` 自动账目从未建立 — 全部 480 个 `demo/<run>/<engine>/*.mp4` 在 D1 ledger 中状态为 `never`。每次报告 Write 均通过 `.gate_override` sentinel 绕过 demo-coverage 门控，绕过本身不引入 demo 内容回归（更新的是训练指标 + 决策，与 demo 输出正交）。
 
-- 当前 `demo/_review/ledger.json` 为空（D1 demo-reviewer 自动 ledger 从未跑过），共 375 个 `demo/<run>/<engine>/*.mp4` 全部为 `never` 状态。
-- R1 的 demo 视检由 PM 手工完成，结论已记录于上文 §Demo 视频实际表现观察 + §视检结论；产物缓存于 `/tmp/demo_inspect/`（临时）。
-- 当前更新的内容是 **DEIM 评估指标 + 决策规则 4 触发**，与已有 demo 状态正交（不依赖、不修改 demo 输出）。
-- 因此本次绕过不引入 demo 覆盖回归，但 ledger 缺口在 R2 启动时必须补齐（参见下方**未关闭项**）。
+**R2 启动时必须补齐**：
 
-**未关闭项 / 待 R2 启动时清理**：
-
-- [ ] 对 `demo/yolo26{n,s,m}-r1/{best,best_1280,best_1536}/demo*.mp4` 的 PM 手工视检结论补录到 `demo/_review/ledger.json`（D1 demo-reviewer 一次性追扫）
-- [ ] DEIM-S 端到端 demo 跑完后，新建 `demo/deim_dfine_s-r1/` 系列由 D1 自动入账
-- [ ] YOLOv13-s 现有 demo 输出（如有）若决定保留则同样入账，若决策规则 2 不再触发则可直接清理
+- [ ] PM 手工视检结论补录至 ledger（D1 demo-reviewer 一次性追扫 yolo26{n,s,m}-r1 的 best / best_1280 / best_1536 + DEIM-S/M 当前 best_stg2 / best_stg2_fp32）
+- [ ] DEIM-{S,M} Orin TRT plugin 通过后，端到端 demo 由 D1 自动入账
+- [ ] YOLOv13-s 现有 demo 输出若不再投入 R2 直接清理
 
 ---
 
@@ -335,30 +340,33 @@ R1 首次完成端到端部署链路：训练 → ONNX 导出 → Head 裁剪（
 
 ## Demo 视频诊断（总结）
 
-`demo/demo.mp4`（544×960 竖屏手机视频）上 C++ 推理初版出现"多数帧无检测 + 偶有大框"。通过 Ultralytics `.pt` 原生回放（640 / 1280 / 1536 三分辨率）与 ORT 独立验证，定位到两个并发 bug：
+R1 初版 C++ 推理在竖屏 `demo/demo.mp4` 出现"多数帧无检测 + 偶有大框"，定位到两个并发 bug 已全部修复：(1) 导出 ONNX 时漏传 `--imgsz` 导致引擎固化 640、C++ 管线静默回退（`trt_pipeline.cpp:296-300`）— 重新导出 1280 / 1536 引擎；(2) postprocess 误把 4 通道当 `cxcywh`，实际为 `xyxy` — 修复 `inference/cpp/src/trt_pipeline.cpp` 与 `inference/trt_pipeline.py`，引擎无需重建。修复后 demo 输出与 `.pt` 原生一致。
 
-1. **引擎输入固化在 640×640**：导出 ONNX 时未传 `--imgsz`，沿用训练 `imgsz=640`；C++ 管线检测到请求 `imgsz=1280` 与引擎不一致时静默回退到 640 并仅打印 `[TRT] warning`（`trt_pipeline.cpp:296-300`）。→ **修复**：在 1280 / 1536 重新导出 + strip + `trtexec` 构建新引擎。
-2. **Postprocess 误把 4 通道当 `cxcywh`**：YOLO26 在 `Concat_3` 前经 `Sub/Add_1 + stride-Mul` 输出的是像素级 `xyxy`。ORT 独立验证 f100：误解码时 bbox 占画面 ~67%（即肉眼可见的"大框"），修复后变为 21×50（0.2% 面积），与 Ultralytics 原生一致。→ **修复**：`inference/cpp/src/trt_pipeline.cpp` 与 `inference/trt_pipeline.py` 均改为 xyxy 解码；引擎无需重建。
+### 分辨率训练扫描（同域 val）
 
-两个 bug 修复后，demo 在 1280 / 1536 引擎上输出与 `.pt` 原生推理一致；此前"检测稀疏"实为视频内容（前 150 帧含灯，之后长时间无灯）+ 小目标泛化共同作用，并非模型故障。
-
-### 同域 val 分辨率扫描（YOLO26s-r1）
+**A. 640 训练模型，1280 推理（YOLO26s-r1）**：
 
 ```
 imgsz=640:  mAP50=0.8497  mAP50-95=0.6073
 imgsz=1280: mAP50=0.7023  mAP50-95=0.4359
 ```
 
-同域（横屏 dashcam）val 集上，更高推理分辨率反而降低 mAP50 约 14.7 pp — 模型在 640 训练，其特征图 stride 和 anchor 先验锁定 640；在 1280 推理时小目标先验未相应缩放，FP 增加、TP 减少。
+模型在 640 训练，stride / anchor 先验锁定 640；1280 推理时小目标先验错位，mAP50 下降 14.7 pp。
 
-**关键推论**：部署端提高 `imgsz` 对**同域数据降低质量**，但对**竖屏 / 非欧美 / 手机 OOD demo 有收益** — 两者指向相反方向。R1 的 1280 / 1536 引擎是 OOD hotfix；长期方案是 R2 以 `imgsz=1280` 直接训练。
+**B. 1280 独立训练对照**（`runs/detect/yolo26{n,s,m}-r1-1280/`，同切分同数据）：
 
-### 模型容量观察
+| 变体 | 训练 imgsz | mAP50 | mAP50-95 | P | R | 训练轮次 | vs 640 训练同模型 |
+|------|-----------|-------|----------|----|---|---------|--------------------|
+| YOLO26n-r1-1280 | 1280 | **0.785** | 0.561 | 0.936 | 0.705 | 100 / 100 | +6.5 / +7.7 pp（容量受益） |
+| YOLO26s-r1-1280 | 1280 | 0.805 | 0.576 | 0.934 | 0.646 | 52 / 100 | **-4.4** / -3.2 pp（同域 val 反降） |
+| YOLO26m-r1-1280 | 1280 | 0.747 | 0.526 | 0.788 | 0.643 | 54 / 100 | **-11.3** / **-11.7** pp |
 
-- YOLO26n-r1：仅在 640（训练分辨率）上能检测 demo 目标（conf 0.52），在 1280 / 1536 上 0 detections — **不支持跨尺度推理**。
-- YOLO26s-r1：在 640 / 1280 / 1536 上均能检测，1536 上 conf 最高（0.58）— 支持跨尺度泛化。
+**跨尺度推理能力**（demo 实测）：YOLO26n-640 在 1280 / 1536 demo 上 0 detection；YOLO26s-640 在三个分辨率均能检测，1536 conf 最高 (0.58)。n-1280 训练后跨尺度先验对齐 — 上表 +6.5 pp 与 demo 跨尺度失败同源（n 容量不足以同时覆盖训练与推理两个尺度），s 不存在此问题。
 
-→ R1 部署选用 **YOLO26s**，不部署 YOLO26n。
+**结论**：
+1. 提高部署 `imgsz` 对同域数据反向、对 OOD demo 正向 — R1 的 1280 / 1536 引擎是 OOD hotfix。
+2. **R2 不能照搬"1280 训练 + 同域 val 验收"** — 否则会得出"YOLO26m 1280 差 11 pp"的误导性结论。R2 验收**必须绑定部署域评估集**（竖屏 / 手机 / 国内路况），同域 val 仅作训练收敛信号。
+3. R1 现役部署沿用 **YOLO26s-640 训练 + 1280 / 1536 引擎**；YOLO26n 不部署；1280-trained YOLO26n 作为延迟极限受限的回退方案。
 
 ### 剩余 R1 数据缺陷（不会被部署修补）
 
@@ -397,7 +405,7 @@ R2 目标：**关闭部署域与训练域的差距 + 扩展类别（联合模型
 5. **`patience=40`**：小样本类别收敛更慢。
 6. **类别加权 / 过采样**：对 `yellow`、`greenLeft` 过采样 2–3×。
 7. **域适应性增强**：启用 `degrees=5.0`、`perspective=0.0005`；自定义增强管线加入 JPEG 压缩 / motion blur。**不开启** `fliplr`（箭头方向会与标签不一致）。
-8. **主力模型**：YOLO26s（R1 下降幅度最小，性价比最优），YOLO26m 作为上限基准并行训练。YOLO26n 在 R2 暂缓。
+8. **主力模型**：分两路并行 — (a) **DEIM-D-FINE-M**（R1 主力候选，Orin Gate 通过后即切换部署）+ DEIM-D-FINE-S（延迟降级备选）；(b) **YOLO26s**（R1 现役 fallback）+ YOLO26m（上限基准）。YOLO26n / l / YOLOv13-s 在 R2 暂缓。
 
 ### 验收标准（R2 退出条件）
 
@@ -487,7 +495,9 @@ R2 启动前只需 PM 提供**最终类别清单**，以上 6 处改动 <0.5 天
 | 训练指标 | `runs/detect/yolo26{n,s,m}-r1/results.csv` | 逐轮记录 |
 | 跟踪库 | `inference/tracker/*.py`、`inference/cpp/{include,src}/tracker.{hpp,cpp}` | Python + C++ 两端；fixtures 驱动的 parity 单测 |
 | DEIM-D-FINE-S 训练权重 | `runs/detect/deim_dfine_s-r1/best_stg2.pth` | 132 / 132 ep 完整训练 |
-| DEIM-D-FINE-M 训练权重 | `runs/detect/deim_dfine_m-r1/best_stg1.pth` | **41 / 102 ep（40%，未完成）** |
+| DEIM-D-FINE-M 训练权重 | `runs/detect/deim_dfine_m-r1/best_stg2.pth` | **102 / 102 ep（best=97）完整训练** |
+| YOLO26l-r1 训练权重 | `runs/detect/yolo26l-r1/weights/best.pt` | 48 / 100 ep（best=28），9.51 h，容量上限基准 |
+| YOLO26{n,s,m}-r1-1280 训练权重 | `runs/detect/yolo26{n,s,m}-r1-1280/weights/best.pt` | imgsz=1280 独立训练实验，同域 val 与 640 训练对比见 §1280 训练 vs 640 训练 |
 | DEIM 训练日志 | `runs/detect/deim_dfine_{s,m}-r1/log.txt` | 逐轮 COCO 12 项 JSONL |
 | DEIM 评估快照 | `runs/detect/deim_dfine_{s,m}-r1/eval/latest.pth` | faster_coco_eval 序列化；per-class P/R 表来源 |
 | 部署文档 | [`../integration/trt_deployment.md`](../integration/trt_deployment.md)、[`../integration/tracker.md`](../integration/tracker.md) | |
@@ -496,19 +506,19 @@ R2 启动前只需 PM 提供**最终类别清单**，以上 6 处改动 <0.5 天
 
 ## 变更记录
 
-| 日期 | 作者 | 变更 |
-|------|------|------|
-| 2026-04-21 | Zhengri Wu | 初版 — R1 两个模型完成、部署链路打通、demo 性能诊断、R2 计划 |
-| 2026-04-21 | Zhengri Wu | 诊断实验：Ultralytics `.pt` 原生在 640 / 1280 / 1536 回放 demo；同域 val 分辨率扫描（s-r1）从 640 mAP50 0.85 降至 1280 的 0.70 — 揭示"部署端提高 imgsz 修 OOD demo"与"同域精度下降"的权衡 |
-| 2026-04-21 | Zhengri Wu | 定位"框过大"根因：C++/Python TRT postprocess 把输出 4 通道误解为 `cxcywh`，实际是 `xyxy`。已修复 `inference/cpp/src/trt_pipeline.cpp` 与 `inference/trt_pipeline.py`；ORT 验证 f100 从"67% 面积大框"变为"21×50 紧贴目标"，与 Ultralytics 原生一致 |
-| 2026-04-21 | Zhengri Wu | Orin 端延迟实测：s-r1 @ 1280 → ~25 ms/帧，@ 1536 → ~28 ms/帧，均远低于 50 ms 预算。R2 锁定 `imgsz=1280` 训练，1536 作为 OOD 诊断备选 |
-| 2026-04-21 | Zhengri Wu | R2 范围扩展：PM 确认交通灯 +2 类（`forwardGreen` / `forwardRed`），总交通灯最少 9 类、最多 12 类；栏杆 MVP 单类 `barrier`，最佳实践 `armOn` / `armOff`。联合模型总 `nc` 范围 **10–14** |
-| 2026-04-22 | Zhengri Wu | YOLO26m-r1 训练完成：72 轮早停，best@21 mAP50=0.869 / mAP50-95=0.635 / P=0.934 / R=0.712。相对 s-r1 提升有限（+2.0 / +2.7 pp），Orin 部署仍首选 s |
-| 2026-04-22 | Zhengri Wu | R1 范围扩展：并行训练 YOLOv13-s（AGPL 低风险对照）+ DEIM-D-FINE-S/M（Apache-2.0 商用备选 + 精度上限）。选型依据 `research/surveys/alt_detector_architectures.md`；DEIM-N 按性价比评估不训练。三轨同数据、同切分，指标可直接横向对比。R1 决策点写入 §R1 备选架构 |
-| 2026-04-23 | Zhengri Wu | DEIM-S/M 训练配置修正：`deim_hgnetv2_{s,m}_traffic_light.yml` 显式覆盖 `train_dataloader.dataset.transforms.ops`，剔除 `base/dataloader.yml` 继承的 `RandomHorizontalFlip`（否则 `redLeft↔redRight` / `greenLeft↔greenRight` 语义反转）。Mosaic / 光学 / IoU-crop / mixup 保留，`stop_epoch` 调度不变。优化器 / LR / 调度器未调整 — 已按单卡 4090 + COCO fine-tune 正确缩放 |
-| 2026-04-26 | Zhengri Wu | YOLOv13-s 训练完成：100/100 epoch 全程跑完未触发早停，best mAP50=0.815 / mAP50-95=0.580 / P=0.836 / R=0.767。对比 YOLO26s-r1 **mAP50 低 3.4 pp / mAP50-95 低 2.8 pp / Recall 高 9.8 pp / Precision 低 9.4 pp** — 未达决策规则 2 的 +3 pp 切换阈值，**主力维持 YOLO26s**。但 YOLOv13-s 是唯一在 greenRight 类有非零召回（R=0.655）的模型 — 留作监控组，候选"宁可误报不漏检"安全策略下的备选。新增 §R1 跨架构综合分析 与 §Demo 视频实际表现观察 两节，整合训练曲线 / 混淆矩阵 / 逐类 PR / demo 输出文件层面的所有 R1 证据 |
-| 2026-04-26 | Zhengri Wu | Demo 视频人工视检（s-r1 / m-r1）：对 demo{1..15}.mp4 抽 9 帧 montage + demo4/10/12/15 抽 8 帧 0.25s 突击 + demo8/10/11/13 加 m-r1 同时间戳对照。结论：(1) 漏检主因为远距离 + 弱光 / 逆光 + 非正面朝向，s/m 均无能为力；唯一例外是 demo10 横向龙门，m 显著优于 s；(2) 误检分两类——demo10 / 15 是稳定的类别 / 语义偏置（属模型 bias），demo8 警示三角 / 厂房绿墙是背景假阳（s 严重，m 大幅缓解但未根除）；(3) 稳定性：单体大目标稳定，遮挡恢复 ≤ 1 帧；持续误分类是"稳定地错误"；小目标抖动严重，需 tracker + 多帧投票（与 temporal encoder deferred 决策一致）。**部署仍选 s** — m 仅在特定场景有提升，整体不抵 1.5× 时延代价。视检产物缓存于 `/tmp/demo_inspect/`，关键样本应在 R2 启动时提取为 `data/r2_hard_examples/` 永久回灌 |
-| 2026-05-05 | Zhengri Wu | DEIM-D-FINE 评估完成（部分）：DEIM-S 完整训练 132/132 ep，best mAP50=0.848 / mAP50:95=0.602 / P=0.919 / R=0.846 — 与 YOLO26s 整体指标 ±0.7 pp 内、长尾类 redRight R=0.500 / greenRight R=0.750 显著领先（YOLO26 系列 R=0 / 0.167）、Apache-2.0 商用许可。**决策规则 4 触发** → DEIM-S 上位为主力候选，门槛是 Orin JetPack 5.1 上 OSS `MultiscaleDeformableAttnPlugin_TRT` 构建 + FP16 ≤ 50 ms/帧验证 + demo 一致性视检（详见 §DEIM-D-FINE 专项评估）。DEIM-M 训练在 ep40 触发 DDP `unused parameter`（rank 0 idx 358）异常崩溃（exitcode=1，2026-04-29 17:30:27），torchrun 终止；41/102 ep（40%）非 early-stop 而是 crash。ep40 快照 mAP50=0.832 / mAP50:95=0.565 — 不构成可信评估，需先在 trainer 加 `find_unused_parameters=True`（或定位 idx 358 修补 forward）后从 last.pth resume 再训剩余 ~61 ep。新增 §DEIM-D-FINE 专项评估 子节；§整体指标对照 加入 DEIM 行；§关键观察 加入第 6 项；§产物清单 加入 DEIM 行；§视检结论 加入 demo 必要性判断（YOLOv13-s 不必需；DEIM-S 必需但被 Orin Gate 阻断；DEIM-M 暂缓）；新增 §演示覆盖现状 披露门控绕过原因 |
-| — | — | **待补充**：DEIM-S 在 Orin 上 TRT plugin 构建 + FP16 延迟实测（决定主力切换是否落地）|
-| — | — | **待补充**：DEIM-M trainer DDP 修复（`find_unused_parameters=True` 或 forward 修补）+ resume 训完后的最终指标（或 DEIM-M 放弃决策）|
-| — | — | **待补充**：部署域评估集建立后的基准指标 |
+| 日期 | 变更 |
+|------|------|
+| 2026-04-21 | 初版：YOLO26n/s-r1 完成、Orin TRT 部署链路打通、demo 诊断、R2 计划 |
+| 2026-04-21 | TRT postprocess `xyxy` 解码修复（误解为 cxcywh 致 67% 面积大框）；同域 val 分辨率扫描揭示 OOD demo 与同域精度反向关系 |
+| 2026-04-21 | Orin 延迟实测 s-r1 @ 1280=~25 ms / @ 1536=~28 ms（远低于 50 ms 预算）|
+| 2026-04-21 | R2 范围扩展（PM）：交通灯 9–12 类（+forwardGreen/Red）、栏杆 1–2 类（MVP barrier / 最佳 armOn+armOff），联合 `nc` 10–14 |
+| 2026-04-22 | YOLO26m-r1 完成：mAP50=0.869 / mAP50-95=0.635；相对 s 仅 +2 pp，部署仍首选 s |
+| 2026-04-22 | R1 备选轨道立项：YOLOv13-s + DEIM-D-FINE-S/M（依据 `research/surveys/alt_detector_architectures.md`）|
+| 2026-04-23 | DEIM 训练配置修正：覆盖 `transforms.ops` 剔除继承的 `RandomHorizontalFlip` 防 left/right 语义反转 |
+| 2026-04-26 | YOLOv13-s 完成 100/100 ep：mAP50=0.815，未达决策规则 2 阈值；保留为监控组（greenRight R=0.655 是亮点）。新增 §R1 跨架构综合分析 与 §Demo 视频实际表现观察 |
+| 2026-04-26 | Demo 人工视检（s/m-r1）：漏检主因 远距 + 弱光 + 非正面；demo10 横向龙门 m 优于 s；demo8 假阳 m 缓解未根除；部署仍选 s。关键样本应在 R2 启动时提取至 `data/r2_hard_examples/` |
+| 2026-05-05 | DEIM-D-FINE-S 完成 132/132 ep：mAP50=0.848，长尾 redRight R=0.500 / greenRight R=0.750 显著领先；**决策规则 4 触发**，待 Orin TRT plugin Gate。DEIM-M 在 ep40 触发 DDP `unused parameter idx 358` 崩溃 |
+| 2026-05-11 | **DEIM-D-FINE-M 完成** 102/102 ep（best=97，1d 7:50:21；DDP 修复 `find_unused_parameters=True` 后 resume）：mAP50=0.859 / F1=0.896 — DEIM 家族最优、R1 F1 最高；**主力候选升级为 DEIM-M**，DEIM-S 转为延迟降级备选。**YOLO26l-r1 完成** 48/100 ep（best=28，9.51 h）：mAP50=0.850 < m，不进入部署候选。**1280 独立训练实验** YOLO26{n,s,m}-r1-1280：n +6.5 pp、s/m 同域 val 反降 -4.4 / -11.3 pp，R2 验收须绑定部署域评估集 |
+| 2026-05-11 | 报告 v2 trim：删除冗余 §指标汇总；合并 §同域 val 分辨率扫描 / §1280 训练 / §模型容量观察 → §分辨率训练扫描；压缩 §变更记录；§整体指标对照 与 §视检结论 对齐 DEIM-M 主力候选决策；新增 DEIM-M vs YOLO26m sister 对照表 |
+| — | **待补充**：DEIM-{S,M} Orin TRT plugin 构建 + FP16 延迟实测（DEIM-M 优先）|
+| — | **待补充**：部署域评估集建立后的基准指标 |

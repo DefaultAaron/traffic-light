@@ -146,21 +146,57 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 
 **推荐度**：⭐⭐⭐⭐⭐（直接补缺口 ④，报告 §视检结论已暗示要做）。
 
-### 3.4 知识蒸馏（M → S）
+### 3.4 知识蒸馏（M / L → S，双轨部署）
 
-**机制**：用 DEIM-M 或 YOLO26-m 作为 teacher，对 s 档 student 加蒸馏损失（KL on logits + L2 on neck feature maps）。R1 已经训出 m 档（仅作上限对照不部署），蒸馏让 m 的精度向 s 转移而不增加 s 的推理成本。
+**机制**：用 DEIM-D-FINE-M / DEIM-D-FINE-L / YOLO26-m 作为 teacher，对 s 档 student 加蒸馏损失（KL on logits + L2 on neck feature maps + FDR↔DFL 分布回归对齐）。R1 已经训出 m 档，DEIM-L 正在训（2026-05-11 启动，~2.5d 后落地 `runs/detect/deim_dfine_l-r1/best_stg2.pth` 自动解锁 §七 A7）。蒸馏让大教师的精度向 s 转移而不增加 s 的推理成本。
 
-**文献**：Hinton et al. 2015；FitNets (Romero 2015)；YOLO 系列对应 LD (Logit Distillation)，文献 +1–3 pp mAP 不增加 latency。
+**文献**：Hinton et al. 2015；FitNets (Romero 2015)；LD (Logit Distillation, Zheng 2022)；PKD (Pearson Knowledge Distillation, Cao 2022)；TAKD (Teacher Assistant KD, Mirzadeh 2020)；ESKD (Early-stopping KD, Cho 2019)。文献 +1–3 pp mAP 不增加 latency。
 
-**契合痛点**：所有痛点（精度普遍提升）；尤其是边界混淆（提高决策余量）和持续误分类（teacher 提供修正信号）。
+**部署侧约束（2026-05-11 锁定）**：
 
-**Orin 影响**：零（仅训练时多一份 teacher forward）。
+- **学生侧锁定 S 双轨**：YOLO26-s **和** DEIM-D-FINE-S 同时作为 R2 部署候选；M / L 仅作教师 / 上限基准，不部署。
+- **DEIM 稳定性观察**：R1 demo 视检显示 DEIM-S/M 同物体置信度逐帧抖动幅度大于 YOLO，长尾 bbox 漂移、demo8 警示三角假阳拒识弱于 YOLO26-m。这不构成 DEIM 退选理由，但要求部署前调参（conf / NMS / FDR `reg_max` / mixup / mosaic stop_epoch）。
+- **部署调参时机**：R2 close 之后按需触发（YOLO 侧亦可能需要）；调参在 §pre-deploy AGV 阶段执行，**不阻塞** KD 消融或 ship-decision。
 
-**工作量**：1–2 周（接入蒸馏损失 + R2 同步训练）。
+**Teacher / Student 候选矩阵**（与 `docs/planning/additional_components_plan.md` §七 Cell 矩阵保持一致）：
 
-**风险**：teacher 自身在难场景的偏差会传给 student；建议蒸馏权重不宜过高（α=0.3–0.5）。
+| Cell | Student | Teacher | 方法 | 优先级 |
+|------|---------|---------|------|--------|
+| A1 | YOLO26-s + DEIM-D-FINE-S（双轨） | — | scratch baseline | P0 |
+| A2a | YOLO26-s | YOLO26-m | cls-logit KL | P0 |
+| A2b | DEIM-D-FINE-S | DEIM-D-FINE-M | LD on FDR + cls-logit KL | P0 |
+| A3 | S 双轨 | 同家族 M | PKD feature-level | P0 |
+| A4 | S 双轨 | 同家族 M | A2 + A3 combined | P1 |
+| **A6** | YOLO26-s | DEIM-D-FINE-M | **跨架构**：logit + FDR↔DFL 分布对齐 + projection MLP | **P1**（同时利用 DEIM 长尾召回 + YOLO 推理稳定） |
+| **A7** | DEIM-D-FINE-S | **DEIM-D-FINE-L**（in training） | TAKD / ESKD / projection MLP | **P1**（DEIM-L 落地自动解锁；YOLO26-l mAP50 0.850 < m，不合格） |
+| A5 | S 双轨 | 同家族 M → 互补家族 M | 渐进 2-teacher | P2 |
 
-**推荐度**：⭐⭐⭐⭐（"免费午餐"，与 R2 训练同步即可，不延后主线）。
+**A6 跨架构提升说明**：DEIM-M 在 R1 长尾类有决定性优势（redRight R=0.500 / greenRight R=0.750），但推理稳定性弱于 YOLO；YOLO26-s 推理稳定但长尾几乎为零（greenRight R=0）。跨架构 KD 是把"DEIM 长尾教学信号 → YOLO 稳定推理路径"的唯一单路径方案。预条件：1d projection 层设计 spike（DETR query embed ↔ YOLO 多尺度特征），spike 通过后再 1-week PoC（长尾 recall ≥ +5 pp 且 mainstream P/R 不掉）。
+
+**Pre-R2 R1 数据 rehearsal**（不阻塞 R2 数据冻结，立即可启动）：
+
+| Rehearsal | 状态 | 输出 |
+|---|---|---|
+| KD A1 wall-clock | active | `runs/rehearsal_kd_A1_walltime_estimate.json` |
+| KD A2a R1（YOLO26-m → YOLO26-s） | active | `runs/rehearsal_kd_A2a_R1.json` |
+| KD A2b R1（DEIM-M → DEIM-S） | active | `runs/rehearsal_kd_A2b_R1.json` |
+| KD A6 design spike | active（paper-only） | `runs/rehearsal_kd_A6_design_spike.json` |
+
+启动顺序：A6 spike（day 0，GPU-free）+ A1 wall-clock（day 0-1）→ A2a（day 1-2）→ A2b（day 2-4）。Drawdown 顺序：先丢 A2b（DEIM 训练最慢），保留 A1 + A2a + A6 spike。
+
+**契合痛点**：所有痛点（精度普遍提升）；尤其是边界混淆（提高决策余量）、持续误分类（teacher 提供修正信号）、长尾类（A6 把 DEIM 的长尾信号注入 YOLO）。
+
+**Orin 影响**：零（仅训练时多一份 teacher forward）；A6 学生侧 YOLO26-s 部署延迟与现役 R1 相同。
+
+**工作量**：A2a/b 各 1-2d（R1 rehearsal）+ R2 数据上 1-2 周（同步主训练）；A6 spike 1d + PoC 1 周；A7 在 DEIM-L 落地后 1 周。
+
+**风险**：
+
+- teacher 自身在难场景的偏差传给 student → 蒸馏权重不宜过高（α=0.3-0.5）；DEIM 教师专门做 stability baseline 记录，post-R2 必要时触发参数调优。
+- A6 投影层设计失败 → A6 降级 P2 / research-only，不影响 P0 主线。
+- DEIM-L 训练若崩溃（如 DEIM-M 早期 ep40 DDP 历史）→ A7 延后，不阻塞 P0。
+
+**推荐度**：⭐⭐⭐⭐⭐（"免费午餐"，与 R2 训练同步；A6 跨架构是唯一同时解决 DEIM 长尾 + YOLO 稳定的路径）。
 
 ### 3.5 自监督预训练（DINOv2 / MAE on R2 raw video）
 
@@ -422,7 +458,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 | 3 | 地图先验门控（§4.2） | 集成 | 背景误检 ④ + SAHI 触发器 | ~1 周 | ✅ |
 | 4 | SAHI 切片推理（§3.7） | 推理 | 远距小目标 ④' | ~1 周 | ⚠️ 5/15 后启动可接受 |
 | 5 | HDR 相机决策（§4.1） | 系统 | 物理层 ① | 决策成本 | ⚠️ R2 采集前必须拍板 |
-| 6 | 知识蒸馏 M→S（§3.4） | 训练 | 普遍 | 1–2 周 | ✅ R2 训练同步 |
+| 6 | 知识蒸馏 M/L→S 双轨（§3.4） | 训练 | 普遍 + 长尾 | A2 1-2 周（R2 同步）；A6 spike 1d + PoC 1 周；A7 待 DEIM-L | ✅ R2 训练同步 + pre-R2 R1 rehearsal 已激活 |
 | 7 | 主动学习闭环（§4.3） | 集成 | 持续误分类 ③ | ~1 周设置 | ⚠️ 部署后启动 |
 | 8 | 多相机融合（§4.4） | 系统 | 遮挡 / 朝向 | 取决于现状 | ⚠️ 需对齐 |
 | 9 | SSL 预训练（§3.5） | 训练 | 长尾 / OOD | ~1 周 + 训练 | ✅ 仅当 R2 raw 保留 |
@@ -439,7 +475,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 | §3.1 Copy-paste | `development_plan.md` | 在 §三 R2 训练策略中明确启用 |
 | §3.2 类不平衡损失 | `development_plan.md` | 同上 |
 | §3.3 硬负样本挖掘 | `development_plan.md` | §五.1 数据问题 + §六里程碑加 R2-硬负 步骤 |
-| §3.4 知识蒸馏 | `development_plan.md` | §三 R2 训练策略中加 KD 选项 |
+| §3.4 知识蒸馏 双轨 | `additional_components_plan.md` §七 + `pre_r2_kickoff_checklist.md` §2.5 | Cell 矩阵 / Gate 6 / R1 rehearsal active list 已对齐 |
 | §3.5 SSL 预训练 | `temporal_optimization_plan.md` §0.3 数据共享 + `development_plan.md` 数据 SOP | 主要约束是 raw video 必须保留 |
 | §3.7 SAHI | `temporal_optimization_plan.md` §3 备选 detector-level 路径 | 与 TSM 并列为单帧 / 时序两条小目标增强路线 |
 | §4.1 HDR 相机 | `development_plan.md` §五 风险 | PM 决策项标注 |

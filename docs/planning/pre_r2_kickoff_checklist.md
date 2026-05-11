@@ -97,16 +97,17 @@ v1.1 LOCK 2026-05-10
 | `r3_inference_budget_window` | R3 推理预算窗口 |
 | `map_prior_landed` | map-prior a-stage LANDED |
 
-### 1.1 R2 验证集 freeze + 分层 audit subset
+### 1.1 R2 验证集 freeze + 分层 audit subset + 训练 imgsz 决策
 
 - [ ] a. manifest schema + sampling rule 冻结；schema / sampling code hash 入 manifest。
 - [ ] b. 生成 `runs/_r2_val_manifest.txt` + `.sha256`。
 - [ ] b. 生成 `runs/_r2_eval_parity/sample_manifest.json`。
 - [ ] b. 生成 `runs/_r2_audit_coverage.json` + `.sha256`。
 - [ ] b. 传播规则：`low_power` → confidence downgrade；`construction_failed` → escape outcome。
-- [ ] c. image hash / stratified coverage / schema / tamper negative tests 通过。
-- [ ] d. manifest + schema + sampling-code hash freeze；任意改动 = 重跑 parity。
-- [ ] e. 路径与 hash 写入 `runs/_r2_verification.json`。
+- [ ] b. 应用 [`development_plan.md` §R2 训练 imgsz 决策规则](development_plan.md#r2-训练-imgsz-决策规则2026-05-11-锁定替代之前的r2-锁-imgsz1280无条件项) → 计算 `bbox_width_p50` / `frac_lt_0.03` → 写 `runs/_r2_train_config.json` `{imgsz, multi_scale, rule_branch}`。
+- [ ] c. image hash / stratified coverage / schema / tamper negative tests 通过；`_r2_train_config.json` schema 校验。
+- [ ] d. manifest + schema + sampling-code hash freeze；任意改动 = 重跑 parity + imgsz 决策。
+- [ ] e. 路径与 hash 写入 `runs/_r2_verification.json`（含 `_r2_train_config.json` 与 `bbox_width_p50` / `frac_lt_0.03` 数值快照）。
 
 ### 1.2 Copy-paste + class-balanced loss
 
@@ -177,7 +178,14 @@ DEFERRED → R3+。R2 启动前不要求 a-e。登记见 §4.2。
 
 #### 2.2.2 KD 首 cell 决策执行
 
-blocked：R2 student/teacher 选定 + `hard_neg_manifest_hash` + `deim_l_training` + `r2_data_freeze`。解锁后入口：`additional_components_plan.md` §七。
+R2-frozen ship-decision blocked：R2 student/teacher 选定（已锁定 student=S 双路径）+ `hard_neg_manifest_hash` + `deim_l_training` + `r2_data_freeze`。解锁后入口：`additional_components_plan.md` §七。
+
+**Pre-R2 R1 rehearsal 不阻塞**（见 §2.5）：A1 wall-clock、A2a/A2b 同架构 logit KD 在 R1 数据上的 mini-runs 可立即启动，rehearsal outputs 不进 ship-decision。
+
+#### 2.2.3 DEIM-L 教师准备状态
+
+- DEIM-D-FINE-L 训练 in progress（2026-05-11 启动；预计 ~2.5d）。完成后 `runs/detect/deim_dfine_l-r1/best_stg2.pth` 落地即解锁 A7。
+- 不等待 DEIM-L：A0 / A1 / A2a / A2b / A3 / A6（跨架构 DEIM-M → YOLO26s）的 R1 rehearsal 可即时启动。
 
 ### 2.3 TSM Phase 1-C plumbing
 
@@ -200,7 +208,7 @@ Reduced lifecycle：a + e；b/c/d = n/a。
 
 ### 2.5 Pre-R2 ablation rehearsals
 
-Rehearsal outputs 不进 ship-decision。文件名前缀必须为 `rehearsal_`，并含 `rehearsal_kind ∈ {r1_data, synthetic_fixture, demo_only}`。
+R2 数据采集 / freeze 未完成期间不让团队空转 — 在 R1 数据上跑 ablation rehearsals 验证 pipeline + 收集前期信号。Rehearsal outputs 不进 ship-decision。文件名前缀必须为 `rehearsal_`，并含 `rehearsal_kind ∈ {r1_data, synthetic_fixture, demo_only}`。
 
 Executor-side gate：
 
@@ -209,15 +217,28 @@ Executor-side gate：
 3. ship-decision JSON 必须含 R2 frozen manifest hash。
 4. rehearsal outputs 只可挂到 `runs/_r2_verification.json.rehearsal_outputs`。
 
-| rehearsal | action | output |
-|---|---|---|
-| Hard-negative R1 | demo8/11/13 挖 FP + frozen R1 manifest + shortened A/B | `runs/rehearsal_hard_negative_decision_R1.json` |
-| Copy-paste R1 | R1 数据三臂机制验证 | `runs/rehearsal_copy_paste_decision_R1.json` |
-| KD A1 wall-clock | R1 单 epoch YOLO / DEIM | `runs/rehearsal_kd_A1_walltime_estimate.json` |
-| TSM 1-A | R1 demo + synthetic clip | `runs/rehearsal_tsm_phase_1a_concept.json` |
-| HMM | synthetic flicker / transition fixture | `runs/rehearsal_hmm_smoother_synthetic.json` |
-| SAHI | R1 demo，需 §六 a-stage 后启动 | `runs/rehearsal_sahi_R1_demo.json` |
-| Decision executor | synthetic Case A/B/C/D + escapes | `scripts/_r2_decide_precision_mechanical_test.py` |
+**Active 启动列表（2026-05-11 用户授权立即开始）**：Hard-negative R1、Copy-paste R1、KD A1+A2a+A2b R1。
+
+| rehearsal | 状态 | action | output |
+|---|---|---|---|
+| **Hard-negative R1** | **active** | demo8/11/13 挖 FP + frozen R1 manifest + shortened A/B | `runs/rehearsal_hard_negative_decision_R1.json` |
+| **Copy-paste R1** | **active** | R1 数据三臂机制验证（β sweep） | `runs/rehearsal_copy_paste_decision_R1.json` |
+| **KD A1 wall-clock** | **active** | R1 单 epoch YOLO26s / DEIM-D-FINE-S 双路径 scratch 训练时长基线 | `runs/rehearsal_kd_A1_walltime_estimate.json` |
+| **KD A2a R1** | **active**（new）| YOLO26m → YOLO26s cls-logit KL on R1 数据，验证 §七 runner + 5 gates 流程 | `runs/rehearsal_kd_A2a_R1.json` |
+| **KD A2b R1** | **active**（new）| DEIM-M → DEIM-S LD on FDR + cls-logit on R1 数据；同时记录 DEIM-S 推理 demo4/10/12/15 burst 抖动 baseline（供 R2 close 后 §六 Gate #6 deploy-tuning 触发对比，**不阻塞** A2b ship-decision） | `runs/rehearsal_kd_A2b_R1.json` |
+| KD A6 R1 spike | gated on A6 投影层设计 | DEIM-M → YOLO26s 跨架构 PoC 设计 1-day spike | `runs/rehearsal_kd_A6_design_spike.json` |
+| TSM 1-A | active | R1 demo + synthetic clip | `runs/rehearsal_tsm_phase_1a_concept.json` |
+| HMM | active | synthetic flicker / transition fixture | `runs/rehearsal_hmm_smoother_synthetic.json` |
+| SAHI | gated §六 a-stage | R1 demo | `runs/rehearsal_sahi_R1_demo.json` |
+| Decision executor | active | synthetic Case A/B/C/D + escapes | `scripts/_r2_decide_precision_mechanical_test.py` |
+
+**KD rehearsal 启动顺序**（推荐）：
+1. **A6 cross-arch 设计 spike** —  day 0 立即启动，paper-only / 1d，**与 GPU queue 无关**；spike fail → A6 demoted P2，pass → 进入 R2 数据上的 PoC
+2. A1 wall-clock（1d GPU）→ pipeline 走通 + 训练时长基线
+3. A2a YOLO26m → YOLO26s（YOLO 同架构最简，1-2d GPU）→ Gate #1-#5 流程演练 + YOLO 推理 burst baseline 记录（post-R2 deploy-tuning 用）
+4. A2b DEIM-M → DEIM-S（DEIM 同架构，2-3d GPU）→ 同上 + DEIM 推理 burst baseline 记录
+
+**Drawdown 容忍**：A6 spike 永远保留（成本最低、信号最独家）；GPU 时长冲突时丢 A2b（DEIM 训练最慢），保留 A1 + A2a + A6 spike。
 
 ## 3. Gated / 非 actionable
 
