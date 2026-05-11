@@ -153,6 +153,13 @@ DEIM uses its own standalone venv on the training server. The main
 project venv (`uv` workspace at the repo root) is YOLO26-only — do not
 add DEIM torch/torchvision pins to project `pyproject.toml`.
 
+The script auto-activates `DEIM/.venv` if present (after `cd DEIM`), so
+it works whether invoked from an already-activated shell or routed
+through `uv run` (which would otherwise force the project venv into the
+subprocess env and shadow any prior `source DEIM/.venv/bin/activate`).
+Override the venv path with `DEIM_VENV=...` (relative to `DEIM/`); set
+it to a non-existent path to skip auto-activation.
+
 ---
 
 ## Dataset (R2 self-collected)

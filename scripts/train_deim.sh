@@ -27,6 +27,16 @@ CFG="configs/deim_dfine/deim_hgnetv2_${SIZE}_traffic_light.yml"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT/DEIM"
 
+# DEIM has its own standalone venv on the training rig (separate torch/torchvision
+# pins from the project's uv-managed .venv). Auto-activate it if present so this
+# script works whether invoked from a plain shell or via `uv run` (which forces
+# its own VIRTUAL_ENV into the subprocess env and shadows any prior activation).
+DEIM_VENV="${DEIM_VENV:-.venv}"
+if [ -d "$DEIM_VENV" ] && [ "${VIRTUAL_ENV:-}" != "$(pwd)/$DEIM_VENV" ]; then
+    # shellcheck disable=SC1091
+    . "$DEIM_VENV/bin/activate"
+fi
+
 NPROC="${NPROC:-1}"
 PORT="${PORT:-7777}"
 SEED="${SEED:-0}"        # override with: SEED=42 scripts/train_deim.sh s
