@@ -119,10 +119,22 @@ def build_dispatch(
     # Dedicated rehearsal output dir avoids collision with R1/R2 production runs.
     # Path is DEIM-CWD-relative ("../runs/..." resolves to project_root/runs/...).
     output_dir_rel = f"../runs/rehearsal_kd_A2b_deim_s_seed{seed}"
+    # DEIM has its own standalone venv on the training rig (separate torch/torchvision
+    # pins from the project's uv-managed .venv). When this runner is invoked via
+    # `uv run python -m ...`, uv forces its own VIRTUAL_ENV into the subprocess env,
+    # shadowing any prior `source DEIM/.venv/bin/activate` the user did manually.
+    # The bash subprocess we spawn here re-activates DEIM's venv from inside, so
+    # torchrun resolves to the right torch regardless of how the parent was invoked.
+    # Mirrors the auto-activate block in scripts/train_deim.sh (post-`cd DEIM`).
+    deim_venv_activate = (
+        'if [ -d .venv ] && [ "${VIRTUAL_ENV:-}" != "$(pwd)/.venv" ]; then '
+        '. .venv/bin/activate; fi &&'
+    )
     argv = [
         "bash", "-c",
         " ".join([
             "cd DEIM &&",
+            deim_venv_activate,
             "PYTHONPATH=..",
             "torchrun", f"--master_port={port}", f"--nproc_per_node={nproc}",
             launcher_rel,
