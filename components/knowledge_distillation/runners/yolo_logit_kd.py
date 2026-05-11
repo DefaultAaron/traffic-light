@@ -167,9 +167,16 @@ def build_kd_trainer_class(teacher_ckpt: str, kd_lambda: float, kd_temperature: 
                     preds = student.forward(batch["img"])
                 base_loss, loss_items = original_loss(batch, preds)
 
+                # FAIL-LOUD: the A2a rehearsal exists to validate KD; silent
+                # degrade to base-loss-only defeats the point. Any of these
+                # conditions means the wiring is broken — abort, don't pretend.
                 s_scores = extract_one2many_scores(preds)
                 if s_scores is None:
-                    return base_loss, loss_items
+                    raise RuntimeError(
+                        f"A2a kd_loss: cannot extract one2many.scores from student preds "
+                        f"(preds type={type(preds).__name__}). YOLO26 must run with "
+                        "end2end=True (default). Check scratch arch YAML."
+                    )
 
                 # Teacher MUST stay in BN-frozen train mode each batch — the
                 # parent trainer's training loop calls .train() on student each
@@ -178,8 +185,19 @@ def build_kd_trainer_class(teacher_ckpt: str, kd_lambda: float, kd_temperature: 
                 with torch.no_grad():
                     teacher_preds = teacher_module(batch["img"])
                 t_scores = extract_one2many_scores(teacher_preds)
-                if t_scores is None or t_scores.shape != s_scores.shape:
-                    return base_loss, loss_items
+                if t_scores is None:
+                    raise RuntimeError(
+                        f"A2a kd_loss: cannot extract one2many.scores from teacher preds "
+                        f"(type={type(teacher_preds).__name__}). Teacher ckpt {teacher_ckpt!r} "
+                        "may be from a non-end2end build; verify with `head._end2end` probe."
+                    )
+                if t_scores.shape != s_scores.shape:
+                    raise RuntimeError(
+                        f"A2a kd_loss: teacher/student score shape mismatch "
+                        f"(student={tuple(s_scores.shape)} vs teacher={tuple(t_scores.shape)}). "
+                        "Teacher and student must share nc + anchor grid; verify both YAMLs "
+                        "have identical nc and stride."
+                    )
 
                 # fp32 promotion for stable KL under autocast.
                 kd = cls_logit_kl(

@@ -60,24 +60,56 @@ def _kd_terms(
     kd_temperature: float,
     reg_max: int,
 ) -> dict[str, torch.Tensor]:
-    """Compute KD terms; returns dict suitable for merge into loss_dict."""
+    """Compute KD terms; returns dict suitable for merge into loss_dict.
+
+    FAIL-LOUD: the A2b rehearsal exists to validate KD on the LD-on-FDR +
+    cls-logit KL stack. Silent skip on missing/mismatched keys means the
+    rehearsal trains as standard DEIM, defeating its purpose. Both heads
+    are required; any absence is a wiring bug — abort with diagnostic.
+    """
     terms: dict[str, torch.Tensor] = {}
+
     s_logits = student_out.get("pred_logits")
     t_logits = teacher_out.get("pred_logits")
-    if s_logits is not None and t_logits is not None and s_logits.shape == t_logits.shape:
-        terms["kd_cls"] = kd_lambda * cls_logit_kl(
-            s_logits, t_logits, temperature=kd_temperature
+    if s_logits is None or t_logits is None:
+        raise RuntimeError(
+            f"A2b _kd_terms: 'pred_logits' missing from "
+            f"{'student' if s_logits is None else 'teacher'} output. "
+            "DEIM decoder must run in train mode to emit pred_logits — verify "
+            "freeze_bn_in_train_mode(teacher) was called and teacher cfg matches."
         )
+    if s_logits.shape != t_logits.shape:
+        raise RuntimeError(
+            f"A2b _kd_terms: pred_logits shape mismatch "
+            f"(student={tuple(s_logits.shape)} vs teacher={tuple(t_logits.shape)}). "
+            "Teacher/student must share num_queries + num_classes; check cfg parity."
+        )
+    terms["kd_cls"] = kd_lambda * cls_logit_kl(
+        s_logits, t_logits, temperature=kd_temperature
+    )
 
     s_corners = student_out.get("pred_corners")
     t_corners = teacher_out.get("pred_corners")
-    if s_corners is not None and t_corners is not None and s_corners.shape == t_corners.shape:
-        terms["kd_ld"] = ld_lambda * fdr_localization_kl(
-            s_corners,
-            t_corners,
-            reg_max=reg_max,
-            temperature=kd_temperature,
+    if s_corners is None or t_corners is None:
+        raise RuntimeError(
+            f"A2b _kd_terms: 'pred_corners' missing from "
+            f"{'student' if s_corners is None else 'teacher'} output. "
+            "DEIM decoder train-mode branch must emit pred_corners (FDR logits); "
+            "verify teacher is in train mode (decoder.training=True) and "
+            "decoder.num_denoising=0 (to avoid denoising-target crash)."
         )
+    if s_corners.shape != t_corners.shape:
+        raise RuntimeError(
+            f"A2b _kd_terms: pred_corners shape mismatch "
+            f"(student={tuple(s_corners.shape)} vs teacher={tuple(t_corners.shape)}). "
+            "Teacher/student must share num_queries + reg_max; check cfg parity."
+        )
+    terms["kd_ld"] = ld_lambda * fdr_localization_kl(
+        s_corners,
+        t_corners,
+        reg_max=reg_max,
+        temperature=kd_temperature,
+    )
     return terms
 
 
