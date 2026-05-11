@@ -1,0 +1,88 @@
+__include__: [
+  '../dataset/traffic_light_detection.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/dfine_hgnetv2.yml',
+  '../base/deim.yml',
+]
+
+# Retained for completeness. Not planned for training — see
+# docs/proposals/yolo26_alternatives_survey.md §六 (size selection).
+# If enabled later: tuned for single RTX 4090 24GB, fine-tuning from COCO.
+
+output_dir: ../runs/deim_dfine_n_r2
+
+# See deim_hgnetv2_m_traffic_light.yml for rationale — overrides the
+# upstream find_unused_parameters=False default which trips DDP's reducer
+# on rare sample combinations under Mosaic + Mixup with this dataset.
+find_unused_parameters: True
+
+DEIM:
+  backbone: HGNetv2
+
+HGNetv2:
+  name: 'B0'
+  return_idx: [2, 3]
+  freeze_at: -1
+  freeze_norm: False
+  use_lab: True
+
+HybridEncoder:
+  in_channels: [512, 1024]
+  feat_strides: [16, 32]
+  hidden_dim: 128
+  use_encoder_idx: [1]
+  dim_feedforward: 512
+  expansion: 0.34
+  depth_mult: 0.5
+
+DFINETransformer:
+  feat_channels: [128, 128]
+  feat_strides: [16, 32]
+  hidden_dim: 128
+  dim_feedforward: 512
+  num_levels: 2
+  num_layers: 3
+  eval_idx: -1
+  num_points: [6, 6]
+
+# LR scaled from DEIM's 4×GPU batch-128 recipe to single-GPU batch-16
+# (8× reduction). Halved again for fine-tuning from COCO.
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.000025
+    -
+      params: '^(?=.*backbone)(?=.*norm|bn).*$'
+      lr: 0.000025
+      weight_decay: 0.
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+  lr: 0.00005
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+epoches: 160
+flat_epoch: 7800
+no_aug_epoch: 12
+lr_gamma: 1.0
+
+train_dataloader:
+  total_batch_size: 16         # single 4090 24GB; can go higher (32) given 4M params
+  num_workers: 4
+  dataset:
+    transforms:
+      policy:
+        epoch: [4, 78, 148]
+  collate_fn:
+    mixup_epochs: [4, 78]
+    stop_epoch: 148
+    base_size_repeat: ~
+
+val_dataloader:
+  total_batch_size: 32
+  num_workers: 4

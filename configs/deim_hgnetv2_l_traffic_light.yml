@@ -1,0 +1,137 @@
+__include__: [
+  '../dataset/traffic_light_detection.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/dfine_hgnetv2.yml',
+  '../base/deim.yml',
+]
+
+# Tuned for: single 4090 D (24GB), fine-tuning from COCO (`-t` flag),
+# input 640×640. DEIM-D-FINE-L is ~31M params (~63% bigger than M's 19M).
+# v1.2 §2.4: L tier is the KD A7 teacher ceiling — X/XL excluded by capacity.
+# At imgsz=640 + bs=4 expect ~5-7 GB peak — far below the §2.4 12-16 GB
+# imgsz=1280 ceiling. If OOM at batch 4, drop to 2 and halve LR again.
+#
+# DO NOT flip imgsz to 1280 by editing only the Resize op below — see the
+# 5-bullet override list in deim_hgnetv2_s_traffic_light.yml lines 13-18
+# (Resize / collate_fn.base_size / val_dataloader / eval_spatial_size /
+# bs+LR all change in tandem).
+
+output_dir: ../runs/deim_dfine_l_r2
+
+# See deim_hgnetv2_m_traffic_light.yml for rationale — DDP unused-parameter
+# error under Mosaic + Mixup + small dataset trips the reducer otherwise.
+find_unused_parameters: True
+
+DEIM:
+  backbone: HGNetv2
+
+# Match upstream dfine_hgnetv2_l_coco.yml backbone defenses: L uses B4 (deeper
+# than M's B2), and freeze_stem_only + freeze_at:0 + freeze_norm:True protect
+# COCO-pretrained batch-norm stats from being overwritten by noisy estimates
+# on the small (~55k img) traffic-light fine-tune set. M COCO does NOT set
+# these — they are L-specific and must be carried into L traffic_light.
+#
+# `use_lab` deliberately OMITTED to match upstream L COCO. Pattern across
+# upstream COCO sizes: S (B0) and M (B2) set `use_lab: True`; L (B4) and
+# X (B5) do NOT. Setting use_lab=True on B4 inserts LearnableAffineBlock
+# params throughout the backbone — they would have no counterpart in the
+# `weights/deim_dfine_l_coco.pth` checkpoint, getting silently
+# identity-initialized via load_tuning_state and corrupting the teacher
+# fine-tune (KD A7 contract violation).
+HGNetv2:
+  name: 'B4'
+  return_idx: [1, 2, 3]
+  freeze_stem_only: True
+  freeze_at: 0
+  freeze_norm: True
+
+# in_channels [512, 1024, 2048], num_layers 6, depth_mult 1.0, expansion 1.0,
+# DFINETransformer.eval_idx -1 all inherited unmodified from
+# base/dfine_hgnetv2.yml — L uses the upstream defaults end-to-end.
+
+# Param-group regex matches upstream dfine_hgnetv2_l_coco.yml lines 21-31:
+# the explicit-LR backbone group EXCLUDES both `norm` and `bn` (so backbone
+# LayerNorms fall back to the global lr+wd), and the no-decay group is
+# scoped to encoder/decoder norms only (NOT backbone). This is the L-COCO
+# pattern, NOT the M-COCO pattern — copying M's `'^(?=.*backbone)(?!.*bn).*$'`
+# would silently mis-group B4's LayerNorms (more numerous than B2) into the
+# tiny backbone LR with zero wd.
+#
+# LR matches M's single-GPU bs=4 fine-tune-from-COCO recipe (deliberately
+# conservative for a teacher path — under-LR is recoverable, over-LR
+# catastrophically forgets COCO features). If val mAP plateaus before
+# epoch 49 (flat_epoch) with loss above the M-tier minimum: raise to
+# 0.00005 and re-run. Drop to 0.0000125 if loss diverges in epochs 0-4.
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0000025
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+  lr: 0.000025
+  betas: [0.9, 0.999]
+  # weight_decay matches upstream dfine_hgnetv2_l_coco.yml:31 (0.000125),
+  # NOT M COCO's 0.0001. Larger backbones benefit from slightly stronger
+  # regularization; M traffic_light deliberately uses 0.0001 (pre-existing
+  # divergence from M COCO, out of scope here).
+  weight_decay: 0.000125
+
+# Schedule matches M traffic_light (102/49/12) — longer than L COCO's 58
+# epoch from-scratch recipe, because fine-tune convergence on 55k images
+# is dataset-bound, not architecture-bound.
+epoches: 102
+flat_epoch: 49
+no_aug_epoch: 12
+
+train_dataloader:
+  total_batch_size: 4          # single 4090 D 24GB; drop to 2 if OOM
+  num_workers: 4
+  dataset:
+    transforms:
+      # Replaces the inherited ops list from base/deim.yml to drop
+      # RandomHorizontalFlip — redLeft/greenLeft/redRight/greenRight
+      # are direction-asymmetric and would be label-corrupted by hflip.
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: Resize, size: [640, 640]}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: [4, 49, 90]
+        ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+      mosaic_prob: 0.5
+  collate_fn:
+    mixup_epochs: [4, 49]
+    stop_epoch: 90
+    # Carry upstream dfine_hgnetv2_l_coco.yml:44 base_size_repeat — base/dataloader.yml
+    # default is 3, L COCO bumps it to 4 (multi-scale collate variety scales
+    # with backbone capacity). M COCO uses 6; M traffic_light deliberately
+    # falls back to 3 for dataset-size reasons (pre-existing pattern, out of
+    # scope here). For L, mirror the upstream L recipe.
+    base_size_repeat: 4
+    # Carry upstream dfine_hgnetv2_l_coco.yml:43 ema_restart_decay — base YAMLs
+    # do NOT set this (verified against base/dataloader.yml + base/deim.yml),
+    # so without an explicit value the trainer would fall back to whatever
+    # default the EMA module hardcodes. EMA quality directly feeds the
+    # exported teacher checkpoint (KD A7 contract).
+    ema_restart_decay: 0.9999
+
+# val_dataloader.total_batch_size=8: matches M traffic_light pattern. Base
+# default is 64 (dataloader.yml:38) but a 24 GB single-GPU workstation runs
+# train + val on the same card, so val batch is held to the same 8 the
+# upstream M COCO recipe (dfine_hgnetv2_m_coco) uses. Raise toward 32 if
+# val time becomes a bottleneck and train memory is idle during eval.
+val_dataloader:
+  total_batch_size: 8
+  num_workers: 4

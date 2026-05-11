@@ -1,0 +1,93 @@
+__include__: [
+  '../dataset/traffic_light_detection.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/dfine_hgnetv2.yml',
+  '../base/deim.yml',
+]
+
+# Tuned for: single RTX 4090 (24GB), fine-tuning from COCO (`-t` flag),
+# input 640×640. DEIM-D-FINE-M is 19M params — ~2× the memory of S.
+# If OOM at batch 4, drop to 2 and halve LR again.
+
+output_dir: ../runs/deim_dfine_m_r2
+
+# Override the upstream `find_unused_parameters: False` default
+# (DEIM/configs/runtime.yml:7). The R2 m-size run crashed at epoch 41
+# with `Parameter indices which did not receive grad for rank 0: 358`
+# — under Mosaic + Mixup + RandomIoUCrop + small (7-class) dataset, a
+# rare sample combination produces 0 valid targets after sanitize and
+# one auxiliary loss head's gradient flow dies, tripping DDP's reducer.
+# Cost: ~5-10% throughput. Safe alternative: ditch find_unused_parameters
+# once the underlying interaction is diagnosed.
+find_unused_parameters: True
+
+DEIM:
+  backbone: HGNetv2
+
+HGNetv2:
+  name: 'B2'
+  return_idx: [1, 2, 3]
+  freeze_at: -1
+  freeze_norm: False
+  use_lab: True
+
+DFINETransformer:
+  num_layers: 4
+  eval_idx: -1
+
+HybridEncoder:
+  in_channels: [384, 768, 1536]
+  hidden_dim: 256
+  depth_mult: 0.67
+
+# LR scaled from DEIM's 4×GPU batch-32 recipe to single-GPU batch-4
+# (8× reduction). Halved again for fine-tuning from COCO.
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*bn).*$'
+      lr: 0.0000025
+    -
+      params: '^(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+  lr: 0.000025
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+epoches: 102
+flat_epoch: 49
+no_aug_epoch: 12
+
+train_dataloader:
+  total_batch_size: 4          # single 4090 24GB; drop to 2 if OOM
+  num_workers: 4
+  dataset:
+    transforms:
+      # Replaces the inherited ops list from base/deim.yml to drop
+      # RandomHorizontalFlip — redLeft/greenLeft/redRight/greenRight
+      # are direction-asymmetric and would be label-corrupted by hflip.
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: Resize, size: [640, 640]}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: [4, 49, 90]
+        ops: ['Mosaic', 'RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+      mosaic_prob: 0.5
+  collate_fn:
+    mixup_epochs: [4, 49]
+    stop_epoch: 90
+
+val_dataloader:
+  total_batch_size: 8
+  num_workers: 4
