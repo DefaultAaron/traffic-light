@@ -1,247 +1,145 @@
-# 红绿灯识别模型开发计划
+# 红绿灯识别模型开发时间线 v2.0
 
-**目标**:
-- **R1（已完成）**: 7 类红绿灯检测模型（圆灯 + 左/右箭头），自定义 TensorRT 推理流水线
-- **R2（进行中）**: 联合检测模型扩展为 **10–14 类**（9–12 类交通灯 + 1–2 类道路栏杆），仍然输出同一 `Detection2DArray`
+## 状态
 
-**部署平台**: NVIDIA Tegra Orin 64GB
-**输入**: 8MP 摄像头（3840×2160），推理分辨率 1280
-**输出**: `vision_msgs/Detection2DArray` ROS2 消息（多目标检测），规划模块结合深度信息决策
-**截止日期**: 2026 年 5 月 15 日
+| 项 | 当前值 |
+|---|---|
+| R1 | 已完成；7 类红绿灯 + 自定义 TensorRT |
+| R2 | 进行中；10-14 类联合检测 |
+| 部署平台 | NVIDIA Tegra Orin 64GB |
+| 输入 | 8MP 摄像头；推理分辨率 1280 |
+| 输出 | `vision_msgs/Detection2DArray` |
+| 截止 | 2026-05-15 |
+| 生命周期 | 见 `additional_components_plan.md` §一 |
 
-> **进度（2026-04-23）**：
-> - 阶段 A 完成：YOLO26 n/s/m R1 + Orin 1280/1536 引擎链路（FP16 25/28 ms/帧）+ xyxy 后处理修复
-> - R1 备选轨道（YOLOv13-s、DEIM-D-FINE-S/M）训练中
-> - 跟踪 + EMA 投票（Plan A）已在 Python + C++ 两端落地（fixture 驱动单测通过，Orin 集成待触发）
-> - 阶段 B 阻塞于 PM 最终类别清单 + 标注 SOP
->
-> R2 范围扩展详见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §"R2 范围扩展（PM 确认事项）"。
+| 轨道 | 状态 |
+|---|---|
+| R2 主检测器 | data freeze → train → export → Orin → replay |
+| R2 训练增强 | Copy-paste / hard-negative / KD P0 |
+| R2 精度奇偶 | FP16 / FP32 sidecar + eval-parity |
+| R2 时序优化 | gated by replay failure modes |
+| R3+ deferred | map-prior、adaptive ROI、INT8、planner-prior |
 
-> **R1 数据集退役标记（2026-05-05）**：随 R2 自采数据完成首批整理，R1 数据集（LISA / BSTLD / S2TLD）整体退役，**不再参与 R2/R3 训练 / 评估 / 设计证据**。本计划阶段 A（第 1–2 周）的 R1 数据流水线条目仅保留为历史记录；其相关脚本（`scripts/convert_*.py`、`scripts/merge_datasets.py`、`scripts/annotate_*.py`）与文档（已归档至 [`../_archive/`](../_archive/)）会在后续清理中移除。R2/R3 数据流水线以自采数据为唯一基础，参见 [`../data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md)。
+## Deferred
 
----
+| 项 | 状态 | 入口 |
+|---|---|---|
+| 地图先验门控 | DEFERRED → R3+ | `additional_components_plan.md` §五 |
+| 自适应推理 / ROI | DEFERRED → R3+ | `additional_components_plan.md` §九 |
+| INT8 QAT | DEFERRED → R3+ | `additional_components_plan.md` §十 |
+| 规划器先验融合 | DEFERRED → R3+ | `additional_components_plan.md` §十一 |
+| 跨检测共现推理 | R3 可选 | `cross_detection_reasoning_plan.md` |
 
-## 标签定义
+## 行动项
 
-### R1 已交付（7 类）
+### 已完成：阶段 A / R1
 
-| ID | 类别 | 含义 | ID | 类别 | 含义 |
-|----|------|------|----|------|------|
-| 0 | `red` | 红灯（圆形） | 4 | `greenLeft` | 绿色左转箭头 |
-| 1 | `yellow` | 黄灯（圆形） | 5 | `redRight` | 红色右转箭头 |
-| 2 | `green` | 绿灯（圆形） | 6 | `greenRight` | 绿色右转箭头 |
-| 3 | `redLeft` | 红色左转箭头 | | | |
+| 日期 | 项 | 输出 |
+|---|---|---|
+| 4/16-4/19 | 7 类数据流水线 | `scripts/convert_*`、`traffic_light.yaml` |
+| 4/17-4/19 | 自定义 TRT 推理流水线 | `inference/trt_pipeline.py`、`inference/demo.py`、`main.py infer` |
+| 4/20-4/22 | YOLO26 n/s/m R1 训练 | R1 weights |
+| 4/21-4/22 | Orin 部署测试 | 1280 / 1536 FP16 engines；约 25 / 28 ms |
+| R1 | ROS2 输出接口 | `Detection2DArray` |
+| R1 | Tracker + EMA | Python + C++ Plan A |
 
-### R2 目标类别（10–14 类）
+### R2：自采数据 + 联合检测
 
-- **交通灯部分（9–12 类）**：R1 7 类 + 确认新增 `forwardGreen` / `forwardRed` = 9；另可新增 ≤3 类（PM 待定候选：行人灯 / 黄色方向变体 / 闪烁状态）。
-- **栏杆部分（1–2 类）**：MVP 为单类 `barrier`；数据充分时升级为 `armOn` / `armOff` 两类。
-- **上线形态**：单一联合模型，Orin 1280 分辨率延迟目标 ≤ 50 ms（现 R1 约 25 ms，留有余量）。
+#### 4/23-5/4 数据采集 / 标注
 
----
+- [ ] PM 最终类别清单。
+- [ ] 标注 SOP。
+- [ ] R2 raw video 连续 30 fps。
+- [ ] 部署评估片段。
+- [ ] 栏杆训练集：MVP `barrier` ≥2K 实例。
+- [ ] 条件双态：`armOn` / `armOff` 每态 ≥500 实例且多样性达标。
+- [ ] 新增灯型：`forwardGreen` / `forwardRed` + PM 上限类。
+- [ ] raw video 保留 ≥6 个月。
+- [ ] 标注完成并冻结 train / val / audit manifests。
 
-## 阶段 A：基于现有数据的 7 类模型训练
+#### 5/5-5/6 数据预处理
 
-### 第 1 周：4/16–4/19 — 数据流水线升级 + 采集准备
+- [ ] R2 自采数据作为唯一训练 / 评估基础。
+- [ ] R1 数据集退役；不混合 LISA / BSTLD / S2TLD。
+- [ ] 类别平衡 / rare-class oversampling。
+- [ ] Copy-paste / HSV / Mosaic / MixUp 配置。
+- [ ] hard-negative `bg/` / empty-image 接入。
+- [ ] 冻结 `runs/_r2_val_manifest.txt`。
+- [ ] 冻结 `runs/_r2_audit_coverage.json`。
+- [ ] 冻结 `runs/_hard_negative_eval_manifest.json`。
 
-**数据流水线升级（7 类）**
+#### 5/6-5/7 第二轮训练
 
-| 任务 | 说明 |
-|------|------|
-| 更新 `convert_s2tld.py` | 从重标注 XML 读取 7 类方向标签 |
-| 更新 `convert_bstld.py` | 训练集：YAML 方向标签 → 7 类；测试集：重标注 XML → 7 类 |
-| 更新 `convert_lisa.py` | `stopLeft`→`redLeft`，`goLeft`→`greenLeft`，`goForward`→`green` |
-| 更新 `merge_datasets.py` | 分层抽样，保留稀有类别的代表性 |
-| 更新 `traffic_light.yaml` | 7 类名称定义 |
-| 类别分布分析 | 统计各类别标注数量，识别不平衡问题（右转箭头数据稀少） |
+- [ ] 主检测器训练：YOLO26 / YOLOv13 / DEIM 选型胜者。
+- [ ] Copy-paste 三臂消融。
+- [ ] Hard-negative A/B。
+- [ ] KD P0 cells：A1 + A3 + A2a/A2b；DEIM 路径另跑 A0。
+- [ ] 写组件 decision JSON。
 
-**自定义 TRT 推理流水线（4/17–4/19）**
+#### 5/8-5/11 部署测试
 
-| 任务 | 说明 |
-|------|------|
-| `inference/trt_pipeline.py` | `TRTDetector` 类：引擎加载、CUDA 缓冲区分配、预处理、推理、后处理 |
-| `inference/demo.py` | CLI 演示：视频/摄像头输入，绘制检测框，输出 FPS/延迟 |
-| `main.py` 更新 | 新增 `infer` 子命令：`--source`、`--model`、`--imgsz`、`--json` |
-| ROS2 集成接口 | `Detection.to_ros_msg()` → `vision_msgs/Detection2D`，多目标输出 |
-| 高分辨率适配 | 默认 `imgsz=1280`，适配 8MP 摄像头（3840×2160） |
-| 规划组对接文档 | [`../integration/ros2_contract.md`](../integration/ros2_contract.md)：节点模板 + 订阅示例 |
+- [ ] TensorRT FP16 / selected precision export。
+- [ ] sidecar 完整。
+- [ ] eval-parity gate。
+- [ ] build-determinism check。
+- [ ] Orin benchmark：latency / GPU mem / first-frame / median `t_detect_ms`。
+- [ ] 规划模块联调：`Detection2DArray` + depth。
+- [ ] 5-min Orin soak；`engine_sha256 == selected_artifact_sha256`。
 
-**数据采集（4/17 开始，与流水线工作并行）**
-- 规划目标路线，覆盖多样化红绿灯类型（重点：箭头灯）
-- 确定含右转箭头灯的路口
-- 准备采集硬件（行车记录仪/感知摄像头）
-- 立即开始采集，无需等待 R1 差距分析
+#### 5/12-5/15 实车测试
 
-**BSTLD 重标注于本周内完成**
+- [ ] 车载集成。
+- [ ] 固定路线测试。
+- [ ] 夜间 / 雨天 / 眩光 / 遮挡场景。
+- [ ] 红→绿误判零容忍检查。
+- [ ] 红↔黄混淆率记录。
+- [ ] replay failure mode tags 写入 TSM / HMM trigger 输入。
+- [ ] phase report coverage-gaps 按 6 字段格式列出 carry-forward。
 
-**本周交付物**：
-- 7 类数据流水线可用
-- 自定义 TRT 推理流水线就绪（含 ROS2 输出接口）
-- 类别分布报告
-- 数据采集计划就绪
-- ROS2 集成指南交付规划组
+## 决策规则
 
----
+### R2 close gate
 
-### 第 2 周：4/20–4/22 — 第一轮模型训练 + 部署测试（里程碑：4/22 前完成 R1）
+| Gate | 要求 |
+|---|---|
+| 数据 | R2 train / val / audit manifests frozen + sha256 |
+| 组件 | Copy-paste、hard-negative、KD P0 完成对应 a-c；deploy 候选完成 d |
+| 精度奇偶 | `runs/_r2_precision_decisions.json` 完整 |
+| Engine | selected engine sidecar 完整；eval-parity pass |
+| Soak | 5-min Orin soak；SHA hard-bound |
+| 报告 | phase report + coverage-gaps + carry-forward JSON |
 
-**合并数据集 + 训练（4/20–4/21）**
-- 运行 7 类合并数据集生成（S2TLD + BSTLD + LISA）
-- 训练 YOLO26-n、YOLO26-s、YOLO11-n、YOLO11-s（每个约 3–4 小时，GPU 服务器并行/隔夜）
-- 快速对比：mAP、各类别精确率/召回率、混淆矩阵
-- 选择最佳模型
+### 2026-05-15 优先级
 
-**第一轮部署测试（4/21–4/22）**
+| 情况 | 处理 |
+|---|---|
+| 主线未关帧 | 优先主线；时序 / 共现不启动 |
+| 主线关帧且 replay 无明确失败 | 时序 / 共现搁置 |
+| replay 出 small/far/occluded miss | `temporal_optimization_plan.md` §1 TSM |
+| replay 出 flicker / illegal transition | `temporal_optimization_plan.md` §2 HMM |
+| SAHI / TSM latency 落入 INT8 band | 只登记 R3+ carry-forward；R2 不做 INT8 |
 
-| 任务 | 说明 |
-|------|------|
-| TensorRT FP16 导出 | 导出最佳模型至 Orin |
-| TRT 流水线部署 | 使用自定义 TRT 推理流水线在 Orin 上运行 |
-| imgsz=1280 基准测试 | 8MP 摄像头输入下的延迟、GPU 显存、吞吐量 |
-| ROS2 消息验证 | 验证 `Detection2DArray` 输出格式，规划组可正常订阅 |
-| 精度验证 | 验证集 mAP |
-| 差距分析 | 识别失败模式 → 指导后续数据采集重点 |
+## 总览
 
-**本周交付物**（4/22 前）：
-- 第一轮模型训练完成，最佳架构选定
-- 第一轮部署基准测试报告（含 imgsz=1280 延迟数据）
-- ROS2 输出接口验证通过
-- 差距分析 → 采集优先级确定
-
----
-
-## 阶段 B：基于自采数据的生产模型（R2 — 联合检测 10–14 类）
-
-> **前置阻塞**：PM 最终交通灯类别清单 + 一页标注 SOP（视觉定义、边界样本）尚未下发。SOP 缺失是 R1 重标注的主要教训，**SOP 确定前不开始新类别的采集与标注**。
-
-### 第 3 周：4/23–5/4 — 持续数据采集 + 数据标注
-
-**数据采集持续进行（4/23–5/2）** — 根据 R1 差距分析调整重点，**一次出差同时完成三件事**：部署评估片段、栏杆训练集（`barrier` MVP；若两态达成各 ≥500 实例则同时标注 `armOn`/`armOff`）、候选新增交通灯类别（直行箭头 / PM 最终确认的扩展类）
-
-| 任务 | 说明 |
-|------|------|
-| 定向采集 | 针对 R1 暴露的薄弱环节：特定箭头类型、夜间、眩光 |
-| 部署现场 + 栏杆 | 目标 ≥2K 栏杆实例（双态模式：每类 ≥500） |
-| 直行箭头恢复 | 同时排查 BSTLD / LISA 原有 `forward*` 样本是否被误标为圆灯 |
-| 每日数据整理 | 每次采集后提取含红绿灯 / 栏杆的帧 |
-| 目标路线 | 预先侦察箭头灯路口 + 含栏杆场景，最大化稀有类别收益 |
-| 提高捕获率 | 经过路口 / 栏杆时使用 2–5 fps 以获取更多有效帧 |
-| 专项采集 | 安排黄昏/夜间/雨天专场 |
-| **累计目标** | **15,000–20,000 帧**（含第 1–2 周采集量）+ 栏杆 MVP ≥2K 实例 |
-
-**数据标注（4/23–5/4）** — 首批数据整理完成后立即开始
-
-| 任务 | 说明 |
-|------|------|
-| 预标注 | 使用 R1 模型对采集数据做交通灯预标注；栏杆暂无预标注器，需人工首标 |
-| 人工修正 | 修正预标注结果（比从零标注快约 60%） |
-| 栏杆子标签策略 | 先按 MVP 单类 `barrier` 标注；数据支持双态时，在标注阶段批量子标签 `armOn`/`armOff`（CVAT/LabelMe） |
-| 滚动标注 | 边采集边标注：先标注早期批次，后续批次到达后继续标注 |
-| 质量审核 | 对 15–20% 样本进行二次审核 |
-| 标注工具适配 | 如需要，扩展标注工具以支持采集数据格式 |
-
-**本周交付物**：
-- 15,000–20,000 帧采集数据 + 栏杆 ≥2K 实例
-- 全部采集数据按最终（10–14 类）清单完成标注
-
----
-
-### 第 4 周：5/5–5/11 — 数据预处理 + 第二轮训练 + 部署测试
-
-**数据预处理（5/5–5/6）**
-
-| 任务 | 说明 |
-|------|------|
-| 数据集组成 | **R2 实际方案**：自采数据为唯一基础；R1 数据集（LISA / BSTLD / S2TLD）整体退役，不再混合使用（原计划"自采 + S2TLD"已废弃，原因含数据域偏差与商用许可双重收紧） |
-| 类别平衡 | 对稀有类别（右转箭头、新增直行箭头、栏杆状态）进行过采样，但保证新增类 < `red`/`green`（~50K），避免加剧现有不平衡 |
-| 数据增强 | HSV 抖动、Mosaic、MixUp、稀有类别 Copy-Paste |
-| 合成数据 | 如箭头数据仍不足：将箭头灯裁剪合成到真实背景上 |
-| 夜间增强 | 亮度降低、噪声注入、雨雾模拟 |
-| 训练/验证/测试划分 | 分层划分，确保测试集包含全部 7 类 |
-
-**第二轮训练（5/6–5/7）** — 隔夜训练
-
-| 任务 | 说明 |
-|------|------|
-| 训练最佳架构 | 使用第一轮选定的架构（预计 YOLO26-n 或 YOLO26-s） |
-| 超参数调优 | 根据第一轮经验调整学习率、增强强度等 |
-| 消融实验 | 测试合成数据、增强策略的效果 |
-
-**第二轮部署测试（5/8–5/11）**
-
-| 任务 | 说明 |
-|------|------|
-| TensorRT FP16 导出 | 导出生产模型 |
-| TRT 流水线部署 | 同一流水线，更换新引擎权重 |
-| Orin 基准测试 | 对比第一轮的延迟/显存指标（imgsz=1280） |
-| 精度对比 | 在新旧测试集上对比 mAP |
-| 各类别分析 | 箭头类别是否改善？ |
-| 回归检查 | 圆灯红/黄/绿精度是否退化 |
-| 规划模块联调 | 验证 `Detection2DArray` + 深度数据 → 规划模块正确决策 |
-
-**本周交付物**：
-- 商用许可合规的生产数据集
-- 第二轮模型训练完成并部署
-- 部署基准测试报告，是否可进入实车测试
-- 规划模块集成验证通过
-
----
-
-### 第 5 周：5/12–5/15 — 实车测试（截止日期：5/15）
-
-| 任务 | 说明 |
-|------|------|
-| 车载集成 | TRT 流水线 + 8MP 摄像头 → ROS2 `Detection2DArray` → 规划模块 + 深度 |
-| 固定路线测试 | 在已知路线上测试多种红绿灯类型 |
-| 极端场景 | 夜间、雨天、阳光眩光、遮挡 |
-| 端到端验证 | 感知（多目标检测）→ 深度关联 → 规划决策 → 车辆执行 |
-| 安全指标 | 红→绿误判零容忍；测量红↔黄混淆率 |
-| 最终报告 | 检测率、误报率、延迟、漏检统计 |
-
-**本周交付物**（5/15 前）：
-- 生产模型实车验证完成（TRT 流水线 + ROS2 输出）
-- 实车测试报告
-- 是否具备生产部署条件的评估
-
----
-
-## 时间线总览
-
-```
-         4/16   4/20   4/23     4/30     5/5    5/12   5/15
-           |      |      |        |        |      |      |
-流水线     ██████                                              代码：R1 7类转换/合并
-TRT流水线  ██████                                              代码：TRT推理+ROS2输出
-R1训练           ██                                            GPU：3-4h x 4模型
-R1部署            ███                                          Orin：TRT流水线+基准(1280)
-                      ↑ 4/22：R1里程碑（已完成）
-SOP/类别清单       ?                                           阻塞：等PM最终扩展类+标注SOP
-数据采集     ██████████████████████                             实地：15K-20K帧+栏杆≥2K实例
-数据标注            ████████████████                            人工：滚动标注（R2 10-14类）
-数据预处理                        ████                         代码：增强/平衡/合成
-R2训练                              ██                         GPU：联合模型（交通灯+栏杆）
-R2部署                              ██████                     Orin：TRT流水线+规划联调
-实车测试                                    ████████           车辆：感知+深度+规划端到端
-                                                   ↑ 5/15：截止日期
+```text
+4/16  4/20  4/23       5/5    5/8       5/12  5/15
+ |      |      |          |      |          |     |
+R1流水线 ██████
+R1训练       ██
+R1部署        ███
+R2采集  █████████████████
+R2标注       ████████████
+R2预处理                ██
+R2训练                   ██
+R2部署                     ████
+实车测试                         ████
 ```
 
----
+## 衔接
 
-## 风险与应对
-
-| 风险 | 影响 | 应对措施 |
-|------|------|----------|
-| BSTLD 重标注延迟至 4/23 后 | 延误第一轮训练 | 可先用 S2TLD + LISA 开始训练，BSTLD 就绪后补充 |
-| 10 天内未达 15K–20K 采集目标 | 稀有类别数据不足 | 多车/多摄像头同时采集；提高帧率；延长采集期 |
-| 采集数据缺乏箭头灯多样性 | 箭头类别精度不足 | 提前侦察箭头灯路口；安排定向采集专场；补充合成数据 |
-| 恶劣天气阻碍采集 | 采集进度延迟 | 恶劣天气数据反而有用；室内合成数据生成作为备选 |
-| 实车测试暴露规划模块集成问题 | 5/15 前可能无法充分验证 | 第 2 周即开始规划模块接口讨论，不要等到第 4 周 |
-
----
-
-## 许可合规检查（生产部署前）
-
-- [ ] 获取 Ultralytics 企业许可（或切换至 Apache-2.0 替代方案）
-- [ ] 第二轮训练数据仅含商用许可数据（S2TLD MIT + 自采数据）
-- [ ] 生产模型中不包含 BSTLD/LISA 数据
-- [ ] 确认模型权重导出不触发 AGPL 条款
+- `development_plan.md`：模型、类别、R2 部署 gate。
+- `additional_components_plan.md`：Copy-paste、hard-negative、KD、SAHI、R3+ deferred。
+- `pre_r2_kickoff_checklist.md`：schema、R2 close gate、coverage-gaps 行格式。
+- `temporal_optimization_plan.md`：5/15 后 replay-driven TSM / HMM。
+- `cross_detection_reasoning_plan.md`：R3 同帧共现。
+- `scripts/_r2_carry_forward_schema.json`：carry-forward 13-token enum。

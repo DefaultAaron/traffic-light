@@ -5,11 +5,11 @@ estimated from observed track sequences (see ``components.hmm_smoother.data
 .transition_counts``) and post-processed with:
 
 * Laplace smoothing — ``α`` pseudo-counts per cell. Plan default ``α=0.1``
-  (``docs/planning/temporal_optimization_plan.md`` §2.2 conflictor iter-2
-  amendment 2026-05-09): α=1.0 over a 14-class state space injects ≈ 50%
-  uniform prior on sparse TL transition data; α=0.1 injects ~10% of typical
-  row support. c-stage MUST sweep α ∈ {0.01, 0.1, 1.0} and the deploy
-  decision MUST be anchored on a value that is stable across the sweep.
+  (``docs/planning/temporal_optimization_plan.md`` §2.2): α=1.0 over a
+  14-class state space injects ≈ 50% uniform prior on sparse TL transition
+  data; α=0.1 injects ~10% of typical row support. c-stage MUST sweep
+  α ∈ {0.01, 0.1, 1.0} and the deploy decision MUST be anchored on a value
+  that is stable across the sweep.
 * Illegal-transition handling — controlled by
   ``illegal_transition_policy``:
     - ``"hard_zero"``  : forbidden cells set to 0 then row-renormalized
@@ -49,13 +49,12 @@ class TransitionConfig:
     accidental mid-run mutation surfaces as ``FrozenInstanceError`` rather
     than a silent prior shift.
 
-    YAML→dataclass adapter note (B2 review S2 2026-05-09): YAML deserializes
-    lists, not tuples. The loader MUST coerce ``illegal_transition_set``
-    via ``tuple(map(tuple, yaml_value))`` and the policy field via
-    ``IllegalTransitionPolicy(yaml_value)`` before constructing this
-    dataclass — otherwise frozen-dataclass validation will surface as a
-    confusing type error from the immutability check rather than the
-    YAML loader.
+    YAML→dataclass adapter note: YAML deserializes lists, not tuples. The
+    loader MUST coerce ``illegal_transition_set`` via
+    ``tuple(map(tuple, yaml_value))`` and the policy field via
+    ``IllegalTransitionPolicy(yaml_value)`` before constructing this dataclass
+    — otherwise frozen-dataclass validation will surface as a confusing type
+    error from the immutability check rather than the YAML loader.
     """
 
     num_classes: int
@@ -66,11 +65,10 @@ class TransitionConfig:
     )
 
     def __post_init__(self) -> None:
-        # Codex stop-gate 2026-05-09: parallel hardening to match
-        # HmmYamlConfig.__post_init__ — same bool-subclass / NaN / type-guard
-        # hazards apply at this constructor boundary too. Direct construction
-        # bypasses the YAML-config layer's validation, so both system
-        # boundaries need the same discipline.
+        # Parallel hardening to match HmmYamlConfig.__post_init__: the same
+        # bool-subclass / NaN / type-guard hazards apply at this constructor
+        # boundary too. Direct construction bypasses the YAML-config layer's
+        # validation, so both system boundaries need the same discipline.
         if self.num_classes is None:
             raise ValueError(
                 "num_classes must be set explicitly; got None"

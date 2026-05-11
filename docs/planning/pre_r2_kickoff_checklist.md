@@ -1,253 +1,293 @@
-# R2 启动前 Kickoff Checklist
+# R2 启动前 Kickoff Checklist v2.0
 
-> v1.4 LOCKED（2026-05-09，plan-conflictor 3-iter 收敛完成：iter-1 12 finds + iter-2 8 finds + iter-3 1 find，全部 amend 并 AGREED）。
-> **不可变锚点**（每次提交前 §6 一致性 check 必须验证存在）：
-> - `~/.claude/plans/elegant-sauteeing-quail.md`，lock_id=`LOCK-iter-3`，证据：plan 文件含 `## Conflictor-loop termination (LOCK after iter 3)` 标题
-> - `docs/planning/additional_components_plan.md`，lock_id=`v1.0-AGREED`，证据：frontmatter 或文首版本行匹配
-> - `docs/planning/temporal_optimization_plan.md`，lock_id=`v1.1-AGREED`，证据：§1.1 v1.1 amendment 标题存在
-> 每个**可执行**主任务遵循 5-stage 生命周期（a. Scaffold → b. Impl → c. Ablation/Test → d. Decision → e. Report）。
-> **生命周期适用规则**：
-> - stub-only 项（如 §2.4 carry-forward stubs）使用 reduced 生命周期：仅 a（stub） + e（指针登记）；b/c/d 标 `n/a`。
-> - blocked 阶段（依赖外部 trigger）标 `blocked` + 注明 unblocker，**不**作为未勾选 actionable 项；R2 close 时计入 carry-forward 而非 incomplete。
-> - 决策类 d 阶段（deploy/defer/drop）必须落地为结构化记录（见 §1.2/§1.3/§1.4 / §2.1）；单 checkbox 不构成决策证据。
->
-> 本文件不复制已 LOCK 计划内容；仅清单 + 指针。
+v1.1 LOCK 2026-05-10
 
----
+## 状态
 
-## 0. 外部阻塞（不在清单 actionable 范围）
+| 项 | 当前值 |
+|---|---|
+| 用途 | R2 启动、等待期、R2 close gate、carry-forward 登记 |
+| 生命周期 | 见 `additional_components_plan.md` §一 |
+| R2 must-do | §1.1 R2 val freeze、§1.2 Copy-paste、§1.3 hard-negative、§2.1 precision parity、§2.2.1 KD plumbing、§2.3 TSM plumbing |
+| R2 deferred | §1.4 map-prior、§3.4 adaptive ROI、§3.5 INT8 QAT、§3.6 planner-prior |
+| Schema authority | `scripts/_r2_carry_forward_schema.json`、`scripts/_r2_component_decision_schema.json` |
 
-| # | 等待对象 | 解锁谁 |
+| 类别 | 已落地 | 待启动 / blocked |
 |---|---|---|
-| 0.1 | R2 数据 freeze | §1 全部 |
-| 0.2 | DEIM-D-FINE-L 训练 | §七 KD teacher 选定 |
-| 0.3 | 5/12 GPS 决议 | §1.4 §五 实地 vs replay-only 分支 |
-| 0.4 | 在车 replay 出 small/far/occluded miss | §3.1 / §3.2 |
-| 0.5 | autonomy / planning 团队对接 | §3.3 / §3.6 |
+| 训练 | YOLO26-s/13-s/L、DEIM-D-FINE-S/M | DEIM-D-FINE-L |
+| Export | `scripts/export_yolo.sh` / `scripts/export_deim.sh` + atomic sidecar | KD 3 字段 + TSM 4 字段 |
+| 决策执行器 | `_r2_decide_precision.py` / `_r2_verify.py` scaffold | `_kd_decide_cell.py`、`_tsm_decide_phase.py` |
+| Schema | §1.0 三 schema、`_r2_decision_schema.json`、`_r2_schema_utils.py` | `_kd_decision_schema.json` |
+| Scaffold | TSM v1.5、KD a1、Copy-paste、Hard-negative、HMM | SAHI a-stage |
+| Deferred → R3+ | — | §五 / §九 / §十 / §十一 carry-forward |
 
----
+## Deferred
 
-## 1. R2 启动前必须（数据 freeze 触发）
+| item_id | status | blocked_on | unblock_logic | next_entrypoint |
+|---|---|---|---|---|
+| `map_prior_gate_§五` | blocked | `gps_topic_5_12`, `r2_raw_video_negative_controls` | all | `additional_components_plan.md §五` |
+| `adaptive_roi_§九` | blocked | `map_prior_landed`, `r3_inference_budget_window` | all | `additional_components_plan.md §九` |
+| `int8_qat_§十` | blocked | `sahi_b_c_measured`, `tsm_phase_1b_passed` | any | `additional_components_plan.md §十` |
+| `planner_prior_§十一` | blocked | `planning_team` | all | `additional_components_plan.md §十一` |
 
-### 1.0 共享 schema（在 §1.1+ / §2.1+ b-stage 引用前必须落地；data-independent，可立刻启动）
+## 外部阻塞
 
-- [x] **a. Scaffold**
-  - [x] `scripts/_r2_component_decision_schema.json`：§1.2/§1.3/§1.4 d-stage 写入的 `runs/_r2_component_decisions.json` schema
-    - 形状：array，按 `component` 唯一；字段 `{component, outcome ∈ {deploy, defer, drop}, reason, blocking_artifacts: [path|sha256], next_round_action, branch?}`；非-deploy 时 reason + next_round_action 必填；map-prior 必填 `branch ∈ {live, replay_only}`
-  - [x] `scripts/_r2_audit_coverage_schema.json`：§1.1 audit 子集输出 schema
-    - 形状：array，per-class `{class_id, class_name, full_val_support, full_val_insufficient, audit_support, audit_coverage_status ∈ {covered, low_power, construction_failed}, audit_low_power, construction_failure_reason?}`
-  - [x] `scripts/_r2_carry_forward_schema.json`：§4.2 carry-forward 登记 schema
-    - 形状：array，`{item_id, status ∈ {blocked, scheduled}, blocked_on: [closed_enum], unblock_logic? ∈ {all, any}, unblock_evidence_path?, next_entrypoint}`
-    - 规则：`status="blocked"` → `blocked_on` `minItems: 1`；多 token 默认 `unblock_logic="all"`，OR 关系必须显式 `"any"`；`status="scheduled"` → `blocked_on=[]` AND **禁止** `unblock_logic`
-    - `blocked_on` closed enum：`{r2_data_freeze, deim_l_training, on_vehicle_replay_failure_modes, hard_neg_manifest_hash, autonomy_team, planning_team, gps_topic_5_12, sahi_b_c_measured, tsm_phase_1b_passed, replay_temporal_flicker_or_state_confusion}`
-- [x] **b. Impl** — 三 schema 文件落地，无逻辑代码；spec-level "unique by sub-key" 由 `scripts/_r2_schema_utils.py`（运行时可导入）落地，schema JSON 描述指向该模块的 `validate_and_enforce` 入口（draft-07 `uniqueItems` 不足以覆盖 sub-key 唯一性）
-- [x] **c. Test** — 三 schema 通过 JSON Schema draft-07 自检；负向 fixture 全套（缺必填 / 错枚举 / 条件规则 / 路径反例 / 唯一性碰撞）+ runtime 强制路径测试；脚本 `scripts/_r2_schemas_test.py` 通过
-- [x] **d. Decision** — B2 + C3 loop AGREED（3-iter 收敛 2026-05-09；iter-1 1MAJOR+2MINOR / iter-2 3MINOR / iter-3 AGREE-WITH-B2 无新发现），三 schema 共批次登记：
-  - [x] `_r2_component_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-  - [x] `_r2_audit_coverage_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-  - [x] `_r2_carry_forward_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-- [ ] **e. Report** — 三 schema 路径 + B2/C3 transcript 写入 `runs/_r2_verification.json`（**gated on §2.1.1 a-stage** —`scripts/_r2_verify.py` 是该索引文件的唯一生成器，在 §2.1.1 落地前 e-stage 物理上无法完成，记入 §4.1 R2-close 准入而非本 §1.0 incomplete）
+| # | 等待对象 | 解锁 |
+|---|---|---|
+| 0.1 | R2 数据 freeze | §1.1 / §1.2 / §1.3 / §2.1.2 |
+| 0.2 | DEIM-D-FINE-L 训练 | KD teacher 选定 / A7 |
+| 0.3 | GPS topic | §五 R3+ 重启 |
+| 0.4 | 在车 replay 出 small/far/occluded miss | TSM |
+| 0.5 | replay temporal flicker / state confusion | HMM |
+| 0.6 | autonomy / planning 团队对接 | 多相机 / planner-prior |
+
+## 1. R2 启动前必须
+
+### 1.0 共享 schema
+
+- [x] a. `scripts/_r2_component_decision_schema.json`
+- [x] a. `scripts/_r2_audit_coverage_schema.json`
+- [x] a. `scripts/_r2_carry_forward_schema.json`
+- [x] b. `scripts/_r2_schema_utils.py` runtime uniqueness / path checks
+- [x] c. `scripts/_r2_schemas_test.py` 负向 fixture
+- [x] d. B2 + C3 AGREED
+- [ ] e. 路径 + transcript 写入 `runs/_r2_verification.json`（blocked on §2.1.1 b-stage）
+
+`runs/_r2_component_decisions.json` row format：
+
+```json
+{
+  "component": "copy_paste_balance",
+  "outcome": "deploy|defer|drop",
+  "reason": "...",
+  "blocking_artifacts": ["path|sha256"],
+  "next_round_action": "...",
+  "branch": "live|replay_only"
+}
+```
+
+`runs/_r2_carry_forward.json` row format：
+
+```json
+{
+  "item_id": "...",
+  "status": "blocked|scheduled",
+  "blocked_on": ["closed_enum_token"],
+  "unblock_logic": "all|any",
+  "unblock_evidence_path": "...",
+  "next_entrypoint": "..."
+}
+```
+
+`blocked_on` closed enum（13 tokens；权威定义见 `scripts/_r2_carry_forward_schema.json`）：
+
+| token | 用途 |
+|---|---|
+| `r2_data_freeze` | R2 frozen val / train manifest |
+| `deim_l_training` | DEIM-D-FINE-L teacher |
+| `on_vehicle_replay_failure_modes` | TSM 启动 |
+| `hard_neg_manifest_hash` | KD gate #3 |
+| `autonomy_team` | 多相机融合 |
+| `planning_team` | planner-prior |
+| `gps_topic_5_12` | map-prior GPS topic |
+| `sahi_b_c_measured` | SAHI measured latency / recall |
+| `tsm_phase_1b_passed` | TSM Phase 1-B measured |
+| `replay_temporal_flicker_or_state_confusion` | HMM 启动 |
+| `r2_raw_video_negative_controls` | map-prior 负面控制 raw video |
+| `r3_inference_budget_window` | R3 推理预算窗口 |
+| `map_prior_landed` | map-prior a-stage LANDED |
 
 ### 1.1 R2 验证集 freeze + 分层 audit subset
 
-- [ ] **a. Scaffold** — manifest schema + 采样规则定稿；schema 文件 + 采样 code 也 hash 入 manifest（防 schema drift gaming）
-- [ ] **b. Impl**
-  - [ ] `runs/_r2_val_manifest.txt` + `.sha256`
-  - [ ] `runs/_r2_eval_parity/sample_manifest.json`（每类 ≥ 1，每 scenario tag ≥ 3；class-ID 映射 + scenario taxonomy 冻结于 manifest schema）
-  - [ ] **`runs/_r2_audit_coverage.json` + `.sha256`**：per-class records 满足 §1.0 `_r2_audit_coverage_schema.json`（`full_val_support` / `full_val_insufficient` / `audit_support` / `audit_coverage_status` / `audit_low_power` / 可选 `construction_failure_reason`）；audit subset 构造目标：per-class ≥ 5 安全类 instance
-  - [ ] **传播规则**（§2.1 b 强制消费）：`audit_coverage_status == "low_power"` → `_r2_decide_precision.py` 写 `audit_low_power=true` + confidence-downgrade；`construction_failed` → escape outcome（不参与 ship_precision 决定，且报告必须显式标该 detector 为 degraded-confidence，不可静默忽略）
-- [ ] **c. Test** — image hash 自洽；分层覆盖断言通过；audit_coverage.json 通过 §1.0 schema 校验；负向测试：篡改 schema 文件后 hash 校验必须失败
-- [ ] **d. Decision** — manifest + schema + sampling-code 三 hash 一旦定稿即冻结；任意改动 = 重跑全部 parity
-- [ ] **e. Report** — manifest 路径 + 三 hash + `runs/_r2_audit_coverage.json` 路径与 sha256 写入 `runs/_r2_verification.json`
+- [ ] a. manifest schema + sampling rule 冻结；schema / sampling code hash 入 manifest。
+- [ ] b. 生成 `runs/_r2_val_manifest.txt` + `.sha256`。
+- [ ] b. 生成 `runs/_r2_eval_parity/sample_manifest.json`。
+- [ ] b. 生成 `runs/_r2_audit_coverage.json` + `.sha256`。
+- [ ] b. 传播规则：`low_power` → confidence downgrade；`construction_failed` → escape outcome。
+- [ ] c. image hash / stratified coverage / schema / tamper negative tests 通过。
+- [ ] d. manifest + schema + sampling-code hash freeze；任意改动 = 重跑 parity。
+- [ ] e. 路径与 hash 写入 `runs/_r2_verification.json`。
 
-### 1.2 §三 Copy-paste + class-balanced loss（参 `additional_components_plan.md` §三）
+### 1.2 Copy-paste + class-balanced loss
 
-- [ ] **a. Scaffold** — 数据增强 hook + class-balanced loss 接入点
-- [ ] **b. Impl** — rare-class instance copy-paste + FP ceiling 监控（FP 分母与 class 分组在 §三 锁定）
-- [ ] **c. Ablation** — 开/关 + 强度 sweep；rare-class FP ceiling vs ≥−1 pp 安全 floor（per-class 而非 aggregate）
-- [ ] **d. Decision** — 写入 `runs/_r2_component_decisions.json`，符合 §1.0 `_r2_component_decision_schema.json`；非-deploy 时 reason + next_round_action 必填；`blocking_artifacts` 必须为 path|sha256 引用，禁止自由 prose
-- [ ] **e. Report** — `phase_R2.md` §三 子节；defer/drop 时附 evidence 表（消融数据 + 阻塞工件）
+- [ ] a. 数据增强 hook + class-balanced loss 接入点。
+- [ ] b. rare-class copy-paste + FP ceiling 监控。
+- [ ] c. 开 / 关 + strength sweep；per-class safety floor。
+- [ ] d. 写 `runs/_r2_component_decisions.json`，符合 §1.0 schema。
+- [ ] e. phase report 子节。
 
-### 1.3 §四 Hard-negative mining（参 §四）
+Decision rule：见 `additional_components_plan.md` §三。
 
-- [ ] **a. Scaffold** — mining script + 候选池采样规则
-- [ ] **b. Impl**
-  - [ ] 基于 baseline 出 hard-neg pool
-  - [ ] frozen `runs/_hard_negative_eval_manifest.json` + `.sha256`（与 §七.6 KD acceptance gate #3 共享；§2.2.1 必须 hash-pin 引用此 manifest）
-- [ ] **c. Ablation** — 注入比例 sweep；**per-class** 真实灯 recall 下限 ≥ −0.5 pp（aggregate 不足以代理）
-- [ ] **d. Decision** — 写入 `runs/_r2_component_decisions.json`，符合 §1.0 schema（同 §1.2 d 规则）
-- [ ] **e. Report** — `phase_R2.md` §四 子节；defer/drop 时附消融证据
+### 1.3 Hard-negative mining
 
-### 1.4 §五 Map-prior gating（参 §五；by 5/15）
+- [ ] a. mining script + candidate pool sampling rule。
+- [ ] b. baseline 出 hard-neg pool。
+- [ ] b. 冻结 `runs/_hard_negative_eval_manifest.json` + `.sha256`。
+- [ ] c. 注入比例 sweep；per-class true-light recall delta ≥ -0.5 pp。
+- [ ] d. 写 `runs/_r2_component_decisions.json`。
+- [ ] e. phase report 子节。
 
-- [ ] **a. Scaffold** — GPS / map service 接口 + replay-only fallback 接口
-- [ ] **b. Impl** — gating 决策点 + 三类负控（施工灯 / GPS jitter / missing maps）
-- [ ] **c. Ablation** — 开/关 + 三负控；**per-class 最小样本 N 锁定于 `runs/_map_prior_negative_controls.json`**（每负控类 ≥ N instance；N 在 a-stage 定稿）；silent miss 定义：相对 detector-only baseline 仅由 gating 引入的 per-class false negative；要求 zero
-- [ ] **d. Decision** — 5/12 GPS 决议未到 → 切 replay-only 分支；写入 `runs/_r2_component_decisions.json` 符合 §1.0 schema；`branch ∈ {live, replay_only}` 必填
-- [ ] **e. Report** — `phase_R2.md` §五 子节
+Decision rule：见 `additional_components_plan.md` §四。
 
----
+### 1.4 Map-prior gating
+
+DEFERRED → R3+。R2 启动前不要求 a-e。登记见 §4.2。
 
 ## 2. 等待期并行任务
 
-> **诚实性修订**：仅 §2.1.1 / §2.2.1 / §2.3 a-stage 真正"数据无关、可立刻启动"。所有 b/c 阶段中"消费 §1.1 audit / val manifest"的步骤均被数据 freeze gate 住，标 `blocked_on=r2_data_freeze`。
+### 2.1 R2 Precision Parity
 
-### 2.1 R2 Precision Parity 工程（参 `elegant-sauteeing-quail`）
+#### 2.1.1 即时 plumbing
 
-> sensitivity sweep 参数网格、阈值默认值、Case 求值顺序均在 `elegant-sauteeing-quail` LOCK iter-3 中冻结；本节不复制数值，仅做执行清单。
+- [x] a. `scripts/_r2_decision_schema.json`
+- [x] a. `scripts/_r2_decide_precision.py` scaffold
+- [x] a. `scripts/_r2_verify.py` scaffold
+- [ ] b. verify 仅做 schema / path / hash 校验；不得做阈值分支 / case 分类 / delta 计算。
+- [ ] b. verify 加 Orin soak SHA 比对：`engine_sha256 == selected_artifact_sha256`。
+- [ ] b. `inference/cpp/src/demo.cpp` 增加 `t_detect` / `t_track` 拆分日志。
+- [ ] b. build-determinism 双构建脚本骨架。
+- [ ] b. mixed-precision pipeline 加载 `best_fp32.engine`。
+- [~] c. schema / `$ref` / helper tests 部分通过；verify / demo.cpp fixture 待补。
+- [~] d. a-stage 三工件 B2 + C3 AGREED；b-stage 工件 pending。
+- [ ] e. transcript 写 `runs/_r2_verification.json`。
 
-#### 2.1.1 即时 plumbing（数据无关，可立刻启动）
+#### 2.1.2 数据 freeze 后执行
 
-- [x] **a. Scaffold**（2026-05-09 落地）
-  - [x] `scripts/_r2_decision_schema.json`（Input + Output `definitions`，`audit_records` 通过 `$ref` 指向 `_r2_audit_coverage_schema.json#/items`；ConfidenceInterval / ClassWiseDecisionItem cross-field 规则齐全；`_r2_schema_utils.py` 默认 registry 双注册 basename + `$id` 让 `$ref` 在生产路径 load-bearing；CI 序关系由 `enforce_ci_ordering` 运行时执行因 draft-07 不支持 cross-property numeric ordering）
-  - [x] `scripts/_r2_decide_precision.py` 接口框架（8 个 NotImplementedError stub；load_decision_input 负责 hash-pin audit-coverage；write_decisions docstring 三 gate 显式：schema+uniqueness / CI ordering / artifact path）
-  - [x] `scripts/_r2_verify.py` 接口框架（scope-clamp banner + 8 verify_* stub；verify_decisions_artifact docstring 三 gate 锁定为 round-close 不可绕过）
-- [ ] **b. Impl（数据无关部分）**
-  - [ ] verify：仅 schema / path / hash 校验；**严禁** 阈值分支 / case 分类 / delta 计算
-  - [ ] verify 增加 §4.1 soak SHA 比对：当 `runs/_r2_orin_soak_records.json` 含 entry 时，hard-fail 当 `engine_sha256 != selected_artifact_sha256`（仍是纯比对，不是决策逻辑）
-  - [ ] `inference/cpp/src/demo.cpp:271-278` 计时拆分（t_detect / t_track；log 行追加 `(detect=Xms, track=Yms)`）
-  - [ ] build-determinism 双构建脚本骨架（YOLO + DEIM 各一；实跑落 §2.1.2）
-  - [ ] mixed-precision pipeline 加载验证（按路径加载 `best_fp32.engine`）
-- [~] **c. Test（数据无关）** — schema 自检 + cross-file `$ref` 负向 + 运行时 enforce_* helper 全过（`scripts/_r2_schemas_test.py`，~70 fixtures）；verify 单元负向 / demo.cpp 编译 fixture 待 b-stage
-- [~] **d. Decision** — B2 + C3 loop AGREED 仅覆盖 a-stage 三工件（2026-05-09，B2 iter-1 4MAJOR+多MINOR / C3 iter-1 2MAJOR+1MINOR / iter-2 1MAJOR / iter-3 AGREE-WITH-B2，全部 amend）；剩余两批次随 b-stage 落地：
-  - [x] `_r2_decide_precision.py` — B2 ✓ / C3 ✓ / unresolved=0（a-stage scaffold）
-  - [x] `_r2_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0（含 cross-field rules + cross-file `$ref` + CI ordering runtime gate 文档化）
-  - [x] `_r2_verify.py` — B2 ✓ / C3 ✓ / unresolved=0（含 scope-clamp 强制 + 三-gate round-close 契约 + 元测试防 docstring drift）
-  - [ ] `demo.cpp` 计时拆分 — pending b-stage（scoped brief：无行为变更 / 无 timer 双计 / log 可解析）
-  - [ ] `export_yolo.sh` + `export_deim.sh` sidecar 字段改动 — pending b-stage（critical-path；与 §2.2.1 + §2.3 同批次）
-- [ ] **e. Report** — a-stage 三工件 transcript 路径登记待与 b-stage 工件汇总后一次写入 `runs/_r2_verification.json`（即 §1.0 e-stage 同样的 gate）
+- [ ] b. `_r2_decide_precision.py` 实现 Case C → A → D → B；exactly-one outcome。
+- [ ] b. 支持 `inconclusive_global` / `audit_disagreement` / `executor_error` escape。
+- [ ] b. hash-pin `runs/_r2_audit_coverage.json`。
+- [ ] b. 构建 FP32 engine × 4 + sidecar。
+- [ ] b. build-determinism 实跑；超阈写 `pre_committed_defer_outcome="r2_fp16_default"`。
+- [ ] c. eval-parity：per-image IoU 0.99、score ±0.005、mAP ≤ 0.01 pp、class order 一致。
+- [ ] c. FP32 demo 完整跑；记录 peak GPU mem / first-frame / median `t_detect_ms`。
+- [ ] e. 写 `runs/_r2_precision_decisions.json` + phase report appendix。
 
-#### 2.1.2 数据 freeze 后执行（blocked_on=r2_data_freeze）
+### 2.2 KD plumbing
 
-- [ ] **b. Impl（freeze-blocked）**
-  - [ ] decide_precision：按 LOCKED 计划实现 Case C → A → D → B；exactly-one outcome；inconclusive_global / audit_disagreement / executor_error 三 escape；sensitivity sweep（参数网格按 LOCKED 计划读取）
-  - [ ] decide_precision 必须 hash-pin 消费 `runs/_r2_audit_coverage.json` + `.sha256`：`construction_failed` 触发 escape；`low_power` 写 confidence-downgrade
-  - [ ] FP32 engine × 4 候选 + sidecar（atomic 协议已就绪）
-  - [ ] build-determinism 双构建实跑；超阈分支显式标 `pre_committed_defer_outcome="r2_fp16_default"` + root-cause classification
-- [ ] **c. Test**
-  - [ ] eval-parity gate：per-image IoU 0.99 + score ±0.005；mAP@0.5 / @0.5:0.95 ≤ 0.01 pp；class array 顺序一致
-  - [ ] eval-parity 失败分类（B2 调用；implementation bug vs expected numeric divergence；**严禁** silent 放宽）
-  - [ ] build-variance 阈值（按 LOCKED 计划）；超阈写 `pre_committed_defer_outcome` + root-cause
-  - [ ] FP32 demo 完整跑（peak GPU mem / first-frame / median t_detect_ms）
-- [ ] **e. Report** — `phase_R2.md` 头表 4 行 + appendix；`runs/_r2_precision_decisions.json` 写入
+#### 2.2.1 即时 plumbing
 
-### 2.2 §七 KD a2 — 拆分为「即时 plumbing」+「blocked 决策执行」
+- [ ] a. `scripts/_kd_decision_schema.json`。
+- [ ] a. `scripts/_kd_decide_cell.py` scaffold。
+- [ ] b. 5 acceptance gates；ship-decision 强制 `seed5`。
+- [ ] b. gate #3 hash-pin `runs/_hard_negative_eval_manifest.json`。
+- [ ] b. `scripts/export_yolo.sh` / `scripts/export_deim.sh` 加 KD sidecar 字段。
+- [ ] c. sidecar size-stability；`engine_sha256` 流程；`bash -n`。
+- [ ] d. B2 + C3：`_kd_decide_cell.py`、`_kd_decision_schema.json`、export KD fields。
+- [ ] e. transcript 写 `runs/_r2_verification.json`。
 
-> **诚实性修订**：原 §2 "数据无关、可立刻启动" 仅对 §2.2.1 plumbing 成立；§2.2.2 KD 首 cell 决策同时被三件事 block：(a) R2 student/teacher 选定（依赖 §2.1）、(b) DEIM-D-FINE-L 训练完成（§0.2）、(c) §1.3 hard-neg manifest 冻结（KD acceptance gate #3 共享 hash）。
+#### 2.2.2 KD 首 cell 决策执行
 
-#### 2.2.1 KD 即时 plumbing（数据无关，可立刻启动）
+blocked：R2 student/teacher 选定 + `hard_neg_manifest_hash` + `deim_l_training` + `r2_data_freeze`。解锁后入口：`additional_components_plan.md` §七。
 
-- [ ] **a. Scaffold**
-  - [ ] `scripts/_kd_decision_schema.json`
-  - [ ] `scripts/_kd_decide_cell.py` 接口框架
-- [ ] **b. Impl**
-  - [ ] decide_cell 接口：5 acceptance gate 求值；seed5 强制（ship-decision 路径）；**gate #3 输入必须按路径 + sha256 hash-pin 引用 §1.3 `runs/_hard_negative_eval_manifest.json`**，hash mismatch 或缺失 → 硬失败
-  - [ ] `scripts/export_yolo.sh` + `scripts/export_deim.sh` sidecar 加 3 KD 字段（`kd_enabled` / `kd_teacher_path` / `kd_temperature`）
-- [ ] **c. Test** — sidecar size-stability 协议保留；`engine_sha256` 流程重测；`bash -n` 通过
-- [ ] **d. Decision** — B2 + C3 loop AGREED，**逐工件登记**：
-  - [ ] `_kd_decide_cell.py` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `_kd_decision_schema.json` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `export_yolo.sh` + `export_deim.sh` KD sidecar 字段改动 — B2 ✓ / C3 ✓ / unresolved=0（critical-path；与 §2.1.1 + §2.3 同批次审）
-- [ ] **e. Report** — transcript 路径登记于 `runs/_r2_verification.json`
+### 2.3 TSM Phase 1-C plumbing
 
-#### 2.2.2 KD 首 cell 决策执行（blocked；R2 close 计入 carry-forward）
+- [ ] a. `scripts/_tsm_decide_phase.py` scaffold。
+- [ ] b. decision tree 实现：deploy / defer INT8 / defer export / 5 drop（覆盖 activation mismatch / Gate-1A / Gate-1B precision / latency / export impossible），见 `temporal_optimization_plan.md` §决策规则。
+- [ ] b. deploy hard-fail：`pretrained_init_mode == "scratch"` AND `deploy_eligible == true` AND `seed == 5`。
+- [ ] b. 写 `runs/_tsm_decisions.json`。
+- [ ] b. export scripts 加 `tsm_enabled` / `tsm_shift_fraction` / `tsm_clip_size_train` / `tsm_feature_cache_stages`。
+- [ ] c. deploy-path negative matrix + positive fixture。
+- [ ] d. B2 + C3：`_tsm_decide_phase.py`、export TSM fields。
+- [ ] e. transcript 写 `runs/_r2_verification.json`。
 
-- [ ] **blocked**：等待 (a) R2 student/teacher 选定、(b) `runs/_hard_negative_eval_manifest.json` hash 冻结、(c) DEIM-D-FINE-L 训练完成
-- [ ] 解锁后入口：`additional_components_plan.md` §七.6 起跳；本 checklist 不追踪后续 a-e
+### 2.4 Carry-forward stubs
 
-### 2.3 TSM Phase 1-C 解锁（参 `temporal_optimization_plan.md` §1.5.4）
+Reduced lifecycle：a + e；b/c/d = n/a。
 
-- [ ] **a. Scaffold** — `scripts/_tsm_decide_phase.py` 接口框架（schema 已就绪：`_tsm_activation_schema.json` v1.1）
-- [ ] **b. Impl**
-  - [ ] decide_phase：7-branch tree（deploy / INT8 defer / 1-C export defer / 4 drop incl. activation-bucket mismatch）
-  - [ ] **deploy 路径硬失败条件**（三全否则 fail）：`pretrained_init_mode == "scratch"` AND `deploy_eligible == true` AND `seed == 5`（ship-decision 路径强制 seed5，与 §2.2 KD 同条款）
-  - [ ] `runs/_tsm_decisions.json`（plural）写入
-  - [ ] export_*.sh sidecar 加 4 TSM 字段（`tsm_enabled` / `tsm_shift_fraction` / `tsm_clip_size_train` / `tsm_feature_cache_stages`），与 §2.2.1 KD 字段同批次
-- [ ] **c. Test** — 与 §2.2.1 共用 sidecar 测试套；**deploy-path negative test 矩阵**（每条独立 fail，不可任一 short-circuit）：
-  - [ ] fixture-1：`pretrained_init_mode="pretrained_diagnostic"` + 其他两条 valid → deploy 必须 fail
-  - [ ] fixture-2：`deploy_eligible=false` + 其他两条 valid → deploy 必须 fail
-  - [ ] fixture-3：`seed=0`（任一 != 5） + 其他两条 valid → deploy 必须 fail
-  - [ ] fixture-positive：三条全 valid → deploy 通过
-- [ ] **d. Decision** — B2 + C3 loop AGREED，**逐工件登记**：
-  - [ ] `_tsm_decide_phase.py` — B2 ✓ / C3 ✓ / unresolved=0
-  - [ ] `export_yolo.sh` + `export_deim.sh` TSM sidecar 字段改动 — B2 ✓ / C3 ✓ / unresolved=0（critical-path；与 §2.1.1 + §2.2.1 同批次审）
-- [ ] **e. Report** — transcript 路径登记；Phase 1-A / 1-B 仍由 §0.4 在车 replay trigger 控制
+- [ ] a. `docs/planning/R3_precision_reproducibility.md`（trigger / held-out / success criteria）。
+- [ ] a. `docs/planning/pre_deploy_AGV_integration.md`（Case A FP32 ship / 5-min Orin soak / AGV latency budget）。
+- [ ] e. stub 路径登记于 `runs/_r2_verification.json`。
 
-### 2.4 Carry-forward stub（reduced 生命周期：a + e；b/c/d 标 n/a）
+### 2.5 Pre-R2 ablation rehearsals
 
-- [ ] **a. Stub** — 文件存在 + 必备字段
-  - [ ] `docs/planning/R3_precision_reproducibility.md`：trigger（build-variance defer OR inconclusive-global） + 阻塞决策 + 所需 held-out 数据 + success criteria
-  - [ ] `docs/planning/pre_deploy_AGV_integration.md`：接收 Case A FP32 ship；5-min Orin soak；AGV-loop latency budget
-- [ ] **e. Report** — stub 路径登记于 `runs/_r2_verification.json`；`phase_R2.md` "Carry-forward stubs created" 节列出
+Rehearsal outputs 不进 ship-decision。文件名前缀必须为 `rehearsal_`，并含 `rehearsal_kind ∈ {r1_data, synthetic_fixture, demo_only}`。
 
----
+Executor-side gate：
 
-## 3. 历史 hang-up（gated；非 actionable）
+1. ship-decision JSON 拒绝 `rehearsal_kind`。
+2. ship-decision JSON 引用 artifact 拒绝 `rehearsal_` 前缀。
+3. ship-decision JSON 必须含 R2 frozen manifest hash。
+4. rehearsal outputs 只可挂到 `runs/_r2_verification.json.rehearsal_outputs`。
 
-| # | 任务 | Gate | 解锁入口 |
+| rehearsal | action | output |
+|---|---|---|
+| Hard-negative R1 | demo8/11/13 挖 FP + frozen R1 manifest + shortened A/B | `runs/rehearsal_hard_negative_decision_R1.json` |
+| Copy-paste R1 | R1 数据三臂机制验证 | `runs/rehearsal_copy_paste_decision_R1.json` |
+| KD A1 wall-clock | R1 单 epoch YOLO / DEIM | `runs/rehearsal_kd_A1_walltime_estimate.json` |
+| TSM 1-A | R1 demo + synthetic clip | `runs/rehearsal_tsm_phase_1a_concept.json` |
+| HMM | synthetic flicker / transition fixture | `runs/rehearsal_hmm_smoother_synthetic.json` |
+| SAHI | R1 demo，需 §六 a-stage 后启动 | `runs/rehearsal_sahi_R1_demo.json` |
+| Decision executor | synthetic Case A/B/C/D + escapes | `scripts/_r2_decide_precision_mechanical_test.py` |
+
+## 3. Gated / 非 actionable
+
+| # | 任务 | Gate | 状态 |
 |---|---|---|---|
-| 3.1 | TSM Phase 1-A | R2 主选 detector + 在车 replay 出 small/far/occluded miss | `components/temporal_shift_module/runners/concept_validation.py` |
-| 3.2 | HMM scaffold | §0.2 row 2/3 失败模式涌现 | `temporal_optimization_plan.md` §2.2 |
-| 3.3 | §八 Multi-camera fusion | autonomy 团队多相机标定 + 时序对齐 | §八 a-stage |
-| 3.4 | §九 Adaptive inference / ROI | R2 latency 预算 release | §九 a-stage |
-| 3.5 | §十 INT8 QAT | **measured** SAHI latency from §3.7 §六 b/c stage 在 [50, 80) ms OR TSM Phase 1-B 通过且 measured latency 在 [26, 35] ms（latency 来源必须是已运行的实测，不是估计） | §十 a-stage |
-| 3.6 | §十一 Planner-prior late fusion | planning 团队接口 + cross_detection_reasoning_plan 扩展 | §十一 a-stage |
-| 3.7 | §六 SAHI（inference-only） | 5/15+，无强 gate | §六 a-stage |
-
----
+| 3.1 | TSM Phase 1-A | R2 detector + on-vehicle replay miss | gated |
+| 3.2 | HMM scaffold / ablation | replay temporal flicker / state confusion | gated |
+| 3.3 | Multi-camera fusion | autonomy team | gated |
+| 3.4 | Adaptive inference / ROI | map_prior_landed + r3_inference_budget_window | DEFERRED → R3+ |
+| 3.5 | INT8 QAT | measured SAHI band OR TSM Phase 1-B band | DEFERRED → R3+ |
+| 3.6 | Planner-prior | planning team + cross-detection | DEFERRED → R3+ |
+| 3.7 | SAHI | 5/15+ | scheduled |
+| 3.8 | Map-prior gating | gps_topic_5_12 + r2_raw_video_negative_controls | DEFERRED → R3+ |
 
 ## 4. R2 close 准入
 
-> **诚实性修订**：原 §4 要求 §2.2 / §2.3 全 a-e 完成是 over-strict——KD 首 cell + TSM Phase 1-A/1-B 由外部 trigger gate 住，不应阻塞 R2 close。拆分为 4.1 / 4.2。
+### 4.1 必备
 
-### 4.1 R2 close 必备（`runs/_r2_verification.json` 全 ✓）
+- [ ] §1.0 schema a-e 完成。
+- [ ] §1.1 / §1.2 / §1.3 全部 a-e 完成。
+- [ ] §2.1.1 / §2.1.2 全部 a-e 完成。
+- [ ] §2.2.1 / §2.3 plumbing a-e 完成。
+- [ ] §2.4 两 stub a + e 完成。
+- [ ] 如启动 §2.5，rehearsal outputs 写入 `runs/_r2_verification.json`。
+- [ ] 任一 Case A：`runs/_r2_orin_soak_records.json` + `.sha256` 存在，且 `engine_sha256 == selected_artifact_sha256`。
+- [ ] 完整 demo + 5-min Orin soak。
+- [ ] phase report 头表 + appendix + coverage-gaps 完整。
+- [ ] 任一 detector 含 `construction_failed` 类：头表标 `degraded-confidence`。
 
-- [ ] §1.0 三 schema a-e 完成（B2+C3 逐 schema 登记）
-- [ ] §1 全部 a-e 完成（含 manifest 三 hash + `runs/_r2_audit_coverage.json` + 三组件 `runs/_r2_component_decisions.json` 符合 §1.0 schema）
-- [ ] §2.1.1 + §2.1.2 全部 a-e 完成（5 工件逐工件 B2+C3；4 候选 FP16+FP32 engine + sidecar；eval / timing / build-variance / audit JSON 完整；`runs/_r2_precision_decisions.json` 4 record + sensitivity sweep + audit/full agreement + pre_committed_defer_outcome 字段；root-cause classification 凡触发 defer 必有）
-- [ ] §2.2.1 + §2.3 plumbing a-e 完成（sidecar 字段 carry-forward；schema + executor + B2/C3 transcript；§2.3 c 4 fixture 全过；export_*.sh 改动通过 backward-compat fixture：现有非 KD/非 TSM engine 重新 load 仍合法）
-- [ ] §2.4 两 stub a + e 完成
-- [ ] **任一 Case A → soak 记录 hard-bound 至选定 engine**：
-  - [ ] `runs/_r2_orin_soak_records.json` + `.sha256` 存在；per-detector record `{detector, engine_path, engine_sha256, selected_artifact_sha256, duration_s, peak_gpu_mem, sustained_fps, thermal_mode}`
-  - [ ] `_r2_verify.py` 校验 `engine_sha256 == selected_artifact_sha256`，任一 mismatch → R2 close 阻塞
-  - [ ] 该 engine 完成完整 demo + 5-min Orin soak
-- [ ] `phase_R2.md` 头表 + appendix；`codex-report-conflictor` 对精度子节 AGREED；coverage-gaps 节列出 §3 + §4.2 中仍 hang-up 的项；任一 detector 含 `construction_failed` 类 → 该 detector 在头表显式标 `degraded-confidence`，不可静默忽略
+Coverage-gaps 行格式：
 
-### 4.2 Carry-forward readiness（不阻塞 R2 close，但必须按 §1.0 `_r2_carry_forward_schema.json` 登记）
+```text
+item_id | status | blocked_on | unblock_logic | unblock_evidence_path | next_entrypoint
+```
 
-写入 `runs/_r2_carry_forward.json`，每 record 符合 §1.0 schema（`item_id` / `status` / `blocked_on` ⊆ closed_enum / `unblock_evidence_path` / `next_entrypoint`）。
+散文替代 6 字段行 = R2 close 阻塞。
 
-- [ ] §2.2.2 KD 首 cell：`status="blocked", blocked_on=["deim_l_training", "hard_neg_manifest_hash", "r2_data_freeze"], unblock_logic="all"`（含 student/teacher 选定隐含）
-- [ ] §3.1 TSM Phase 1-A：`status="blocked", blocked_on=["on_vehicle_replay_failure_modes"]`
-- [ ] §3.2 HMM scaffold：`status="blocked", blocked_on=["replay_temporal_flicker_or_state_confusion"]`
-- [ ] §3.3 §八 Multi-cam：`status="blocked", blocked_on=["autonomy_team"]`
-- [ ] §3.4 §九 Adaptive ROI：`status="scheduled", blocked_on=[], next_entrypoint="r3_latency_budget_release"`（无外部 trigger，纯 round 调度）
-- [ ] §3.5 §十 INT8 QAT：`status="blocked", blocked_on=["sahi_b_c_measured", "tsm_phase_1b_passed"], unblock_logic="any"`（OR 关系显式编码）
-- [ ] §3.6 §十一 Planner-prior：`status="blocked", blocked_on=["planning_team"]`
-- [ ] §3.7 §六 SAHI：`status="scheduled", blocked_on=[], next_entrypoint="post_5_15"`
+### 4.2 Carry-forward readiness
 
----
+写入 `runs/_r2_carry_forward.json`；每 record 符合 `scripts/_r2_carry_forward_schema.json`。
 
-## 5. 状态总览（v1.1 时点）
+| item_id | status | blocked_on | unblock_logic | next_entrypoint |
+|---|---|---|---|---|
+| `kd_first_cell` | blocked | `deim_l_training`, `hard_neg_manifest_hash`, `r2_data_freeze` | all | `additional_components_plan.md §七` |
+| `tsm_phase_1a` | blocked | `on_vehicle_replay_failure_modes` | all | `temporal_optimization_plan.md §1` |
+| `hmm_smoother` | blocked | `replay_temporal_flicker_or_state_confusion` | all | `temporal_optimization_plan.md §2.2` |
+| `multi_camera_fusion` | blocked | `autonomy_team` | all | `additional_components_plan.md §八` |
+| `adaptive_roi_§九` | blocked | `map_prior_landed`, `r3_inference_budget_window` | all | `additional_components_plan.md §九` |
+| `int8_qat_§十` | blocked | `sahi_b_c_measured`, `tsm_phase_1b_passed` | any | `additional_components_plan.md §十` |
+| `planner_prior_§十一` | blocked | `planning_team` | all | `additional_components_plan.md §十一` |
+| `sahi_§六` | scheduled |  |  | `post_5_15` |
+| `map_prior_gate_§五` | blocked | `gps_topic_5_12`, `r2_raw_video_negative_controls` | all | `additional_components_plan.md §五` |
+| `sahi_int8_retest` | blocked | `sahi_b_c_measured` | all | `additional_components_plan.md §十 探针` |
+| `sahi_recall_marginal_retest` | blocked | `r3_inference_budget_window` | all | `additional_components_plan.md §六 决策规则` |
+| `tsm_int8_retest` | blocked | `tsm_phase_1b_passed` | all | `additional_components_plan.md §十 探针` |
 
-| 类别 | 已落地 | 待启动 |
-|---|---|---|
-| 训练 | YOLO26-s/13-s/L、DEIM-D-FINE-S/M | DEIM-D-FINE-L（训练中） |
-| Export | export_yolo.sh / export_deim.sh + atomic sidecar | KD 3 + TSM 4 字段 carry-forward |
-| 决策执行器 | `_r2_decide_precision.py` / `_r2_verify.py` 接口框架（NotImplementedError stub 全函数，待 b-stage 填实） | `_kd_decide_cell.py` / `_tsm_decide_phase.py` |
-| Schema | `_tsm_activation_schema.json` v1.1；§1.0 三 schema + §2.1.1 `_r2_decision_schema.json` + `_r2_schema_utils.py` 运行时强制（schema validation / sub-key uniqueness / CI ordering） | `_kd_decision_schema.json` |
-| C++ | — | `demo.cpp` 计时拆分 |
-| Scaffold | TSM v1.5；KD a1 | — |
-| 计划 stub | — | R3_precision_reproducibility.md / pre_deploy_AGV_integration.md |
+## 5. 维护规则
 
----
+- 触发：主任务 batch 完成 OR locked plan 修订。
+- diff 范围：§ 引用 + checkbox + state only。
+- 提交前一致性：
+  - `~/.claude/plans/elegant-sauteeing-quail.md` 含 precision parity LOCK 锚点。
+  - `additional_components_plan.md` 文首含 `v1.1 LOCK 2026-05-10`。
+  - `temporal_optimization_plan.md` 文首含 `v1.1 LOCK 2026-05-10`。
 
-## 6. 维护规则
+## 衔接
 
-- **触发**：主任务 batch 完成 OR 已 LOCK 计划修订。
-- **diff 范围**：仅 §-引用 + state checkbox；**不复制** LOCKED 计划内容。
-- **提交前一致性**（按 header 三个不可变锚点逐一校验）：
-  - `elegant-sauteeing-quail.md` 含 `## Conflictor-loop termination (LOCK after iter 3)` 标题 → 否则阻塞
-  - `additional_components_plan.md` 文首版本行匹配 `v1.0` AGREED → 否则阻塞
-  - `temporal_optimization_plan.md` §1.1 含 `2026-05-09 v1.1 amendment` 标题 → 否则阻塞
-  - 任一锚点 missing → 阻塞提交并 surface 给 user 决定（重新 review-conflict / 升级 lock_id / 接受 drift）
+- `additional_components_plan.md`：生命周期定义与组件决策规则。
+- `development_plan.md`：R2 范围、模型、部署 gate。
+- `temporal_optimization_plan.md`：TSM / HMM 触发与决策。
+- `cross_detection_reasoning_plan.md`：planner-prior / cooccurrence R3 入口。
+- `scripts/_r2_carry_forward_schema.json`：13-token closed enum 权威来源。
+- `scripts/_r2_component_decision_schema.json`：deploy / defer / drop row 格式权威来源。

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "$id": "scripts/_r2_component_decision_schema.json",
-  "title": "R2 Component Decision Record (§1.2 / §1.3 / §1.4 d-stage)",
-  "description": "Schema for runs/_r2_component_decisions.json. Consumed by phase_R2.md report-builder + runs/_r2_verification.json. The d-stage outcome of every R2-blocking component (§1.2 copy-paste / §1.3 hard-neg mining / §1.4 map-prior gating) is written here. Single source of truth for deploy/defer/drop calls per pre-r2 kickoff checklist v1.4 §1.0. Component-level uniqueness (one record per component) is unenforceable in JSON Schema draft-07 (uniqueItems guards only full-record duplication). Writers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['component']) before persisting; verifiers MUST call the same gate before accepting. UNIQUENESS_KEYS mapping in _r2_schema_utils declares the canonical key set.",
+  "title": "R2 Component Decision Record (§1.2 / §1.3 d-stage; §1.4 legacy under v1.5)",
+  "description": "Schema for runs/_r2_component_decisions.json. Consumed by phase_R2.md report-builder + runs/_r2_verification.json. **v1.5 (2026-05-10)**: R2-blocking component set reduced to {copy_paste_class_balanced_loss, hard_negative_mining} per pre-r2 kickoff checklist v1.5 §1 hot-path; map_prior_gating retained in enum as **legacy** (additional_components_plan v1.1 §零 deferred → R3+) and is **NOT** R2-close-blocking — verifiers MUST treat absence of map_prior_gating record as VALID at R2 close (do not raise missing-component error), and presence of a map_prior_gating record at R2 close MUST trigger non-fatal warning + carry-forward registration to §4.2 (item_id='map_prior_gate_§五'). Writers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['component']) before persisting; verifiers MUST call the same gate before accepting. UNIQUENESS_KEYS mapping in _r2_schema_utils declares the canonical key set.",
   "type": "array",
   "uniqueItems": true,
   "items": {
@@ -23,7 +23,7 @@
           "hard_negative_mining",
           "map_prior_gating"
         ],
-        "description": "Closed enum locked to R2-scope components. Adding a new component requires schema bump (uses _r2_ prefix because R2-scoped — non-R2 components have their own decision schemas, e.g. _kd_decision_schema.json)."
+        "description": "Closed enum. v1.5 R2 hot path = {copy_paste_class_balanced_loss, hard_negative_mining}; map_prior_gating retained as legacy enum value for backward compat with v1.4 fixtures, but flagged non-R2-close-blocking (additional_components_plan v1.1 §零 DEFERRED → R3+; pre-r2 kickoff §3.8). Adding a new component requires schema bump."
       },
       "outcome": {
         "type": "string",

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "$id": "scripts/_r2_carry_forward_schema.json",
   "title": "R2 Carry-Forward Registry (§4.2)",
-  "description": "Schema for runs/_r2_carry_forward.json. Tracks every R2-non-actionable item that closes the round under reduced-lifecycle (a + e). Two top-level statuses per pre-r2 kickoff checklist v1.4 §1.0: 'blocked' = waiting on at least one closed-enum unblock token; 'scheduled' = no external trigger, just round-scheduled (carries empty blocked_on). The 10-token closed enum and the AND/OR semantics are pinned at v1.4 LOCK; adding a token requires schema bump. Per-record uniqueness on item_id is unenforceable in draft-07 (uniqueItems compares full records); writers/verifiers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['item_id']) — see UNIQUENESS_KEYS in _r2_schema_utils for the canonical mapping.",
+  "description": "Schema for runs/_r2_carry_forward.json. Tracks every R2-non-actionable item that closes the round under reduced-lifecycle (a + e). Two top-level statuses per pre-r2 kickoff checklist v1.5 §1.0: 'blocked' = waiting on at least one closed-enum unblock token; 'scheduled' = no external trigger, just round-scheduled (carries empty blocked_on). The 13-token closed enum and the AND/OR semantics are pinned at v1.5 (v1.4 was 10 tokens; v1.5 added r2_raw_video_negative_controls + r3_inference_budget_window + map_prior_landed for additional_components_plan v1.1 §五/§九 deferrals 2026-05-10); adding a token requires schema bump. Per-record uniqueness on item_id is unenforceable in draft-07 (uniqueItems compares full records); writers/verifiers MUST call scripts/_r2_schema_utils.py::validate_and_enforce(records, schema_path, unique_keys=['item_id']) — see UNIQUENESS_KEYS in _r2_schema_utils for the canonical mapping.",
   "type": "array",
   "uniqueItems": true,
   "items": {
@@ -40,7 +40,10 @@
             "gps_topic_5_12",
             "sahi_b_c_measured",
             "tsm_phase_1b_passed",
-            "replay_temporal_flicker_or_state_confusion"
+            "replay_temporal_flicker_or_state_confusion",
+            "r2_raw_video_negative_controls",
+            "r3_inference_budget_window",
+            "map_prior_landed"
           ]
         },
         "description": "Closed-enum unblock tokens. Single-token = unblock_logic moot (omit). Multi-token = AND by default; explicit unblock_logic='any' switches to OR. status='scheduled' forces blocked_on=[] (enforced below). Closed enum locks the unblock vocabulary; new triggers require schema bump."

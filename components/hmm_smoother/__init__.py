@@ -1,8 +1,8 @@
 """HMM smoother — post-detector temporal smoother (R2/R3 optional, ablation only).
 
 Authoritative spec: ``docs/planning/temporal_optimization_plan.md`` §2.2 +
-§2.2.1 (HMM lifecycle rollup; 2026-05-09 amendment redirects scaffold from
-``inference/temporal/`` → ``components/hmm_smoother/``). Lifecycle convention:
+§2.2.1 (HMM lifecycle rollup; scaffold redirects from ``inference/temporal/``
+→ ``components/hmm_smoother/``). Lifecycle convention:
 ``docs/planning/additional_components_plan.md`` §一 (a-scaffold → b-impl →
 c-ablation → d-decision → e-report).
 
@@ -16,7 +16,7 @@ Scope fence (load-bearing — read before adding any file under this package):
     ``raw_confidence``, and — when present — ``class_probs``). The HMM consumes
     track-level sequences offline and emits a smoothed class assignment per
     frame for A/B comparison against the EMA baseline.
-  * If §2.2.1 d-stage decides ``deploy``, the deployment-pipeline integration
+  * If §2.2 决策规则 decides ``deploy``, the deployment-pipeline integration
     (originally targeted at ``inference/temporal/``) is opened as a SEPARATE
     round. Nothing in this package fast-paths into ``inference/`` — that path
     is gated on a successful ablation deploy decision.
@@ -36,12 +36,11 @@ Subpackage contracts (each is a-stage scaffold; b-stage fills bodies):
                   and through HmmSmoother, computes both metric streams, and
                   hands them to ``gates``.
 
-Public API (B2 review I6 2026-05-09): re-exports below are the FULL public
-surface — the small set of types and functions that ablation runners + tests
-will need at the top level. Anything not re-exported here is package-private
-and must be imported via the deep path (``components.hmm_smoother.<sub>``).
-This list is exhaustive; do NOT add ad-hoc top-level imports without also
-adding them to ``__all__``.
+Public API: re-exports below are the FULL public surface — the small set of
+types and functions that ablation runners + tests will need at the top level.
+Anything not re-exported here is package-private and must be imported via the
+deep path (``components.hmm_smoother.<sub>``). This list is exhaustive; do NOT
+add ad-hoc top-level imports without also adding them to ``__all__``.
 """
 
 from components.hmm_smoother.config import (

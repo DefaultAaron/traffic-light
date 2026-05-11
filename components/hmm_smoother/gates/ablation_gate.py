@@ -51,18 +51,17 @@ class TrackSequence:
 class GateMetrics:
     """Aggregated c-stage metrics for one side of the A/B.
 
-    ``total_transitions`` (B2 review I1 2026-05-09) is the denominator
-    used by the d-stage gate's illegal-rate computation
+    ``total_transitions`` is the denominator used by the d-stage gate's
+    illegal-rate computation
     (``illegal_transition_count / total_transitions``). It is the count
     of adjacent valid frame-pair transitions on ELIGIBLE tracks only,
     consistent with how ``flicker_rate`` is computed.
 
-    Cross-side invariants (C3 iter-1 NEW-MAJOR 2 + iter-2 NEW-MAJOR 3
-    2026-05-09): the same eligible-tracks rule applied to the same
-    JSONL EVAL split MUST produce identical denominator-class fields on
-    both baseline and candidate sides — the smoothing choice changes
-    labels, not the set of (track, frame-pair) units the labels are
-    computed over. The d-stage executor enforces ALL of:
+    Cross-side invariants: the same eligible-tracks rule applied to the
+    same JSONL EVAL split MUST produce identical denominator-class fields
+    on both baseline and candidate sides — the smoothing choice changes
+    labels, not the set of (track, frame-pair) units the labels are computed
+    over. The d-stage executor enforces ALL of:
 
       * ``baseline.total_transitions == candidate.total_transitions``
       * ``baseline.eligible_track_count == candidate.eligible_track_count``

@@ -17,7 +17,7 @@ Drives the full c-stage flow end-to-end:
                      same per-track raw class sequence. Forward-backward
                      posteriors are converted to int sequences via
                      ``modules.inference.posterior_argmax_sequence``
-                     before feeding the gate (see B2 review I3).
+                     before feeding the gate.
      Each side emits one ``TrackSequence`` per track.
   4. Compute ``GateMetrics`` for each side via
      ``gates.ablation_gate.compute_metrics``.
@@ -29,8 +29,7 @@ Drives the full c-stage flow end-to-end:
      and decision into the top-level ``headline_*`` fields. Serialize
      atomically (``.tmp`` → ``rename``).
 
-Sensitivity-sweep contract (plan §2.2 conflictor iter-2; B2 review C2
-schema alignment 2026-05-09; C3 NEW-MINOR 6 hard-fail constraint):
+Sensitivity-sweep contract (plan §2.2):
   * α ∈ {0.01, 0.1, 1.0} are run as separate rows in the output JSON's
     ``sensitivity_sweep`` array — this set is FIXED. The YAML's
     ``laplace_alpha`` MUST be one of these values; ``load_hmm_yaml``
@@ -48,18 +47,16 @@ schema alignment 2026-05-09; C3 NEW-MINOR 6 hard-fail constraint):
   * ``--anchor-alpha`` must match one of the three sweep values exactly;
     a YAML-supplied default that's not in the set is rejected at load
     time (above), so the CLI value cannot drift from the sweep set.
-  * **Anchor exactly-once invariant** (C3 iter-2 NEW-MINOR 4
-    2026-05-09): zero or multiple rows with ``deploy_anchor=true`` MUST
-    raise ``ValueError`` BEFORE the output JSON is written; never warn,
-    never auto-select, never skip output. The runner is the only layer
-    that can enforce this — JSON Schema cannot express
+  * **Anchor exactly-once invariant**: zero or multiple rows with
+    ``deploy_anchor=true`` MUST raise ``ValueError`` BEFORE the output JSON is
+    written; never warn, never auto-select, never skip output. The runner is
+    the only layer that can enforce this — JSON Schema cannot express
     "exactly-one-of-array-elements has property X = true". A silent
     fallback would silently change which row populates the ``headline_*``
     fields, exactly the class of decision-gate drift this scaffold is
     designed to prevent.
 
-Schema-validation contract (C3 iter-1 NEW-MAJOR 1 + 3, refined by
-C3 iter-2 NEW-MAJOR 1 2026-05-09):
+Schema-validation contract:
 
 The contract is split into TWO distinct validation layers — they
 guard different shapes and CANNOT be conflated:
@@ -90,9 +87,9 @@ guard different shapes and CANNOT be conflated:
 Why two layers: per-cell inputs and the output artifact have
 DIFFERENT shapes (an input is a 5-field metrics record; the output is
 a tree with ``headline_*`` + a 3-row sweep). A single schema cannot
-guard both. C3 iter-1 conflated them; iter-2 split them.
+guard both.
 
-mAP no-regression contract (B2 review I4 2026-05-09):
+mAP no-regression contract:
   The runner reads the verdict from a frozen eval-metrics JSON (default
   ``runs/_r2_val_manifest``-derived) rather than a CLI boolean flag, so
   the artifact's ``map_no_regression`` field is derivable, not asserted.
@@ -138,11 +135,10 @@ def run_ablation(config: AblationConfig) -> None:
         * **Conditionally** reads the YAML's ``transition_matrix_path``
           (when non-null) and validates existence + readability + shape
           + row-stochastic + illegal-cell-policy compatibility BEFORE
-          replay (C3 iter-2 NEW-MINOR 5 + iter-3 NEW-MINOR 5
-          2026-05-09: filesystem checks live here, not in
-          ``HmmYamlConfig.__post_init__``; missing or unreadable
-          ``.npy`` produces a diagnostic ``decision: "executor_error"``
-          row with the path in ``notes``).
+          replay (filesystem checks live here, not in
+          ``HmmYamlConfig.__post_init__``; missing or unreadable ``.npy``
+          produces a diagnostic ``decision: "executor_error"`` row with the
+          path in ``notes``).
         * Writes ``config.output_json`` (atomic: ``.tmp`` → ``rename``).
 
     Args:
@@ -167,7 +163,7 @@ def main() -> int:
                                  frozen JSON with
                                  ``{"map_no_regression": bool,
                                    "tolerance_pp": float}``;
-                                 SHA256 captured in output (B2 review I4)
+                                 SHA256 captured in output
         --output FILE           runs/_hmm_decisions.json path
         --anchor-alpha FLOAT    which sweep row populates headline_*;
                                 must match one of {0.01, 0.1, 1.0}
@@ -180,7 +176,7 @@ def main() -> int:
         ``NotImplementedError`` from any a-stage stub (so scaffold-time
         smoke tests don't silently exit 0). b-stage MUST replace the
         ``NotImplementedError`` catch with real error paths before
-        wiring to CI (B2 review S3).
+        wiring to CI.
 
     Raises:
         NotImplementedError: a-stage scaffold.

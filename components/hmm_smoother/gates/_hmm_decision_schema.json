@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://traffic-light.local/schemas/_hmm_decisions.json",
   "title": "HMM ablation decision artifact",
-  "description": "OUTPUT-ONLY schema for the final runs/_hmm_decisions.json artifact (plan docs/planning/temporal_optimization_plan.md §2.2.1 d). Sister-file precedent: scripts/_r2_decision_schema.json. C3 iter-2 NEW-MAJOR 1 (2026-05-09): this schema is NOT used to validate raw per-cell metric inputs into apply_decision_rule — those are caught at dataclass construction (typed Python). The runner validates the SERIALIZED output against this schema BEFORE atomic-rename to runs/_hmm_decisions.json; any per-cell input failure that occurred upstream is already serialized into the decision='executor_error' notes field by the time this schema runs. Validation library: `jsonschema` (Draft-7), matching scripts/_r2_decision_schema.json's precedent.",
+  "description": "OUTPUT-ONLY schema for the final runs/_hmm_decisions.json artifact (plan docs/planning/temporal_optimization_plan.md §2.2 决策规则). Sister-file precedent: scripts/_r2_decision_schema.json. This schema is NOT used to validate raw per-cell metric inputs into apply_decision_rule — those are caught at dataclass construction (typed Python). The runner validates the SERIALIZED output against this schema BEFORE atomic-rename to runs/_hmm_decisions.json; any per-cell input failure that occurred upstream is already serialized into the decision='executor_error' notes field by the time this schema runs. Validation library: `jsonschema` (Draft-7), matching scripts/_r2_decision_schema.json's precedent.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,6 +11,7 @@
     "headline_config",
     "headline_metrics",
     "decision",
+    "decision_reason",
     "deploy_via_tracker_artifact_exception",
     "escalation",
     "escalation_rationale",
@@ -51,6 +52,9 @@
       "type": "string",
       "enum": ["deploy", "defer", "drop", "executor_error"]
     },
+    "decision_reason": {
+      "$ref": "#/definitions/DecisionReason"
+    },
     "deploy_via_tracker_artifact_exception": {
       "type": "boolean",
       "description": "MUST be false unless decision == 'deploy' and the residual illegal-transition count was fully traceable to ByteTrack ID-switch / short-track noise. Validators should reject decision != 'deploy' with this flag true."
@@ -73,7 +77,7 @@
         { "contains": { "properties": { "laplace_alpha": { "const": 0.1  } } } },
         { "contains": { "properties": { "laplace_alpha": { "const": 1.0  } } } }
       ],
-      "description": "Plan §2.2 mandates exactly 3 rows over laplace_alpha ∈ {0.01, 0.1, 1.0}. C3 iter-3 NEW-MAJOR 2 (2026-05-09): the allOf+contains tuple guarantees one row per required alpha (combined with minItems/maxItems=3, this forces exactly one of each — Draft-7 has no minContains/maxContains). Exactly one row MUST set deploy_anchor=true; anchor-uniqueness remains a runner invariant since JSON Schema cannot express 'exactly one of array elements has property X = true' — b-stage runtime assertion required."
+      "description": "Plan §2.2 mandates exactly 3 rows over laplace_alpha ∈ {0.01, 0.1, 1.0}. The allOf+contains tuple guarantees one row per required alpha (combined with minItems/maxItems=3, this forces exactly one of each — Draft-7 has no minContains/maxContains). Exactly one row MUST set deploy_anchor=true; anchor-uniqueness remains a runner invariant since JSON Schema cannot express 'exactly one of array elements has property X = true' — b-stage runtime assertion required."
     }
   },
   "allOf": [
@@ -84,9 +88,93 @@
       "then": {
         "properties": { "deploy_via_tracker_artifact_exception": { "const": false } }
       }
+    },
+    {
+      "description": "decision='deploy' → reason ∈ {deploy, deploy_via_tracker_artifact_exception}.",
+      "if": { "properties": { "decision": { "const": "deploy" } } },
+      "then": {
+        "properties": {
+          "decision_reason": { "enum": ["deploy", "deploy_via_tracker_artifact_exception"] }
+        }
+      }
+    },
+    {
+      "description": "decision='defer' → reason ∈ {defer_flicker_band, defer_illegal_or, tracker_artifact_evidence_missing, tracker_artifact_evidence_malformed, tracker_artifact_evidence_unverifiable}.",
+      "if": { "properties": { "decision": { "const": "defer" } } },
+      "then": {
+        "properties": {
+          "decision_reason": {
+            "enum": [
+              "defer_flicker_band",
+              "defer_illegal_or",
+              "tracker_artifact_evidence_missing",
+              "tracker_artifact_evidence_malformed",
+              "tracker_artifact_evidence_unverifiable"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "decision='drop' → reason ∈ {drop_flicker_low, drop_illegal_weak, drop_catchall, tracker_artifact_evidence_missing, tracker_artifact_evidence_malformed, tracker_artifact_evidence_unverifiable}.",
+      "if": { "properties": { "decision": { "const": "drop" } } },
+      "then": {
+        "properties": {
+          "decision_reason": {
+            "enum": [
+              "drop_flicker_low",
+              "drop_illegal_weak",
+              "drop_catchall",
+              "tracker_artifact_evidence_missing",
+              "tracker_artifact_evidence_malformed",
+              "tracker_artifact_evidence_unverifiable"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "decision='executor_error' → reason starts with 'executor_error_'.",
+      "if": { "properties": { "decision": { "const": "executor_error" } } },
+      "then": {
+        "properties": {
+          "decision_reason": {
+            "enum": [
+              "executor_error_baseline_flicker_zero",
+              "executor_error_total_transitions_zero",
+              "executor_error_denominator_drift",
+              "executor_error_nan_inf",
+              "executor_error_threshold_oob",
+              "executor_error_eval_metrics_hash_mismatch"
+            ]
+          }
+        }
+      }
     }
   ],
   "definitions": {
+    "DecisionReason": {
+      "type": "string",
+      "enum": [
+        "deploy",
+        "deploy_via_tracker_artifact_exception",
+        "defer_flicker_band",
+        "defer_illegal_or",
+        "drop_flicker_low",
+        "drop_illegal_weak",
+        "drop_catchall",
+        "tracker_artifact_evidence_missing",
+        "tracker_artifact_evidence_malformed",
+        "tracker_artifact_evidence_unverifiable",
+        "executor_error_baseline_flicker_zero",
+        "executor_error_total_transitions_zero",
+        "executor_error_denominator_drift",
+        "executor_error_nan_inf",
+        "executor_error_threshold_oob",
+        "executor_error_eval_metrics_hash_mismatch"
+      ],
+      "description": "Required reason code for every decision row (top-level + ModeCell). Pairs with truth-table rows R1a-R5 in apply_decision_rule docstring. Validators should reject decision='deploy' with reason ∉ {'deploy', 'deploy_via_tracker_artifact_exception'}, and decision='executor_error' with reason not starting 'executor_error_'."
+    },
     "MetricsBlock": {
       "type": "object",
       "additionalProperties": false,
@@ -105,7 +193,20 @@
         "illegal_rate_delta_pct",
         "map_no_regression",
         "map_regression_tolerance_pp",
-        "tracker_artifact_residual"
+        "tracker_artifact_residual",
+        "tracker_artifact_evidence_ref",
+        "candidate_run_submitter",
+        "track_trace_artifact_path",
+        "track_trace_artifact_sha256",
+        "eval_metrics_json_path",
+        "eval_metrics_json_sha256",
+        "eval_split_manifest_sha256",
+        "baseline_detector_artifact_sha256",
+        "candidate_temporal_config_sha256",
+        "candidate_output_artifact_sha256",
+        "runner_revision_sha256",
+        "total_map_ap_delta_pp",
+        "safety_class_ap_deltas"
       ],
       "properties": {
         "baseline_flicker_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
@@ -116,7 +217,7 @@
         "baseline_total_transitions": {
           "type": "integer",
           "minimum": 1,
-          "description": "C3 iter-1 NEW-MAJOR 2: split from a single total_transitions field so denominator drift between baseline and candidate is grep-able / rejectable. The executor MUST assert baseline_total_transitions == candidate_total_transitions; mismatch surfaces as decision='executor_error'."
+          "description": "Split from a single total_transitions field so denominator drift between baseline and candidate is grep-able / rejectable. The executor MUST assert baseline_total_transitions == candidate_total_transitions; mismatch surfaces as decision='executor_error'."
         },
         "candidate_total_transitions": {
           "type": "integer",
@@ -125,19 +226,117 @@
         "baseline_eligible_track_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "C3 iter-2 NEW-MAJOR 3: split from a single eligible_track_count field, same hazard as the transitions denominator. Same eligible-tracks rule on the same EVAL JSONL must produce identical track-set membership regardless of smoother. Executor asserts baseline_eligible_track_count == candidate_eligible_track_count; mismatch surfaces as decision='executor_error'."
+          "description": "Split from a single eligible_track_count field, same hazard as the transitions denominator. Same eligible-tracks rule on the same EVAL JSONL must produce identical track-set membership regardless of smoother. Executor asserts baseline_eligible_track_count == candidate_eligible_track_count; mismatch surfaces as decision='executor_error'."
         },
         "candidate_eligible_track_count": { "type": "integer", "minimum": 0 },
         "baseline_total_track_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "C3 iter-2 NEW-MAJOR 3: split from a single total_track_count field. Executor asserts baseline_total_track_count == candidate_total_track_count; mismatch surfaces as decision='executor_error'."
+          "description": "Split from a single total_track_count field. Executor asserts baseline_total_track_count == candidate_total_track_count; mismatch surfaces as decision='executor_error'."
         },
         "candidate_total_track_count": { "type": "integer", "minimum": 0 },
         "illegal_rate_delta_pct": { "type": "number" },
-        "map_no_regression": { "type": "boolean" },
-        "map_regression_tolerance_pp": { "type": "number", "minimum": 0.0 },
-        "tracker_artifact_residual": { "type": "boolean" }
+        "map_no_regression": {
+          "type": "boolean",
+          "description": "Derived: true iff total_map_ap_delta_pp >= -map_regression_tolerance_pp AND every safety_class_ap_deltas[i].passed == true. Validators MUST recompute and assert agreement; mismatch surfaces as executor_error_threshold_oob."
+        },
+        "map_regression_tolerance_pp": {
+          "type": "number",
+          "const": 0.2,
+          "description": "v2.0 LOCK: pinned to 0.2 pp. Wider tolerances would let the AP regression gate become a no-op. Changing this value requires a fresh adversarial review pass."
+        },
+        "tracker_artifact_residual": { "type": "boolean" },
+        "tracker_artifact_evidence_ref": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trace_id", "track_id", "frame_start", "frame_end", "reviewer"],
+              "properties": {
+                "trace_id": { "type": "string", "minLength": 1 },
+                "track_id": { "type": "string", "minLength": 1 },
+                "frame_start": { "type": "integer", "minimum": 0 },
+                "frame_end": { "type": "integer", "minimum": 0 },
+                "reviewer": { "type": "string", "minLength": 1 }
+              }
+            }
+          ],
+          "description": "Required for the deploy exception clause. null OR object with all 5 fields non-empty (frame_start <= frame_end is a runner invariant — JSON Schema Draft-7 cannot express cross-property numeric inequality). Missing / null / malformed / unverifiable evidence pairs with tracker_artifact_residual=true cascades the row through deploy without raising executor_error; reason code distinguishes evidence_missing / malformed / unverifiable."
+        },
+        "candidate_run_submitter": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identity of the engineer / pipeline that submitted the candidate run. Runner asserts != tracker_artifact_evidence_ref.reviewer for reviewer-independence (a reviewer cannot rubber-stamp their own submission)."
+        },
+        "track_trace_artifact_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative POSIX path to the track trace artifact (frame-by-frame ByteTrack output). Runner uses this to resolve trace_id → real track and to bound frame_start..frame_end."
+        },
+        "track_trace_artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of track_trace_artifact_path; pins the exact track set used for evidence verification."
+        },
+        "eval_metrics_json_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative POSIX path to the eval-metrics JSON. Together with eval_metrics_json_sha256, the runner MUST recompute the file hash on disk and assert it matches; mismatch surfaces as decision='executor_error' with reason='executor_error_eval_metrics_hash_mismatch'."
+        },
+        "eval_metrics_json_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of the eval-metrics artifact at eval_metrics_json_path. Runner verifies hash on disk before accepting metrics; stale / cherry-picked eval files fail this check."
+        },
+        "eval_split_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of the frozen R2 val/audit manifest used to produce the eval JSON. Pins the data split; runner asserts equal to the round's frozen manifest hash."
+        },
+        "baseline_detector_artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of the baseline detector artifact (engine/.pt) the eval was run against. Pins the baseline; mismatch with the round's selected detector → executor_error_eval_metrics_hash_mismatch."
+        },
+        "candidate_temporal_config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of the candidate-side configs/temporal_hmm.yaml (or equivalent) that produced the candidate metrics. Pins HMM hyperparams (laplace_alpha, illegal_transition_policy, etc.); mismatch between two cells claiming the same alpha/mode is a runner-level invariant violation."
+        },
+        "candidate_output_artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of the candidate-side smoothed output artifact (track-level smoothed JSONL or equivalent). Together with track_trace_artifact_sha256 (baseline), pins both sides of the A/B comparison."
+        },
+        "runner_revision_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA256 of the runner script (or git-revision-derived hash) that produced this MetricsBlock. Two cells with the same alpha/mode but different runner_revision_sha256 are a runner-level invariant violation."
+        },
+        "total_map_ap_delta_pp": {
+          "type": "number",
+          "description": "Total mAP delta in percentage points (candidate - baseline). Deploy gate requires >= -map_regression_tolerance_pp."
+        },
+        "safety_class_ap_deltas": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_name", "full_val_support", "ap_delta_pp", "passed"],
+            "properties": {
+              "class_name": { "type": "string", "minLength": 1 },
+              "full_val_support": { "type": "integer", "minimum": 0 },
+              "ap_delta_pp": { "type": "number" },
+              "passed": {
+                "type": "boolean",
+                "description": "Derived: true iff full_val_support < 30 (excluded from gate) OR ap_delta_pp >= -map_regression_tolerance_pp."
+              }
+            }
+          },
+          "description": "Per-safety-class AP delta. Classes with full_val_support < 30 are excluded from the gate (passed=true regardless of ap_delta_pp)."
+        }
       }
     },
     "SweepRow": {
@@ -161,10 +360,11 @@
     "ModeCell": {
       "type": "object",
       "additionalProperties": false,
-      "description": "C3 iter-2 NEW-MAJOR 2: extended to mirror DecisionResult so non-anchor sweep cells (e.g. an alpha=0.01 viterbi cell that landed on 'drop') retain the diagnostic fields needed to audit why. Without these, a non-headline cell becomes 'drop' or 'executor_error' with no trail. C3 iter-3 NEW-MAJOR 3 (2026-05-09): the if/then conditional below enforces deploy_via_tracker_artifact_exception=false whenever decision is not 'deploy', closing the audit-corruption hole where a non-deploy row could carry the deploy-exception flag.",
+      "description": "Extended to mirror DecisionResult so non-anchor sweep cells (e.g. an alpha=0.01 viterbi cell that landed on 'drop') retain the diagnostic fields needed to audit why. Without these, a non-headline cell becomes 'drop' or 'executor_error' with no trail. The if/then conditional below enforces deploy_via_tracker_artifact_exception=false whenever decision is not 'deploy', closing the audit-corruption hole where a non-deploy row could carry the deploy-exception flag.",
       "required": [
         "metrics",
         "decision",
+        "decision_reason",
         "deploy_via_tracker_artifact_exception",
         "escalation",
         "escalation_rationale",
@@ -173,6 +373,7 @@
       "properties": {
         "metrics": { "$ref": "#/definitions/MetricsBlock" },
         "decision": { "type": "string", "enum": ["deploy", "defer", "drop", "executor_error"] },
+        "decision_reason": { "$ref": "#/definitions/DecisionReason" },
         "deploy_via_tracker_artifact_exception": { "type": "boolean" },
         "escalation": {
           "anyOf": [
@@ -190,6 +391,68 @@
           },
           "then": {
             "properties": { "deploy_via_tracker_artifact_exception": { "const": false } }
+          }
+        },
+        {
+          "description": "ModeCell decision='deploy' → reason ∈ {deploy, deploy_via_tracker_artifact_exception}.",
+          "if": { "properties": { "decision": { "const": "deploy" } } },
+          "then": {
+            "properties": {
+              "decision_reason": { "enum": ["deploy", "deploy_via_tracker_artifact_exception"] }
+            }
+          }
+        },
+        {
+          "description": "ModeCell decision='defer' → reason ∈ defer + tracker_artifact_evidence_*.",
+          "if": { "properties": { "decision": { "const": "defer" } } },
+          "then": {
+            "properties": {
+              "decision_reason": {
+                "enum": [
+                  "defer_flicker_band",
+                  "defer_illegal_or",
+                  "tracker_artifact_evidence_missing",
+                  "tracker_artifact_evidence_malformed",
+                  "tracker_artifact_evidence_unverifiable"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "description": "ModeCell decision='drop' → reason ∈ drop + tracker_artifact_evidence_*.",
+          "if": { "properties": { "decision": { "const": "drop" } } },
+          "then": {
+            "properties": {
+              "decision_reason": {
+                "enum": [
+                  "drop_flicker_low",
+                  "drop_illegal_weak",
+                  "drop_catchall",
+                  "tracker_artifact_evidence_missing",
+                  "tracker_artifact_evidence_malformed",
+                  "tracker_artifact_evidence_unverifiable"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "description": "ModeCell decision='executor_error' → reason starts 'executor_error_'.",
+          "if": { "properties": { "decision": { "const": "executor_error" } } },
+          "then": {
+            "properties": {
+              "decision_reason": {
+                "enum": [
+                  "executor_error_baseline_flicker_zero",
+                  "executor_error_total_transitions_zero",
+                  "executor_error_denominator_drift",
+                  "executor_error_nan_inf",
+                  "executor_error_threshold_oob",
+                  "executor_error_eval_metrics_hash_mismatch"
+                ]
+              }
+            }
           }
         }
       ]

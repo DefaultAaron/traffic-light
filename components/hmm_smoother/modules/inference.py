@@ -3,7 +3,7 @@
 Plan §2.2 calls out both as acceptable inference paths. The c-stage A/B
 ablation runs the same `(TransitionMatrix, ObservationModel)` pair through
 both modes and reports per-track flicker rate / illegal-transition count
-for each, so the deploy decision (§2.2.1 d) can pick whichever path the
+for each, so the deploy decision (§2.2 决策规则) can pick whichever path the
 data favors — typically Viterbi for MAP-stable label sequences, but
 forward-backward when downstream consumers want a calibrated posterior.
 
@@ -62,11 +62,11 @@ def forward_backward(
         shape (T, C) float array; each row is a non-negative distribution
         summing to 1 (within 1e-6 tolerance).
 
-    Note (B2 review I3 2026-05-09): callers feeding the result into
-    ``components.hmm_smoother.gates.ablation_gate.TrackSequence`` must
-    take ``argmax(γ, axis=1).astype(np.int64)`` first — the gate
-    consumes int sequences, not posteriors. ``posterior_argmax_sequence``
-    (below) is the canonical helper; use it rather than open-coding.
+    Note: callers feeding the result into
+    ``components.hmm_smoother.gates.ablation_gate.TrackSequence`` must take
+    ``argmax(γ, axis=1).astype(np.int64)`` first — the gate consumes int
+    sequences, not posteriors. ``posterior_argmax_sequence`` (below) is the
+    canonical helper; use it rather than open-coding.
 
     Raises:
         ValueError: shape / range mismatches on inputs, or empty sequence.
