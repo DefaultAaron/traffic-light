@@ -111,10 +111,10 @@ def _kd_terms(
         raise RuntimeError(
             f"A2b _kd_terms: 'pred_corners' missing from {which} output. "
             f"Output dict keys = {actual_keys}. "
-            "DEIM decoder train-mode branch (dfine_decoder.py:754-756) must "
-            "be active. Verify freeze_bn_in_train_mode({which}) was called and "
-            "decoder.training=True. Secondary: confirm decoder.num_denoising=0 "
-            "(otherwise the denoising arm would crash first, not here)."
+            f"DEIM decoder train-mode branch (dfine_decoder.py:754-756) must "
+            f"be active. Verify freeze_bn_in_train_mode({which}) was called "
+            f"and decoder.training=True. Secondary: confirm decoder.num_denoising=0 "
+            f"(otherwise the denoising arm would crash first, not here)."
         )
     if s_corners.shape != t_corners.shape:
         raise RuntimeError(

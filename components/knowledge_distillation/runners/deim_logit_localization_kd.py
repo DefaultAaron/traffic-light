@@ -179,6 +179,13 @@ def main() -> int:
             "needs its own cell. Use deim_baseline_golsd_off runner for the "
             "no-external-KD ablation (A0)."
         )
+    if args.epochs < 1:
+        ap.error(
+            f"--epochs must be >= 1 for A2b KD rehearsal (got {args.epochs}). "
+            "Zero epochs in DEIM produces `range(0, 0)` in det_solver.fit (no "
+            "batches, no _kd_terms call) but the launcher still returns 0 → "
+            "rehearsal records 'completed' with no KD applied. Silent no-op path."
+        )
 
     if args.output is None:
         if not args.rehearsal_on_r1:

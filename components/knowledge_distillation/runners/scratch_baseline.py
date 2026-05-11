@@ -141,6 +141,14 @@ def main() -> int:
         args.output = DEFAULT_REHEARSAL_OUTPUT
     output = Path(args.output)
 
+    if args.epochs < 1:
+        ap.error(
+            f"--epochs must be >= 1 for A1 wall-clock anchor (got {args.epochs}). "
+            "Zero epochs measures no training time — the anchor would be useless "
+            "and downstream §六 #1 gate (T_A2+ < 2.0 × T_scratch_A1) would divide "
+            "by ~0."
+        )
+
     if args.rehearsal_on_r1 and not output.name.startswith("rehearsal_"):
         ap.error(f"--rehearsal-on-r1 requires output filename to start with 'rehearsal_'; got {output.name}")
 

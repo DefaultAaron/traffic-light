@@ -292,6 +292,13 @@ def main() -> int:
             "without ever applying KD signal, defeating its purpose. Use "
             "scratch_baseline runner for the no-KD ablation cell (A1)."
         )
+    if args.epochs < 1:
+        ap.error(
+            f"--epochs must be >= 1 for A2a KD rehearsal (got {args.epochs}). "
+            "Zero epochs = the trainer never enters the per-batch loop, so KD "
+            "never fires; the rehearsal would still record 'completed' — another "
+            "silent no-op path."
+        )
 
     if args.output is None:
         if not args.rehearsal_on_r1:
