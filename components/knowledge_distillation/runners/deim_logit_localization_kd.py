@@ -261,6 +261,12 @@ def main() -> int:
     # the operator still sees DEIM progress (it streams after the run). The
     # subprocess returncode is the source of truth; the scrape is observability,
     # not control flow.
+    #
+    # TODO(observability, A6/A7 follow-up): `capture_output=True` defers live
+    # progress until completion. Acceptable for A2b (~hours). For longer cells
+    # (A6 cross-arch / A7 DEIM-L teacher) switch to Popen + threaded tee so
+    # operator sees per-iter MetricLogger heartbeat live, while still scraping
+    # KD_CALL_COUNT from an accumulator. ~15 LOC.
     proc = subprocess.run(argv, check=False, capture_output=True, text=True)
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
