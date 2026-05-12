@@ -51,7 +51,7 @@ Detection2DArray
 
 R2 追加（消息结构不变，未识别 `class_id` 可忽略）：`forwardRed`、`forwardGreen`、`barrier`，另 PM 待定 ≤3 项。
 
-### 稳定性承诺（5/15 前不变）
+### 稳定性承诺（R2 / Stage 1 close 前不变）
 
 - 消息类型：`vision_msgs/Detection2DArray`
 - Topic 名：`/traffic_light/detections`

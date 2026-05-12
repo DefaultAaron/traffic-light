@@ -2,7 +2,7 @@
 
 Validates each schema against JSON Schema draft-07 meta-schema, then runs
 positive + negative fixtures asserting the conditional rules pinned in
-docs/planning/pre_r2_kickoff_checklist.md v1.4 §1.0 and §2.1.1, plus the
+docs/planning/_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档) v1.4 §1.0 and §2.1.1, plus the
 cross-file $ref load-bearing path through _r2_schema_utils.
 
 Run:

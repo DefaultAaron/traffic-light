@@ -1,6 +1,6 @@
 """A6 cross-arch KD design spike — DEIM-D-FINE-M (teacher) → YOLO26-s (student).
 
-Pre-R2 R1 rehearsal scoped by `pre_r2_kickoff_checklist.md` §2.5 row "KD A6 R1 spike".
+Pre-R2 R1 rehearsal scoped by `_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §2.5 row "KD A6 R1 spike".
 GPU-free; 1-batch synthetic-fixture sanity probe.
 
 Spike answers (design doc: `docs/planning/kd_a6_design_spike.md`):

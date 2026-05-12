@@ -148,7 +148,7 @@ ament_target_dependencies(your_node rclcpp vision_msgs)
 
 ## API 稳定性承诺
 
-以下内容在 5/15 截止日期前**保证不变**：
+以下内容在 R2 / Stage 1 close 前**保证不变**（2026-05-15 deadline 已 retire，见 `docs/planning/development_plan.md` §项目目标）：
 
 | 保证稳定 | 说明 |
 |----------|------|

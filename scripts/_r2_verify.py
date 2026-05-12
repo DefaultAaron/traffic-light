@@ -23,8 +23,8 @@ The single allowed runtime decision pattern is:
     "value as written != value re-computed by hash" → hard-fail
 
 Anything else is a scope-clamp violation. B2 + C3 reviewers explicitly check
-that no logic in this file branches on metric values (per pre_r2_kickoff_checklist
-§2.1.1 d-stage scoped review brief).
+that no logic in this file branches on metric values (per docs/_archive/
+pre_r2_kickoff_checklist.md §2.1.1 d-stage scoped review brief; 2026-05-12 归档).
 
 ================================================================================
 What this module DOES do

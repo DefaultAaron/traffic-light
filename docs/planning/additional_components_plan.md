@@ -391,7 +391,7 @@ DEFERRED → R3+。解锁：规划团队 topic 契约 + cross-detection framewor
 ## 衔接
 
 - `development_plan.md`：主检测器、R2 类别、部署 gate。
-- `pre_r2_kickoff_checklist.md`：R2 close gate、schema、carry-forward 登记格式。
+- `_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)`：R2 close gate、schema、carry-forward 登记格式。
 - `temporal_optimization_plan.md`：TSM / HMM；§十 TSM INT8 探针同步。
 - `cross_detection_reasoning_plan.md`：共现先验与 planner-prior 接入框架。
 - `scripts/_r2_carry_forward_schema.json`：13-token closed enum。
