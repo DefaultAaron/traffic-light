@@ -27,8 +27,9 @@ DETRDistill / KD-DETR cross-arch query KD; those remain DEIM↔DEIM only.
 Trigger: A4 通过全部 6 gate (per plan §七 cell matrix).
 PoC criterion: long-tail recall ≥ +5 pp on R2 val. Fail → demote to P2;
 pseudo-label bridge (DEIM teacher pred → conf-filtered top-k → YOLO target
-assignment) is the R3 fallback per `docs/kd_upgrade_recommendation.md`
-adoption decision (2026-05-12), NOT in R2 scope.
+assignment) is the R3 fallback per `research/surveys/kd_upgrade_recommendation.md`
+adoption decision (2026-05-12; relocated from `docs/` to `research/surveys/` on
+2026-05-12 — verbatim upstream proposal), NOT in R2 scope.
 
 Spec: docs/planning/additional_components_plan.md §七 A6 row + priority note
 Design: docs/planning/kd_a6_design_spike.md (path γ rationale + α/β/δ rejection)

@@ -475,7 +475,7 @@ R1 demo replay 暴露了多类失败模式（详见 [`../reports/phase_2_round_1
 | §3.1 Copy-paste | `development_plan.md` | 在 §三 R2 训练策略中明确启用 |
 | §3.2 类不平衡损失 | `development_plan.md` | 同上 |
 | §3.3 硬负样本挖掘 | `development_plan.md` | §五.1 数据问题 + §六里程碑加 R2-硬负 步骤 |
-| §3.4 知识蒸馏 双轨 | `additional_components_plan.md` §七 + `pre_r2_kickoff_checklist.md` §2.5 | Cell 矩阵 / Gate 6 / R1 rehearsal active list 已对齐 |
+| §3.4 知识蒸馏 双轨 | `additional_components_plan.md` §七 + `../../docs/_archive/pre_r2_kickoff_checklist.md` §2.5 （2026-05-12 归档） | Cell 矩阵 / Gate 6 / R1 rehearsal active list 已对齐 |
 | §3.5 SSL 预训练 | `temporal_optimization_plan.md` §0.3 数据共享 + `development_plan.md` 数据 SOP | 主要约束是 raw video 必须保留 |
 | §3.7 SAHI | `temporal_optimization_plan.md` §3 备选 detector-level 路径 | 与 TSM 并列为单帧 / 时序两条小目标增强路线 |
 | §4.1 HDR 相机 | `development_plan.md` §五 风险 | PM 决策项标注 |

@@ -1,5 +1,7 @@
 # 第一阶段训练报告 — 基础颜色检测（3类）
 
+> **Archived 2026-05-12** — P1 3-class baseline；由 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) R1 7-class 完整取代。仅作历史追溯保留。
+
 ## 概述
 
 第一阶段训练并评估交通灯检测模型，目标为3类识别（红 / 黄 / 绿）。目的是选出最佳模型架构和尺寸变体，为第二阶段方向性检测训练提供依据。

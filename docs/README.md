@@ -39,10 +39,10 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 
 | File | Contents |
 |---|---|
-| [`phase_1_report.md`](reports/phase_1_report.md) | Phase 1 3-class baseline — model selection narrative (historical) |
-| [`phase_1_results.md`](reports/phase_1_results.md) | Raw eval tables for Phase 1 (RT-DETR-L, YOLO11/26 n/s/m, 3-class) |
 | [`phase_2_round_1_report.md`](reports/phase_2_round_1_report.md) | R1 7-class: YOLO26 n/s/m training + Orin deployment (25 ms/frame @ 1280 FP16) + demo diagnosis (engine imgsz + xyxy postprocess fixes) + alt-track launch + R2 scope lock (10–14 classes) — **living doc** |
 | [`phase_2_round_1_results.md`](reports/phase_2_round_1_results.md) | Raw eval tables for R1 (YOLO26 n/s/m populated; YOLOv13-s and DEIM-D-FINE-S/M pending) |
+
+> Phase 1 historical reports (`phase_1_report.md`, `phase_1_results.md`) and the early KD A2a stub (`ablation_results.md`) are retired — see [`_archive/`](_archive/). R1 7-class results fully supersede the P1 3-class baseline.
 
 ## integration/
 

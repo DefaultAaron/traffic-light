@@ -1,5 +1,7 @@
 # KD Upgrade Recommendation for YOLO26 and DEIM-D-FINE
 
+> **Status (2026-05-12)**：recommendations integrated → 见 [`../../docs/planning/additional_components_plan.md`](../../docs/planning/additional_components_plan.md) §七 + [`./kd_upgrade_verification.md`](./kd_upgrade_verification.md) 审计。本文保留为 R3 KD 升级原始提案存档（English 上游材料，verbatim）。
+
 ## Review Summary
 
 The current KD section is already directionally strong. It includes:

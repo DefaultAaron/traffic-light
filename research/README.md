@@ -14,6 +14,8 @@ Surveys, contribution candidates, and feasibility studies kept **outside** `docs
 | [`alt_detector_architectures.md`](surveys/alt_detector_architectures.md) | Used for R1 alt-track selection | Comparison of YOLO26 alternatives (YOLOv13, DEIM-D-FINE, DETR family, TL-domain methods); selection rationale + exclusion criteria; deployment-side TRT 8.5 constraints |
 | [`detection_enhancements.md`](surveys/detection_enhancements.md) | Recommendations integrated into planning | Beyond-the-three-plans methods (training aug, hard-neg mining, KD, SAHI, map-prior, HDR camera, multi-camera, planner-prior); priority recommendations with R1 demo痛点匹配 |
 | [`depth_estimation.md`](surveys/depth_estimation.md) | On hold pending team-leader approval | Stereo (Fast-FoundationStereo / HITNet) vs monocular (DA v3 / Metric3D v2) feasibility on Orin; latency / accuracy / license trade-offs |
+| [`kd_upgrade_recommendation.md`](surveys/kd_upgrade_recommendation.md) | Recommendations integrated | GPT-5 upstream KD upgrade proposal for YOLO26-s + DEIM-D-FINE-S (S-only deployment, same-family teachers, FDR localization, PKD feature KD); audited in `kd_upgrade_verification.md`; integrated into `docs/planning/additional_components_plan.md` §七 |
+| [`kd_upgrade_verification.md`](surveys/kd_upgrade_verification.md) | Audit complete | Cross-check of the GPT-5 KD upgrade proposal against locked v2 cell matrix + paper-researcher review; only narrow A6 path-γ wording amendment adopted; 4-item R3 carry-forward parking lot |
 
 ## contributions/
 

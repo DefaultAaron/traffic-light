@@ -506,7 +506,7 @@ Tier 1 点数 < 3 时启用：
 
 ## 10. 决策门 / 硬件锁定状态（2026-05-12 deadline retired）
 
-`docs/planning/timeline.md` 已归档至 `docs/_archive/`；周级排期不再驱动决策。本节只跟踪硬件锁定与数据冻结状态。R2 推进改用 evidence-bounded close gate（见 `docs/planning/development_plan.md` §部署就绪门 + R2 close gate）。
+`docs/planning/timeline.md` 已归档至 `docs/_archive/`；周级排期不再驱动决策。本节只跟踪硬件锁定与数据冻结状态。R2 推进改用 evidence-bounded close gate（见 `docs/planning/development_plan.md` §Stage 1 close gate + §R2 close gate）。
 
 | 节点 | 状态 | 必达条件 |
 |---|---|---|

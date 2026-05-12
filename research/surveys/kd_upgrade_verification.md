@@ -1,6 +1,6 @@
 # KD Upgrade 提案验证（GPT proposal）
 
-**审计对象**：`docs/kd_upgrade_recommendation.md`（GPT-5 生成的 KD 升级提议）
+**审计对象**：`./kd_upgrade_recommendation.md`（GPT-5 生成的 KD 升级提议）
 
 **审计日期**：2026-05-12
 

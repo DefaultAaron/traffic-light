@@ -29,7 +29,7 @@
 | 类别平滑 | **EMA on per-class softmax-like 向量**，`α = 0.3`，`min_hits ≥ 3` | 软融合优于硬投票；单帧误分类可回滚 |
 | 框输出 | 逐帧原始框（不使用 Kalman 平滑框） | Kalman 框在起步/停止时滞后；静态 TL 的检测框本身已稳定 |
 | 超参数起始值 | `track_thresh=0.25`, `high_thresh=0.5`, `match_thresh=0.8`, `track_buffer=30`, `min_hits=3` | 30 帧缓冲 ≈ 1 s @ 30 fps；`min_hits=3` 抑制一次性 FP；**R2 数据到位前以此为默认，不锁定** |
-| R2 nc 迁移 | `num_classes` 由构造器传入（7 → 最大 14） | 记忆 `project_scope_expansion.md` 锁定 nc 范围 10–14 |
+| R2 nc 迁移 | `num_classes` 由构造器传入（7 → 最大 14） | 详见 [`../reports/phase_2_round_1_report.md`](../reports/phase_2_round_1_report.md) §R2 范围扩展 锁定 nc 范围 10–14 |
 | Python / C++ 语义一致性 | `TrackSmoother` 接口同名同形；单测共享合成序列 fixtures（JSON） | 避免语义漂移；Orin 上线时 Python 离线指标即为基线 |
 
 ---

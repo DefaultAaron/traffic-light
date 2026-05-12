@@ -1,3 +1,5 @@
+> **Archived 2026-05-12** — 同上；R1 关闭后 P1 数值已被 R1 七模型表完全取代（[`../reports/phase_2_round_1_results.md`](../reports/phase_2_round_1_results.md)）。
+
 ## RT-DETR-L ~32M epochs 21
 
 | 类别   | 图片数 | 实例数 | 准确率 | 召回率 | mAP@50 | mAP@50:95 |

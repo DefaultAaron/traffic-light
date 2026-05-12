@@ -158,5 +158,5 @@ nohup ./scripts/run_demos.sh \
 - [`docs/planning/cross_detection_reasoning_plan.md`](docs/planning/cross_detection_reasoning_plan.md) — same-frame multi-light co-occurrence reasoning (Bayesian post-processing → CRF → Relation Network); R3 candidate, gated on R2 self-collected data validation
 - [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) — R1 7-class results, Orin deployment, alt-track launch, R2 scope lock (living doc)
 - [`docs/reports/phase_2_round_1_results.md`](docs/reports/phase_2_round_1_results.md) — raw R1 eval tables
-- [`docs/reports/phase_1_report.md`](docs/reports/phase_1_report.md) — Phase 1 3-class baseline (historical)
+- [`docs/_archive/phase_1_report.md`](docs/_archive/phase_1_report.md) — Phase 1 3-class baseline (historical, archived 2026-05-12; fully superseded by R1 7-class)
 - [`docs/README.md`](docs/README.md) — full documentation index

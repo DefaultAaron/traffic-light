@@ -39,7 +39,7 @@
 
 | 里程碑 | 状态 / 交付物 |
 |---|---|
-| P1：3 类基线 | ✅ 完成；YOLO26s 选定；见 `docs/reports/phase_1_report.md` |
+| P1：3 类基线 | ✅ 完成；YOLO26s 选定；见 `docs/_archive/phase_1_report.md`（2026-05-12 归档）|
 | R1 主力：7 类 YOLO26 n/s/m | ✅ 完成；Orin 1280 FP16 约 25 ms/帧；`xyxy` 后处理修复 |
 | R1 备选：YOLOv13-s / DEIM-D-FINE-S/M | 🚧 训练中 |
 | R1 跟踪：ByteTrack + EMA | ✅ Python + C++ 落地；`inference/tracker/`、`inference/cpp/src/tracker.cpp` |

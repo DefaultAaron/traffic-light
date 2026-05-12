@@ -1,5 +1,7 @@
 # Knowledge Distillation
 
+> **Archived 2026-05-12** — 早期 KD A2a R1 rehearsal eval 占位 stub；R1 KD A1/A2a/A2b 实测结果由 runners 写入 `runs/rehearsal_kd_*.json`，本文档不再维护。
+
 ## YOLO26-s ← YOLO26-m cls-logit KL (r1)
 
 | 类别       | 图片数 | 实例数 | 准确率 | 召回率 | mAP@50 | mAP@50:95 |

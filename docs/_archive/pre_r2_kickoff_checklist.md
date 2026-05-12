@@ -1,5 +1,7 @@
 # R2 启动前 Kickoff Checklist v2.0
 
+> **Archived 2026-05-12** — R2 已启动；checklist 内容并入 [`../planning/additional_components_plan.md`](../planning/additional_components_plan.md) §一 lifecycle + [`../planning/development_plan.md`](../planning/development_plan.md) §R2 close gate。仅作历史追溯保留。
+
 v1.1 LOCK 2026-05-10
 
 ## 状态

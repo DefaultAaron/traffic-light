@@ -1,5 +1,7 @@
 # 红绿灯识别模型开发时间线 v2.0
 
+> **Archived 2026-05-12** — 2026-05-15 deadline retired；项目转向两阶段证据驱动交付（见 [`../planning/development_plan.md`](../planning/development_plan.md) §项目目标）。仅作历史追溯保留。
+
 ## 状态
 
 | 项 | 当前值 |

@@ -1,6 +1,6 @@
 # YOLO26 替代方案调研
 
-> **状态（2026-04-22）**：**并行训练已启动** — YOLOv13-s + DEIM-D-FINE-S/M 已作为 R1 备选轨道投入训练，与 YOLO26s/m 共用 `data/merged/` 和 80/20 切分。选型依据仍为本文；训练完成后结果填入 [`../reports/phase_2_round_1_report.md`](../../docs/reports/phase_2_round_1_report.md) §R1 备选架构，按同报告的决策规则决定 R1 部署基线。
+> **状态（2026-05-12）**：**Used for R1 alt-track selection — R1 closed**。YOLOv13-s + DEIM-D-FINE-S/M/L 已完成训练并归档于 [`../../docs/reports/phase_2_round_1_report.md`](../../docs/reports/phase_2_round_1_report.md) §R1 备选架构 / §DEIM-D-FINE 专项评估。本文作为 R1 选型决策来源保留，paper-related content carries forward to R3 / paper draft。
 >
 > **结论先行**：主力 YOLO26；并行对照 **YOLOv13-s**（最低集成风险）+ **DEIM-D-FINE-S/M**（Apache-2.0，精度上限）。不训练 DEIM-N，不更换到 RT-DETR 家族。
 
