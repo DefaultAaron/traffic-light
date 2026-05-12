@@ -148,7 +148,7 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 - [ ] **c0. Grid precheck（pre-implementation）**：Orin 合成张量 dry run，测 1× / 5× / 17× / 22× forward count FP16 latency；若 17× forward 推断 end-to-end > 80 ms 则放弃 Cam-W 4×4，回退 3×3 或 2×4。frozen val 子集（≥ 200 帧）对比 Cam-W 4×4 / 3×3 / 2×4 小目标 recall × latency，冻结一个网格。
 - [ ] a. `inference/cpp/include/sahi.hpp` 接口（per-camera grid 配置 + ROI mask）；与 `trt_pipeline.cpp` + §八 fusion 兼容性 review。
 - [ ] b. Python 验证 + C++ 实现 + per-camera batch engine（Cam-W ROI-gated batch + Cam-T native）；slice→native coord remap 单元测试。
-- [ ] c1. A/B：无 SAHI / Cam-W ROI-gated SAHI / Cam-W full-frame SAHI；post-fusion 小目标 recall 按 `baseline_id × camera_id × distance_bin`（near/mid/far per SOP §7.1）stratify 报告 + per-stage latency breakdown（detector forward / slicing overhead / remap / fusion / WBF）。aggregate post-fusion lower-CI 通过但任一 distance_bin lower-CI 退化 > 2 pp → 进 phase report 风险章节，不进 deploy outcome。
+- [ ] c1. A/B：无 SAHI / Cam-W ROI-gated SAHI / Cam-W full-frame SAHI；post-fusion 小目标 recall 按 `baseline_id × camera_id × distance_bin`（near/mid/far per SOP §7.1）stratify 报告 + per-stage latency breakdown（detector forward / slicing overhead / remap / fusion / WBF）。**Case A deploy gate 强制 per-bin 无退化**（见决策表 A 行）；任一 bin lower-CI 退化 > 2 pp 自动 fall-through 至 Case B / C / D（aggregate 不够 +5 pp 时）或 `executor_error`（aggregate ≥ +5 pp 但 per-bin gate 失败时，blocks deployment）。
 - [ ] c2. A/B：Cam-W ROI-gated vs full-frame SAHI（boundary-bin reporting：ROI margin 内对象单独报告 recall 与重复率）。
 - [ ] c3. **(conditional)** Cam-T 2×2 vs 1×1：仅当 frozen val ≥ 50 个 150 m+ TL 实例时启动；否则 Cam-T 默认 1×1。
 - [ ] c4. **Alternatives check**：no-SAHI + §三 small-object copy-paste 单独对照行（不计入主决策，但 phase report 必报）；super-resolution 路径 explicitly deferred（不在本 round）。
@@ -159,7 +159,7 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 | Case | condition | outcome | JSON / carry-forward |
 |---|---|---|---|
-| A | post-fusion 小目标 recall lower-CI ≥ +5 pp AND end-to-end FP16 latency（含 §八 fusion overhead） < 50 ms | deploy | `outcome="deploy"` |
+| A | post-fusion 小目标 recall lower-CI ≥ +5 pp AND **no `baseline_id × camera_id × distance_bin` lower-CI regression > 2 pp**（per-bin 结构性 gate；空 bin support < 30 时 lower-CI 计算结果作 `insufficient`，不阻塞 deploy）AND end-to-end FP16 latency（含 §八 fusion overhead） < 50 ms | deploy | `outcome="deploy"` |
 | B | post-fusion 小目标 recall lower-CI ≥ +2 pp AND end-to-end FP16 latency ∈ [50, 80) ms | defer-to-R3-INT8-evaluation | 写 `runs/_sahi_decision.json`；登记 `item_id="sahi_int8_retest"`，`blocked_on=["sahi_b_c_measured"]` |
 | C | post-fusion 小目标 recall lower-CI ∈ [+2, +5) pp AND end-to-end FP16 latency < 50 ms | defer-to-R3-recall-marginal | 登记 `item_id="sahi_recall_marginal_retest"`，`blocked_on=["r3_inference_budget_window"]` |
 | D | post-fusion 小目标 recall lower-CI < +2 pp OR end-to-end FP16 latency ≥ 80 ms | drop | `outcome="drop"` |
