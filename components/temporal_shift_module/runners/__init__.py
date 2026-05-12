@@ -42,7 +42,7 @@ and keeps the cross-phase decision JSON well-formed.
     --output-dir runs/<phase_id>/
     --seed <int>                written to SEED.txt at run START (per project
                                 reproducibility contract; see CLAUDE.md +
-                                scripts/train_deim.sh).
+                                scripts/training/train_deim.sh).
     --ci-method {bootstrap1000,seed5}   default bootstrap1000 (parallels KD §6#1)
     --resume <ckpt>             on resume: SEED.txt is NOT overwritten.
     --clip-size <int>           default 4. Phase 1-A locks this; 1-B / 1-C MUST
@@ -60,7 +60,7 @@ Reproducibility contract (project-wide, see CLAUDE.md)
 - Write SEED.txt to output-dir BEFORE invoking the trainer (survives crashes).
 - On --resume: do NOT write SEED.txt. The original run dir already owns the
   correct seed; CLI default would corrupt the metadata. Source seed FROM
-  SEED.txt and pass that value to the trainer (see scripts/train_deim.sh).
+  SEED.txt and pass that value to the trainer (see scripts/training/train_deim.sh).
 - exec the trainer call with NO trailing safety-net lines so failures
   propagate cleanly.
 - args.yaml is auto-emitted by Ultralytics / DEIM trainer — never write it

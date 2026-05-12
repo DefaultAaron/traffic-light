@@ -26,9 +26,9 @@ sudo journalctl -u tailscaled --since "10 min ago" --no-pager \
 
 ```bash
 # On jun (one-time):
-sudo VPS_HOST=<vps-host> VPS_USER=<vps-user> bash scripts/setup_reverse_tunnel.sh
-sudo bash scripts/setup_reverse_tunnel.sh --status
-sudo bash scripts/setup_reverse_tunnel.sh --disable
+sudo VPS_HOST=<vps-host> VPS_USER=<vps-user> bash scripts/ops/setup_reverse_tunnel.sh
+sudo bash scripts/ops/setup_reverse_tunnel.sh --status
+sudo bash scripts/ops/setup_reverse_tunnel.sh --disable
 ```
 
 Mac `~/.ssh/config` (keeps `jun`'s sshd off the public internet, jumps through VPS):

@@ -110,7 +110,7 @@ echo "  checkpoint: $CKPT_ABS"
 echo "  onnx out:   $ONNX_ABS"
 echo "  imgsz:      <read from config eval_spatial_size>"
 
-# scripts/_export_deim_onnx.py reads eval_spatial_size from the resolved
+# scripts/export/_export_deim_onnx.py reads eval_spatial_size from the resolved
 # YAML and bakes that into the ONNX (no override). The upstream
 # DEIM/tools/deployment/export_onnx.py hardcodes 640 unconditionally, so we
 # never call it directly.
@@ -205,7 +205,7 @@ else
     }
     trap restore_deim_onnx_pair_on_fail EXIT
 
-    "$PYBIN" "$PROJECT_ROOT/scripts/_export_deim_onnx.py" \
+    "$PYBIN" "$PROJECT_ROOT/scripts/export/_export_deim_onnx.py" \
         --check --simplify \
         -c "$CFG" \
         -r "$CKPT_ABS"

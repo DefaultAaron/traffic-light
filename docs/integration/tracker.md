@@ -331,7 +331,7 @@ ctest --test-dir inference/cpp/build --output-on-failure   # parity 单测先过
 ```
 
 - 延迟预算断言：`--track` 开启时每帧 `TrackSmoother::update` < 1 ms（用 `std::chrono::steady_clock` 在 20 条并发轨迹下打点验证）
-- Python↔C++ 逐帧对比：在同一视频上各跑一次 `--track-json`，用 `scripts/measure_flicker.py` 交叉比对 `class_flips_per_track`（允许 `tracking_id` 编号漂移，但数量、区间、平滑类别需一致）
+- Python↔C++ 逐帧对比：在同一视频上各跑一次 `--track-json`，用 `scripts/tracker/measure_flicker.py` 交叉比对 `class_flips_per_track`（允许 `tracking_id` 编号漂移，但数量、区间、平滑类别需一致）
 
 ---
 
@@ -391,7 +391,7 @@ C++ 端额外烟测（不依赖 fixture）：`reset()` 后 ID 从 1 重开、`nu
 ### 7.4 回放基准
 
 - 输入：`runs/diagnose/{n,s}-pt-{640,1280,1536}/demo.mp4`
-- 指标：`scripts/measure_flicker.py` 输出 JSON，Python / C++ 两端各跑一次，交叉比对 `class_flips_per_track`（允许 `tracking_id` 编号漂移，但数量、区间、平滑类别需一致）
+- 指标：`scripts/tracker/measure_flicker.py` 输出 JSON，Python / C++ 两端各跑一次，交叉比对 `class_flips_per_track`（允许 `tracking_id` 编号漂移，但数量、区间、平滑类别需一致）
 
 ---
 

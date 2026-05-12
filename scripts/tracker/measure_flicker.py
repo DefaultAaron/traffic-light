@@ -13,7 +13,7 @@ directly yields the flicker-reduction delta.
 Usage:
     python -m inference.demo --source demo/demo.mp4 --model weights/best.onnx \\
         --track --no-show --json > /tmp/tracked.jsonl
-    python scripts/measure_flicker.py /tmp/tracked.jsonl
+    python scripts/tracker/measure_flicker.py /tmp/tracked.jsonl
 """
 
 from __future__ import annotations

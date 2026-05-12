@@ -86,8 +86,8 @@ Ultralytics restores epochs, batch, device, and hyperparameters from `args.yaml`
 Lightweight hedge against YOLO26; same AGPL license and similar deployment path. Requires the separate venv above.
 
 ```bash
-./scripts/train_yolov13.sh s                                      # 640, 100 epochs
-./scripts/train_yolov13.sh s --imgsz 1280 --epochs 100            # override
+./scripts/training/train_yolov13.sh s                                      # 640, 100 epochs
+./scripts/training/train_yolov13.sh s --imgsz 1280 --epochs 100            # override
 ```
 
 Outputs: `runs/detect/yolov13s/`. Weights expected at `weights/yolov13s.pt`.
@@ -108,8 +108,8 @@ HGNetv2 backbones auto-download on first run.
 **Train** (fine-tune from COCO — strongly recommended on 55k images):
 
 ```bash
-NPROC=1 ./scripts/train_deim.sh s -t weights/deim_dfine_s_coco.pth
-NPROC=1 ./scripts/train_deim.sh m -t weights/deim_dfine_m_coco.pth
+NPROC=1 ./scripts/training/train_deim.sh s -t weights/deim_dfine_s_coco.pth
+NPROC=1 ./scripts/training/train_deim.sh m -t weights/deim_dfine_m_coco.pth
 ```
 
 Outputs: `runs/deim_dfine_{s,m}_r2/`. Best weight is `best_stg2.pth` (post-augmentation refinement phase). Resume via `-r runs/deim_dfine_s_r2/last.pth`.

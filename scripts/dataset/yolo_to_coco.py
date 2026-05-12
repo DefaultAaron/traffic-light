@@ -16,7 +16,7 @@ import yaml
 from PIL import Image
 from tqdm import tqdm
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MERGED_DIR = ROOT / "data" / "merged"
 DATA_YAML = ROOT / "data" / "traffic_light.yaml"
 IMG_EXTS = {".jpg", ".jpeg", ".png"}

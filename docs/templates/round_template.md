@@ -30,8 +30,8 @@
 | 轨道 | 启动脚本 | venv | 备注 |
 |---|---|---|---|
 | <YOLO26s> | <main.py train yolo26s> | <.venv (uv)> | <主力> |
-| <YOLOv13-s> | <scripts/train_yolov13.sh s> | <yolov13/.venv> | <hedge: AGPL-3.0 同许可> |
-| <DEIM-D-FINE-S> | <NPROC=1 scripts/train_deim.sh s> | <DEIM/.venv> | <hedge: Apache-2.0> |
+| <YOLOv13-s> | <scripts/training/train_yolov13.sh s> | <yolov13/.venv> | <hedge: AGPL-3.0 同许可> |
+| <DEIM-D-FINE-S> | <NPROC=1 scripts/training/train_deim.sh s> | <DEIM/.venv> | <hedge: Apache-2.0> |
 
 > **每条轨道的运行目录都必须有 `args.yaml` + `SEED.txt`**（轮次复现性硬约束）。
 

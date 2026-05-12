@@ -4,7 +4,7 @@
 # with eval on best_stg2.pth (S, M) and best_stg1.pth (L).
 #
 # Usage (on training rig with DEIM/.venv + GPU):
-#   bash scripts/_remote_deim_eval.sh
+#   bash scripts/eval/_remote_deim_eval.sh
 #
 # Outputs land under logs/deim_eval_<size>/:
 #   - test_only.log    DEIM stdout/stderr
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO/DEIM"
 
 DEIM_VENV="${DEIM_VENV:-.venv}"
@@ -28,8 +28,8 @@ fi
 
 ANN="$REPO/data/merged/annotations/instances_val.json"
 if [ ! -f "$ANN" ]; then
-    echo "[info] $ANN missing — running scripts/yolo_to_coco.py --splits val"
-    ( cd "$REPO" && python scripts/yolo_to_coco.py --splits val )
+    echo "[info] $ANN missing — running scripts/dataset/yolo_to_coco.py --splits val"
+    ( cd "$REPO" && python scripts/dataset/yolo_to_coco.py --splits val )
 fi
 
 run_eval() {
@@ -58,7 +58,7 @@ run_eval() {
         return 1
     fi
 
-    python "$REPO/scripts/_parse_deim_per_class.py" \
+    python "$REPO/scripts/eval/_parse_deim_per_class.py" \
         --eval-pth "$OUT/eval.pth" \
         --ann-json "$ANN" \
         --data-yaml "$REPO/data/traffic_light.yaml" \

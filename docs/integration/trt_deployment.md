@@ -116,7 +116,7 @@ YOLO26 的 head 恰好产生这种模式。图内的 `TopK` 是一个 GPU 侧预
    ```bash
    uv run python main.py export runs/detect/yolo26n-r1/weights/best.pt --format onnx --imgsz 1280
    ```
-   输出示例：`cut at /model.23/Concat_3: output [1, 11, 33600]`；产物为 `best_stripped_1280.onnx`。`--imgsz` 决定烘焙到引擎的输入分辨率，不同分辨率产出不同文件。如需保留未裁头的 `best.onnx`，加 `--no-strip`；此时可手动调用 `scripts/strip_yolo26_head.py`。
+   输出示例：`cut at /model.23/Concat_3: output [1, 11, 33600]`；产物为 `best_stripped_1280.onnx`。`--imgsz` 决定烘焙到引擎的输入分辨率，不同分辨率产出不同文件。如需保留未裁头的 `best.onnx`，加 `--no-strip`；此时可手动调用 `scripts/export/strip_yolo26_head.py`。
 2. 同步到 Orin：
    ```bash
    rsync -avz runs/detect/yolo26n-r1/weights/best_stripped_1280.onnx \
@@ -173,13 +173,13 @@ YOLO26 的 head 恰好产生这种模式。图内的 `TopK` 是一个 GPU 侧预
 | `engine image input has batch=N` | 输入 batch ≠ 1 | 用静态 batch=1 重导 |
 | `engine image input is rectangular (WxH)` | H ≠ W | 用方形 `--imgsz` 重导 |
 | `engine image input has unsupported dtype` (Python 末尾追加 `; only float32 or float16 are supported`，C++ 追加 `(only FP32 or FP16 are supported)`) | 图像输入是 INT32/INT8/UINT8 等非浮点类型 | 检查导出 / `trtexec` 的 dtype 设定 |
-| `YOLO arch dispatched but engine has N outputs (expected 1)` | YOLO 路径下喂了多输出引擎；或 ONNX 没裁 NMS-free head | YOLO26：跑 head-strip（`scripts/strip_yolo26_head.py` 或 `main.py export`）；DEIM：走 DEIM 路径（张量名含 `labels` / `boxes` / `scores`） |
+| `YOLO arch dispatched but engine has N outputs (expected 1)` | YOLO 路径下喂了多输出引擎；或 ONNX 没裁 NMS-free head | YOLO26：跑 head-strip（`scripts/export/strip_yolo26_head.py` 或 `main.py export`）；DEIM：走 DEIM 路径（张量名含 `labels` / `boxes` / `scores`） |
 | `YOLO output shape (1, 11, 11) is orientation-ambiguous` | 引擎 `imgsz` 让 N 轴恰好等于 `4+nc`（罕见碰巧）| 改 `--imgsz` 或微调类别数后重建 |
 | `YOLO ... has no 11-wide axis` | 类别数 / 头结构与项目 7-class 契约不符 | 确认 `data/traffic_light.yaml` 与训练 nc 一致 |
 | `TensorRT X.Y is too old for the Python pipeline (requires >= 10.0). For Jetson / TRT 8.x deployment, use the C++ pipeline at inference/cpp/.` | 在 TRT 8.5 上跑 Python 流水线 | Orin 走 C++ 流水线；开发机 fallback 走 ONNX-Runtime |
 | `DEIM 'orig_target_sizes' has unsupported dtype ... (expected int64 or int32)` / `DEIM 'labels' has unsupported dtype ...` / `DEIM 'boxes' has unsupported dtype ...` | DEIM 引擎 / ONNX 与标准导出脚本的 dtype 约定不一致 | 用 `scripts/export_deim.sh` 重新导出，或检查 `model.deploy()` 是否被改 |
 | `DEIM 'orig_target_sizes' has shape ...; expected (1, 2)` | DEIM 引擎 / ONNX 的 `orig_target_sizes` 不是 `(1, 2)`（如被改成 `(2,)` 扁平、`(B, 2)` batch≠1 等）| 重新按标准 deploy 脚本导出；C++ 的 `fillOrigTargetSizes()` 假定 elem_count=2，否则会越界 |
-| `DEIM 'labels' has shape ...; expected (1, K)` / `DEIM 'boxes' has shape ...; expected (1, K, 4)` / `DEIM K mismatch` | DEIM 输出 rank、batch 或最后一轴异常（如 batch=3、boxes 转置成 `(1, 4, K)`、labels/scores/boxes 的 K 不一致）| 检查 `scripts/_export_deim_onnx.py` deploy 阶段的 reshape 是否被改；按标准导出脚本重建 |
+| `DEIM 'labels' has shape ...; expected (1, K)` / `DEIM 'boxes' has shape ...; expected (1, K, 4)` / `DEIM K mismatch` | DEIM 输出 rank、batch 或最后一轴异常（如 batch=3、boxes 转置成 `(1, 4, K)`、labels/scores/boxes 的 K 不一致）| 检查 `scripts/export/_export_deim_onnx.py` deploy 阶段的 reshape 是否被改；按标准导出脚本重建 |
 
 > **参考实现**：`inference/trt_pipeline.py`（Python 三类后端：TRT / ONNX / 自动选择）；`inference/cpp/src/trt_pipeline.cpp` + `inference/cpp/include/trt_pipeline.hpp`（C++ 生产路径）。校验点的具体位置由 `findImageInput()`（C++）与 `_image_name` / Pass-1 dynamic-shape 选择器（Python）承担。
 
@@ -229,7 +229,7 @@ nohup ./scripts/run_demos.sh \
 - [x] 源码已同步至 Orin；CUDA/TRT/OpenCV 随出厂刷机预装
 - [x] Orin 端 CMake 升级（3.16 → ≥ 3.18）
 - [x] Orin 端首次 `cmake --build` 成功
-- [x] YOLO26 ONNX 已裁掉内嵌 NMS head（`scripts/strip_yolo26_head.py`）
+- [x] YOLO26 ONNX 已裁掉内嵌 NMS head（`scripts/export/strip_yolo26_head.py`）
 - [x] 从裁头 ONNX 用 `trtexec` 在 Orin 本机构建出 `.engine`
 - [x] Orin 端 C++ demo 端到端运行
 - [x] xyxy postprocess bug 已修复（2026-04-21）；1280 + 1536 引擎已验证

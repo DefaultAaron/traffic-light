@@ -60,7 +60,7 @@ def parse_kd_args() -> tuple[argparse.Namespace, list[str]]:
 def _validate_required_flag(argv: list[str], flag: str) -> None:
     """Validate a required `--flag VALUE` or `--flag=VALUE` token in argv.
 
-    Mirrors scripts/train_deim.sh:72-145 rejection rules:
+    Mirrors scripts/training/train_deim.sh:72-145 rejection rules:
     - `--flag=` (empty equals form) → error
     - `--flag` as last token (no following value) → error
     - `--flag` followed by another flag (value starts with `-`) → error
@@ -112,7 +112,7 @@ def _is_resume_arg(arg: str) -> bool:
 
     DEIM's `-r/--resume` accepts: space form (`-r CKPT` / `--resume CKPT`),
     equals form (`-r=CKPT` / `--resume=CKPT`), AND attached short form
-    (`-rCKPT`). Mirrors scripts/train_deim.sh:94-99.
+    (`-rCKPT`). Mirrors scripts/training/train_deim.sh:94-99.
 
     NOTE: this only detects the TOKEN form; `_validate_resume_arg` enforces
     that the value is non-empty (which DEIM argparse treats as falsey-skip).
@@ -130,7 +130,7 @@ def _is_resume_arg(arg: str) -> bool:
 def _validate_resume_arg(argv: list[str]) -> None:
     """Reject malformed resume forms before _pre_write_seed_marker runs.
 
-    Mirrors scripts/train_deim.sh:75-84 + :142-144 rejection rules. The hazard:
+    Mirrors scripts/training/train_deim.sh:75-84 + :142-144 rejection rules. The hazard:
     `--resume=` (empty equals) is structurally a resume token but DEIM argparse
     parses `args.resume == ""` as falsey and starts a fresh run — causing
     SEED.txt skip on the launcher side and fresh metadata loss on DEIM's side.
@@ -180,7 +180,7 @@ def _extract_output_dir(argv: list[str]) -> str | None:
 def _strip_seed_args(argv: list[str]) -> list[str]:
     """Remove `--seed N` / `--seed=N` tokens from argv (for resume seed override).
 
-    Mirrors scripts/train_deim.sh:240-264 — on resume, the recorded SEED.txt is
+    Mirrors scripts/training/train_deim.sh:240-264 — on resume, the recorded SEED.txt is
     the canonical source; any user-supplied --seed must be stripped to avoid
     DEIM seeing two seed values and the metadata desyncing from the runtime
     seed.
@@ -201,9 +201,9 @@ def _strip_seed_args(argv: list[str]) -> list[str]:
 
 
 def _pre_write_seed_marker(deim_argv: list[str]) -> None:
-    """Mirror scripts/train_deim.sh's SEED.txt pre-write contract.
+    """Mirror scripts/training/train_deim.sh's SEED.txt pre-write contract.
 
-    The launcher bypasses scripts/train_deim.sh, so the wrapper's reproducibility
+    The launcher bypasses scripts/training/train_deim.sh, so the wrapper's reproducibility
     plumbing (SEED.txt written at run START, not after — survives interrupted
     runs) must be recreated here. We scan `deim_argv` for `--seed`/`--seed=N`
     and `--output-dir`/`--output-dir=DIR` (forms accepted by DEIM/train.py
@@ -381,7 +381,7 @@ def main() -> int:
     # --output-dir is REQUIRED for BOTH fresh AND resume launches:
     #   fresh:  destination of new SEED.txt
     #   resume: source of existing SEED.txt (where the original seed was recorded)
-    # Mirrors scripts/train_deim.sh's contract (output-dir flows through both branches).
+    # Mirrors scripts/training/train_deim.sh's contract (output-dir flows through both branches).
     _validate_required_flag(remaining, "--output-dir")
     if not _is_resume_launch:
         # Fresh launches MUST also supply --seed (we write the marker).
@@ -390,7 +390,7 @@ def main() -> int:
     else:
         # On resume: source seed from existing SEED.txt, strip any user --seed
         # from argv, append --seed=<sourced> so DEIM's RNG matches the marker.
-        # Mirrors scripts/train_deim.sh:180-204 + :240-264.
+        # Mirrors scripts/training/train_deim.sh:180-204 + :240-264.
         output_dir = _extract_output_dir(remaining)
         assert output_dir is not None  # _validate_required_flag passed above
         seed_path = Path(output_dir) / "SEED.txt"
@@ -415,7 +415,7 @@ def main() -> int:
             f"from {seed_path}; user --seed args stripped if any."
         )
 
-    # SEED.txt parity with scripts/train_deim.sh: the launcher bypasses the
+    # SEED.txt parity with scripts/training/train_deim.sh: the launcher bypasses the
     # shell wrapper, so we recreate its SEED.txt pre-write contract here so
     # the rehearsal output dir gains reproducibility metadata. CLAUDE.md
     # §"Reproducibility plumbing" requires SEED.txt to be written at START,

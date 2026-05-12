@@ -3,21 +3,44 @@
 Single index for everything under `scripts/`. Each script's own header
 docstring is authoritative — this file is the lookup table.
 
+## Layout
+
+```
+scripts/
+├── training/         train_deim.sh, train_yolov13.sh
+├── dataset/          yolo_to_coco.py
+├── export/           _export_deim_onnx.py, strip_yolo26_head.py
+├── eval/             _remote_deim_eval.sh, _parse_deim_per_class.py
+├── tracker/          measure_flicker.py, validate_flicker_reduction.py
+├── ops/              setup_reverse_tunnel.sh
+└── (root)            run_demos.sh, export_yolo.sh, export_deim.sh,
+                      _r2_*.py / _r2_*.json, _r2_schema_utils.py,
+                      _r2_schemas_test.py, _tsm_activation_schema.json
+```
+
+> **Why some scripts stay at root**: `run_demos.sh`, `export_yolo.sh`,
+> `export_deim.sh`, and all `_r2_*` artifacts are pinned by the locked
+> R2 precision-parity plan (`~/.claude/plans/elegant-sauteeing-quail.md`).
+> `_tsm_activation_schema.json` is pinned by the TSM scaffold v1.1.
+> Moving any of those requires plan amendment.
+
 Quick map:
 
 | Area | Scripts |
 |---|---|
 | [Demo sweep (Orin TRT)](#demo-sweep-orin-trt) | `run_demos.sh` |
-| [Training](#training) | `train_deim.sh`, `train_yolov13.sh` |
-| [DEIM per-class evaluation (post-training)](#deim-per-class-evaluation-post-training) | `_remote_deim_eval.sh`, `_parse_deim_per_class.py` |
-| [Dataset (R2 self-collected)](#dataset-r2-self-collected) | `yolo_to_coco.py` |
-| [Model export](#model-export) | `strip_yolo26_head.py`, `export_yolo.sh`, `export_deim.sh` |
-| [Flicker / tracker validation](#flicker--tracker-validation) | `measure_flicker.py`, `validate_flicker_reduction.py` |
-| [Network / ops](#network--ops) | `setup_reverse_tunnel.sh` |
+| [Training](#training) | `training/train_deim.sh`, `training/train_yolov13.sh` |
+| [DEIM per-class evaluation (post-training)](#deim-per-class-evaluation-post-training) | `eval/_remote_deim_eval.sh`, `eval/_parse_deim_per_class.py` |
+| [Dataset (R2 self-collected)](#dataset-r2-self-collected) | `dataset/yolo_to_coco.py` |
+| [Model export](#model-export) | `export/strip_yolo26_head.py`, `export/_export_deim_onnx.py`, `export_yolo.sh`, `export_deim.sh` |
+| [Flicker / tracker validation](#flicker--tracker-validation) | `tracker/measure_flicker.py`, `tracker/validate_flicker_reduction.py` |
+| [Network / ops](#network--ops) | `ops/setup_reverse_tunnel.sh` |
 
 > **R1 dataset scripts retired** (2026-05-08): `annotate_bstld.py`, `annotate_s2tld.py`, `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py` were removed alongside R1 dataset abandonment per R2 data-replacement policy. R2 uses self-collected data only; the active workflow lives in `docs/data/r2_data_collection_sop.md`. Original R1 docs preserved under `docs/_archive/`.
 
 > **One-shot R1-closure scripts retired** (2026-05-12): `_debug_a2b_kd.sh` (KD A2b distributed-init hang diagnostic; underlying bug fixed in commit `1ad1c2b fix(kd): disable HGNetv2 stage1 preload on teacher build`) and `_diag_deim_dets.sh` (one-time DEIM postprocess residual-det diagnostic for commit `8a3ece8` per-query letterbox dedup) were `git rm`'d as one-shot diagnostics with no live callers. `_deim_eval_diff_audit.py` was relocated to `docs/reports/r1_evidence/_deim_eval_diff_audit.py` to colocate the one-shot R1-closure equivalence reproducer with its output JSON `deim_eval_old_vs_new_diff.json`.
+
+> **Functional-subfolder reorg** (2026-05-12): scripts were grouped into `training/`, `dataset/`, `export/`, `eval/`, `tracker/`, `ops/`. Pinned scripts (`run_demos.sh`, `export_yolo.sh`, `export_deim.sh`, all `_r2_*`, `_tsm_activation_schema.json`) stayed at root per locked plan / scaffold contracts. Inter-script callers and prose docs were updated in the same commit.
 
 ---
 
@@ -126,8 +149,8 @@ Then (extra args are forwarded to Ultralytics `yolo train`, which uses
 `key=value` syntax — not `--flag`):
 
 ```bash
-./scripts/train_yolov13.sh s
-./scripts/train_yolov13.sh s imgsz=1280 epochs=100
+./scripts/training/train_yolov13.sh s
+./scripts/training/train_yolov13.sh s imgsz=1280 epochs=100
 ```
 
 Weights expected at `weights/yolov13{n,s,m,l}.pt`. **Python 3.11 only**
@@ -136,20 +159,20 @@ Weights expected at `weights/yolov13{n,s,m,l}.pt`. **Python 3.11 only**
 ### `train_deim.sh`
 
 DEIM-D-FINE training. Needs the COCO-format dataset first
-(`uv run python scripts/yolo_to_coco.py`). Single-GPU is the default;
+(`uv run python scripts/dataset/yolo_to_coco.py`). Single-GPU is the default;
 use `NPROC=N` for multi-GPU. Extra args after the size are forwarded to
 DEIM's `train.py`, **not** to `torchrun` — so don't pass torchrun flags
 like `--nproc_per_node` here.
 
 ```bash
 # Single GPU (default)
-./scripts/train_deim.sh s
+./scripts/training/train_deim.sh s
 
 # Multi-GPU
-NPROC=4 ./scripts/train_deim.sh s
+NPROC=4 ./scripts/training/train_deim.sh s
 
 # Fine-tune from COCO checkpoint (-t is a train.py flag)
-./scripts/train_deim.sh m -t weights/deim_dfine_m_coco.pth
+./scripts/training/train_deim.sh m -t weights/deim_dfine_m_coco.pth
 ```
 
 DEIM uses its own standalone venv on the training server. The main
@@ -180,7 +203,7 @@ checkpoint for DEIM-S, DEIM-M, DEIM-L and parses the resulting
 `eval.pth` into a paste-ready per-class table.
 
 ```bash
-bash scripts/_remote_deim_eval.sh
+bash scripts/eval/_remote_deim_eval.sh
 ```
 
 No CLI args. Outputs land under `logs/deim_eval_<size>/`:
@@ -192,7 +215,7 @@ No CLI args. Outputs land under `logs/deim_eval_<size>/`:
 | `per_class.json` | machine-readable per-class table |
 | `per_class.txt` | markdown table ready to paste into `docs/reports/phase_*_results.md` |
 
-Auto-activates `DEIM/.venv` and runs `scripts/yolo_to_coco.py --splits val`
+Auto-activates `DEIM/.venv` and runs `scripts/dataset/yolo_to_coco.py --splits val`
 if `data/merged/annotations/instances_val.json` is missing. Runs on the
 training rig (4090 D ≈ 10 min total).
 
@@ -205,7 +228,7 @@ row = uniform mean across the 7 classes — matches the existing
 results-doc convention).
 
 ```bash
-python scripts/_parse_deim_per_class.py \
+python scripts/eval/_parse_deim_per_class.py \
     --eval-pth logs/deim_eval_s/eval.pth \
     --ann-json data/merged/annotations/instances_val.json \
     --data-yaml data/traffic_light.yaml \
@@ -224,8 +247,8 @@ at top of this file). The dataset prep workflow now consists of just one
 step: convert YOLO labels to COCO format for DEIM training.
 
 ```bash
-uv run python scripts/yolo_to_coco.py
-uv run python scripts/yolo_to_coco.py --splits train val   # explicit
+uv run python scripts/dataset/yolo_to_coco.py
+uv run python scripts/dataset/yolo_to_coco.py --splits train val   # explicit
 ```
 
 Reads `data/merged/{images,labels}/{train,val}/` and writes
@@ -248,8 +271,8 @@ head `Concat` (`[1, 4+nc, N]` of decoded `xyxy || sigmoid class scores`).
 The C++ pipeline already decodes that directly.
 
 ```bash
-uv run python scripts/strip_yolo26_head.py best.onnx best_stripped.onnx
-uv run python scripts/strip_yolo26_head.py best.onnx best_stripped.onnx --num-classes 7
+uv run python scripts/export/strip_yolo26_head.py best.onnx best_stripped.onnx
+uv run python scripts/export/strip_yolo26_head.py best.onnx best_stripped.onnx --num-classes 7
 ```
 
 Then on the Orin: `trtexec --onnx=best_stripped.onnx --saveEngine=...
@@ -316,7 +339,7 @@ FP16=0 SKIP_EXPORT=1 scripts/export_yolo.sh s runs/yolo26_s-r1/weights/best.pt -
 
 > **YOLO26 head-strip is integrated into both `main.py export` and
 > `export_yolo.sh`** — R1 required a manual
-> `scripts/strip_yolo26_head.py` pass on the ONNX before `trtexec`; both
+> `scripts/export/strip_yolo26_head.py` pass on the ONNX before `trtexec`; both
 > wrappers now run that pass automatically and point `trtexec` at
 > `best_stripped.onnx`. The strip script remains on disk for legacy /
 > debug use (working with hand-built ONNX outside the wrappers).
@@ -371,7 +394,7 @@ SKIP_EXPORT=1 FP16=0 scripts/export_deim.sh s runs/.../best_stg2.pth --build-eng
 
 > **No `IMGSZ` override.** The DEIM `traffic_light` config chain
 > (`base/dfine_hgnetv2.yml`) declares `eval_spatial_size`; the wrapper
-> `scripts/_export_deim_onnx.py` reads that field and writes
+> `scripts/export/_export_deim_onnx.py` reads that field and writes
 > `<ckpt>.onnx.imgsz`, then the bash side feeds it into `trtexec
 > --shapes`. To switch to 1280 etc., follow the config comments in
 > `deim_hgnetv2_s_traffic_light.yml` (lines 13–18) — retrain end-to-end.
@@ -438,8 +461,8 @@ python -m inference.demo --source demo/demo.mp4 --model weights/best.engine \
     --track --no-show --json > /tmp/tracked.jsonl
 
 # Then analyze
-uv run python scripts/measure_flicker.py /tmp/tracked.jsonl
-uv run python scripts/measure_flicker.py /tmp/tracked.jsonl --dump-per-track
+uv run python scripts/tracker/measure_flicker.py /tmp/tracked.jsonl
+uv run python scripts/tracker/measure_flicker.py /tmp/tracked.jsonl --dump-per-track
 ```
 
 Reads from stdin if no path given (`-`).
@@ -451,8 +474,8 @@ deterministically noisy detection stream and reports raw-vs-smoothed flip
 reduction against the ≥50% gate.
 
 ```bash
-uv run python scripts/validate_flicker_reduction.py
-uv run python scripts/validate_flicker_reduction.py --seed 1 --flip-rate 0.4
+uv run python scripts/tracker/validate_flicker_reduction.py
+uv run python scripts/tracker/validate_flicker_reduction.py --seed 1 --flip-rate 0.4
 ```
 
 Defaults: `--frames 300 --flip-rate 0.3 --seed 0`. Useful when the real
@@ -475,10 +498,10 @@ throttled. This is the production workaround.
 ```bash
 sudo VPS_HOST=vps.example.com VPS_USER=ubuntu VPS_PORT=22 \
      REMOTE_PORT=2222 LOCAL_SSH_PORT=22 \
-     bash scripts/setup_reverse_tunnel.sh
+     bash scripts/ops/setup_reverse_tunnel.sh
 
-sudo bash scripts/setup_reverse_tunnel.sh --status
-sudo bash scripts/setup_reverse_tunnel.sh --disable
+sudo bash scripts/ops/setup_reverse_tunnel.sh --status
+sudo bash scripts/ops/setup_reverse_tunnel.sh --disable
 ```
 
 After setup: `ssh -p 2222 jun-user@vps.example.com`. VPS sshd needs

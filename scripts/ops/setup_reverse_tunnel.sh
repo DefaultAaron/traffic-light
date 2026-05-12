@@ -15,10 +15,10 @@
 # Usage:
 #   sudo VPS_HOST=vps.example.com VPS_USER=ubuntu VPS_PORT=22 \
 #        REMOTE_PORT=2222 LOCAL_SSH_PORT=22 \
-#        bash scripts/setup_reverse_tunnel.sh
+#        bash scripts/ops/setup_reverse_tunnel.sh
 #
-#   sudo bash scripts/setup_reverse_tunnel.sh --status
-#   sudo bash scripts/setup_reverse_tunnel.sh --disable
+#   sudo bash scripts/ops/setup_reverse_tunnel.sh --status
+#   sudo bash scripts/ops/setup_reverse_tunnel.sh --disable
 #
 # Environment variables (all overridable):
 #   VPS_HOST        public hostname / IP of the VPS                (REQUIRED)

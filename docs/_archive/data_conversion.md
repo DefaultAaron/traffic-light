@@ -10,7 +10,7 @@
 
 ## 概述
 
-将三个原始数据集（S2TLD、BSTLD、LISA）转换为统一的 YOLO 格式，合并后进行 80/20 分层划分；DEIM 额外用 `scripts/yolo_to_coco.py` 从合并目录生成 COCO JSON（图片不重复）。
+将三个原始数据集（S2TLD、BSTLD、LISA）转换为统一的 YOLO 格式，合并后进行 80/20 分层划分；DEIM 额外用 `scripts/dataset/yolo_to_coco.py` 从合并目录生成 COCO JSON（图片不重复）。
 
 共 5 个脚本：3 个转换脚本（S2TLD / BSTLD / LISA）+ 1 个合并脚本 + 1 个 COCO 导出脚本。
 

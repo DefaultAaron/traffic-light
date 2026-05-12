@@ -2,17 +2,17 @@
 # Train DEIM-D-FINE on the traffic-light dataset.
 #
 # Usage:
-#   scripts/train_deim.sh <size> [extra torchrun args...]
-#   scripts/train_deim.sh s --nproc_per_node=1                     # single GPU
-#   scripts/train_deim.sh m -t weights/deim_dfine_m_coco.pth       # fine-tune from COCO checkpoint
+#   scripts/training/train_deim.sh <size> [extra torchrun args...]
+#   scripts/training/train_deim.sh s --nproc_per_node=1                     # single GPU
+#   scripts/training/train_deim.sh m -t weights/deim_dfine_m_coco.pth       # fine-tune from COCO checkpoint
 #
-# Prerequisite: run `uv run python scripts/yolo_to_coco.py` once so
+# Prerequisite: run `uv run python scripts/dataset/yolo_to_coco.py` once so
 # data/merged/annotations/instances_{train,val}.json exist.
 
 set -e
 
 if [[ -z "${1:-}" ]]; then
-    echo "usage: scripts/train_deim.sh <n|s|m|l> [extra args]" >&2
+    echo "usage: scripts/training/train_deim.sh <n|s|m|l> [extra args]" >&2
     exit 1
 fi
 SIZE="${1//$'\r'/}"       # strip CR in case of CRLF
@@ -24,7 +24,7 @@ case "$SIZE" in
 esac
 
 CFG="configs/deim_dfine/deim_hgnetv2_${SIZE}_traffic_light.yml"
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_ROOT/DEIM"
 
 # DEIM has its own standalone venv on the training rig (separate torch/torchvision
@@ -39,7 +39,7 @@ fi
 
 NPROC="${NPROC:-1}"
 PORT="${PORT:-7777}"
-SEED="${SEED:-0}"        # override with: SEED=42 scripts/train_deim.sh s
+SEED="${SEED:-0}"        # override with: SEED=42 scripts/training/train_deim.sh s
 
 # Detect resume mode + lift any seed override from passthrough args.
 #
@@ -163,7 +163,7 @@ esac
 # (~30 lines below) sources $SEED from the existing run's SEED.txt and
 # strips any user `--seed` from the passthrough args. Validating env $SEED
 # here would reject an otherwise-valid resume invocation like
-# `SEED=abc scripts/train_deim.sh s --resume <ckpt>` whose SEED.txt is fine.
+# `SEED=abc scripts/training/train_deim.sh s --resume <ckpt>` whose SEED.txt is fine.
 # The resume branch performs its OWN integer check on the SEED.txt value;
 # fresh-run validation stays here.
 if [[ "$IS_RESUME" != "1" ]]; then
@@ -233,7 +233,7 @@ if [[ -n "$DEIM_OUTPUT_REL" ]]; then
                 echo "ERROR: $DEIM_OUTPUT_ABS/SEED.txt already exists." >&2
                 echo "       This means either (a) a prior run lives here — pass -r/--resume to continue it," >&2
                 echo "       or (b) a parallel run is in flight on the same output dir (race)." >&2
-                echo "       To deliberately overwrite: FORCE_FRESH=1 scripts/train_deim.sh ..." >&2
+                echo "       To deliberately overwrite: FORCE_FRESH=1 scripts/training/train_deim.sh ..." >&2
                 exit 1
             fi
         fi

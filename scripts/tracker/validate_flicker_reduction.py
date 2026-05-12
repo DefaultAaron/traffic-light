@@ -13,8 +13,8 @@ regimes where YOLO's per-frame argmax is noisy between visually similar
 classes.
 
 Usage:
-    uv run python scripts/validate_flicker_reduction.py
-    uv run python scripts/validate_flicker_reduction.py --seed 1 --flip-rate 0.4
+    uv run python scripts/tracker/validate_flicker_reduction.py
+    uv run python scripts/tracker/validate_flicker_reduction.py --seed 1 --flip-rate 0.4
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from inference.tracker import TrackSmoother  # noqa: E402
 from inference.trt_pipeline import Detection  # noqa: E402

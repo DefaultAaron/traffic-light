@@ -65,7 +65,7 @@ uv run python -m components.knowledge_distillation.runners.scratch_baseline \
 
 **派发逻辑**：
 - `--family yolo` → `uv run python main.py train yolo26<size> --epochs N --seed S`
-- `--family deim` → `bash scripts/train_deim.sh <size> -u epoches=N --seed N --output-dir ../runs/rehearsal_kd_A1_deim_<size>_seed<seed>`
+- `--family deim` → `bash scripts/training/train_deim.sh <size> -u epoches=N --seed N --output-dir ../runs/rehearsal_kd_A1_deim_<size>_seed<seed>`
 
 **契约**：
 - `--epochs >= 1`（argparse 拒绝 0；零 epoch 无 wall-clock 意义）

@@ -39,7 +39,7 @@
 | **何时调用** | 启动新训练；新增导出流程；出现延迟 / 精度回归；混合精度调优 |
 | **预期输入** | 训练配置、数据集路径、目标 backbone、延迟预算 |
 | **预期输出** | 训练完成的 checkpoint + 指标 + 导出的 ONNX/engine + 回归原因分析 |
-| **项目关联文件** | `scripts/train_yolov13.sh`, `scripts/train_deim.sh`, `inference/trt_pipeline.py`, `weights/`, R1 报告 Chapter A |
+| **项目关联文件** | `scripts/training/train_yolov13.sh`, `scripts/training/train_deim.sh`, `inference/trt_pipeline.py`, `weights/`, R1 报告 Chapter A |
 
 ### A2. data-scientist
 

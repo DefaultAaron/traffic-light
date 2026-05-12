@@ -32,9 +32,9 @@ Reproducibility contract (project-wide, see CLAUDE.md)
 - Write SEED.txt to output-dir BEFORE invoking the trainer (survives crashes).
 - On --resume: do NOT write SEED.txt. The original run dir already owns the
   correct seed; CLI default would corrupt the metadata. Source seed FROM
-  SEED.txt and pass that value to the trainer (see scripts/train_deim.sh).
+  SEED.txt and pass that value to the trainer (see scripts/training/train_deim.sh).
 - exec the trainer call with NO trailing safety-net lines so failures
-  propagate cleanly (see scripts/train_deim.sh, scripts/train_yolov13.sh).
+  propagate cleanly (see scripts/training/train_deim.sh, scripts/training/train_yolov13.sh).
 - args.yaml is auto-emitted by Ultralytics / DEIM trainer — never write it
   manually.
 

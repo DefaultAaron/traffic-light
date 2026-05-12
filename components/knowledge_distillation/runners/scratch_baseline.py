@@ -64,7 +64,7 @@ def build_command(family: str, size: str, epochs: int, imgsz: int | None, seed: 
             cmd += ["--imgsz", str(imgsz)]
         return cmd
     if family == "deim":
-        # scripts/train_deim.sh + DEIM `-u epoches=N` config override (DEIM uses
+        # scripts/training/train_deim.sh + DEIM `-u epoches=N` config override (DEIM uses
         # "epoches" sic in its YAML schema — DEIM/configs/base/optimizer.yml:9).
         # --output-dir override is REQUIRED for the rehearsal: DEIM configs
         # default output_dir to a stable name (e.g. `../runs/deim_dfine_s_r2`),
@@ -74,7 +74,7 @@ def build_command(family: str, size: str, epochs: int, imgsz: int | None, seed: 
         # NOTE: path is DEIM-CWD-relative (`../runs/...` resolves to
         # project_root/runs/...).
         cmd = [
-            "bash", "scripts/train_deim.sh", size,
+            "bash", "scripts/training/train_deim.sh", size,
             "-u", f"epoches={epochs}",
             "--seed", str(seed),
             "--output-dir", f"../runs/rehearsal_kd_A1_deim_{size}_seed{seed}",

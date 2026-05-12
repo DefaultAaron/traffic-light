@@ -16,7 +16,7 @@
 # inconsistent rank). The C++ pipeline (inference/cpp/src/trt_pipeline.cpp)
 # already decodes the raw [1, 4+nc, N] anchor output with confidence
 # thresholding, so the TopK is unnecessary at inference. See
-# scripts/strip_yolo26_head.py for the full rationale.
+# scripts/export/strip_yolo26_head.py for the full rationale.
 #
 # Why we do NOT use `yolo export format=engine`:
 #   yolo's unified pipeline calls TRT internally without the strip step,
@@ -217,9 +217,9 @@ WORKSPACE_MB=$((WORKSPACE_GB * 1024))
 IMGSZ_FLAG=()
 [[ -n "${IMGSZ:-}" ]] && IMGSZ_FLAG=("imgsz=$IMGSZ")
 
-# Resolve the strip script next to this shell script.
+# Resolve the strip script under scripts/export/ (relocated 2026-05-12 reorg).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STRIP_SCRIPT="$SCRIPT_DIR/strip_yolo26_head.py"
+STRIP_SCRIPT="$SCRIPT_DIR/export/strip_yolo26_head.py"
 if [[ ! -f "$STRIP_SCRIPT" ]]; then
     echo "strip script not found: $STRIP_SCRIPT" >&2
     exit 1

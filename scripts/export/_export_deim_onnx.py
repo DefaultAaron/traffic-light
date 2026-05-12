@@ -32,7 +32,7 @@ def main() -> None:
     parser.add_argument("--simplify", action="store_true", default=True)
     args = parser.parse_args()
 
-    deim_root = Path(__file__).resolve().parent.parent / "DEIM"
+    deim_root = Path(__file__).resolve().parent.parent.parent / "DEIM"
     if not deim_root.is_dir():
         raise SystemExit(f"DEIM submodule not found at {deim_root}")
     sys.path.insert(0, str(deim_root))

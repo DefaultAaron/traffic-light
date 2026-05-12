@@ -115,7 +115,7 @@ ament_target_dependencies(your_node rclcpp vision_msgs)
 |---|---|
 | `[TRT] warning: engine input WxH differs from imgsz=...; using engine size N.`（C++ 流水线）/ `[TRTDetector] warning: engine input WxH differs from imgsz=...; using engine size N.`（Python 流水线） | 流水线已自动用引擎烘焙的方形边长覆盖 `--imgsz`；要换尺寸需重新导出 ONNX + `trtexec` 重建引擎 |
 | 构造期抛 `engine has no NCHW 3-channel image input` / `engine image input has batch=N` / `engine image input is rectangular (WxH)` | 引擎被错误导出（缺 4-D/C=3 输入 / batch>1 / 长方形）；重新按 `--imgsz <方形>` 导出 + 重建 |
-| 构造期抛 `YOLO arch dispatched but engine has N outputs (expected 1)` | YOLO26 ONNX 没裁掉 NMS-free head（用 `scripts/strip_yolo26_head.py` 或 `main.py export` 重导）；DEIM 模型应走 DEIM 路径（张量名应含 `boxes` / `scores` / `labels`） |
+| 构造期抛 `YOLO arch dispatched but engine has N outputs (expected 1)` | YOLO26 ONNX 没裁掉 NMS-free head（用 `scripts/export/strip_yolo26_head.py` 或 `main.py export` 重导）；DEIM 模型应走 DEIM 路径（张量名应含 `boxes` / `scores` / `labels`） |
 | 构造期抛 `TensorRT X.Y is too old for the Python pipeline (requires >= 10.0). For Jetson / TRT 8.x deployment, use the C++ pipeline at inference/cpp/.` | Orin（TRT 8.5）必须用 C++ 流水线；Mac 等开发机 fallback 走 ONNX-Runtime（`uv sync --extra onnx`） |
 | `libnvinfer.so.8: cannot open shared object file` | `export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH` |
 | 引擎在另一台机器报错 | TRT 引擎不跨 GPU 架构 / TRT 版本，须在目标机重建 |

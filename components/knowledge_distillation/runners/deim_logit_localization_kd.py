@@ -125,7 +125,7 @@ def build_dispatch(
     # shadowing any prior `source DEIM/.venv/bin/activate` the user did manually.
     # The bash subprocess we spawn here re-activates DEIM's venv from inside, so
     # torchrun resolves to the right torch regardless of how the parent was invoked.
-    # Mirrors the auto-activate block in scripts/train_deim.sh (post-`cd DEIM`).
+    # Mirrors the auto-activate block in scripts/training/train_deim.sh (post-`cd DEIM`).
     deim_venv_activate = (
         'if [ -d .venv ] && [ "${VIRTUAL_ENV:-}" != "$(pwd)/.venv" ]; then '
         '. .venv/bin/activate; fi &&'
