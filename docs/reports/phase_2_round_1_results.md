@@ -182,3 +182,20 @@
 
 > 训练完成 102 / 102 epochs（best epoch = 97，总训练时间 1 天 7:50:21）。准确率 / 召回率取 IoU=0.5 PR 曲线的 best-F1 操作点（与 Ultralytics val 单点 P/R 口径对齐）；overall 行按 7 类等权平均。指标来源 `runs/detect/deim_dfine_m-r1/eval/latest.pth`（faster_coco_eval 序列化的 COCOeval 结果），与 `runs/detect/deim_dfine_m-r1/log.txt` 第 102 行 `test_coco_eval_bbox[0]=0.6131894…` 一致；`logs/deim-d-fine_m.log` 末尾 `best_stat: {'epoch': 97, 'coco_eval_bbox': 0.6134163…}`。
 
+
+
+## DEIM-D-FINEl
+
+| 类别       | 图片数 | 实例数 | 准确率 | 召回率 | mAP@50 | mAP@50:95 |
+| ---------- | ------ | ------ | ------ | ------ | ------ | --------- |
+| all        | 11,094 | 29,096 |  —     |  —     | 0.857  | 0.611     |
+| red        |  5,235 | 11,601 |  TBD   |  TBD   |  TBD   |  TBD      |
+| yellow     |    355 |    756 |  TBD   |  TBD   |  TBD   |  TBD      |
+| green      |  5,616 | 12,925 |  TBD   |  TBD   |  TBD   |  TBD      |
+| redLeft    |  2,535 |  3,218 |  TBD   |  TBD   |  TBD   |  TBD      |
+| greenLeft  |    433 |    586 |  TBD   |  TBD   |  TBD   |  TBD      |
+| redRight   |      6 |      6 |  TBD   |  TBD   |  TBD   |  TBD      |
+| greenRight |      3 |      4 |  TBD   |  TBD   |  TBD   |  TBD      |
+
+> 训练完成 102 / 102 epochs（best epoch = 72；2026-05-12 完成）。**聚合 mAP** 来源 `logs/deim-d-fine_l.log` epoch-72 COCO 评估块 + `runs/detect/deim_dfine_l-r1/eval/best_coco_summary.{json,txt}`：AP@0.50=0.857 / AP@0.50:0.95=0.611 / AP_small=0.526 / AR@100=0.726。**per-class 行待补**（carry-forward 消化项 C，见 [`phase_2_round_1_report.md`](./phase_2_round_1_report.md) §R1→R2 桥接）— DEIM 训练流仅 print COCO 12-tuple 聚合值，per-class 需待远端 `eval/latest.pth` 同步完成后解析。**`best_stg2.pth` 缺省**按 DEIM 设计（stage-2 / no-aug 末段未超过 epoch-72 全局最优 0.6113），`best_stg1.pth` 即可部署 checkpoint。
+
