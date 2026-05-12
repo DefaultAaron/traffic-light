@@ -193,9 +193,9 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 | 项 | 规则 |
 |---|---|
 | 主路径 | M 教师：YOLO26-m / DEIM-D-FINE-M |
-| A7 | L tier：YOLO26-l / **DEIM-D-FINE-L**（in training，预计 R2 启动前 `runs/detect/deim_dfine_l-r1/best_stg2.pth` 落地）|
+| A7 | L tier：YOLO26-l / **DEIM-D-FINE-L**（**训练完成 2026-05-12**；部署用 ckpt = `runs/detect/deim_dfine_l-r1/best_stg1.pth`，`best_stg2.pth` 按 DEIM 设计缺省，详见 `docs/reports/phase_2_round_1_report.md` §DEIM-D-FINE 专项评估 → DEIM-L）|
 | X/XL | 排除 |
-| A7 触发 | DEIM-L 训练完成（自动解锁）OR 稀有安全类 AP 未达 R3 门槛 |
+| A7 触发 | DEIM-L 训练已完成（已解锁）OR 稀有安全类 AP 未达 R3 门槛 |
 | A7 桥接 | TAKD / ESKD / 投影 MLP 三选二 |
 | YOLO26-l 教师状态 | **不合格**：R1 best mAP50=0.850 < YOLO26-m 0.869；只用 DEIM-L 作为 L tier 教师 |
 
@@ -226,7 +226,7 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 | A4 | S 双路径 | 同家族 M | A2 + A3 | max(A2/A3) lower-CI > A1 point；安全类 delta ≥ -0.5 pp | P1 |
 | A5 | S 双路径 | 同家族 M → 互补家族 M | 渐进 2 教师 | A4 通过全部 6 gate | P2 |
 | A6 | YOLO26-s | DEIM-D-FINE-M | 跨架构 cls-logit KL + DEIM FDR Integral 坍缩 → scalar bbox L1+GIoU KD + PKD FPN 投影 conv（path γ；A6 spike 选定）| A4 通过全部 6 gate；**优先级提升**：DEIM 长尾教学信号 → YOLO 稳定推理路径 | P1 |
-| A7 | DEIM-D-FINE-S | **DEIM-D-FINE-L**（in training） | TAKD / ESKD / projection MLP | DEIM-L 训练完成自动解锁；仅 DEIM 学生（YOLO26-l 不合格） | P1 |
+| A7 | DEIM-D-FINE-S | **DEIM-D-FINE-L**（训练完成 2026-05-12，`best_stg1.pth`） | TAKD / ESKD / projection MLP | DEIM-L 训练已完成（解锁）；仅 DEIM 学生（YOLO26-l 不合格） | P1 |
 
 **Drawdown 顺序更新**：先丢 A5，再丢 A4（如非触发），保留 A6 / A7（独立高价值轨道）。P0 + A6 + A7 不可同时丢。
 

@@ -2,8 +2,8 @@
 
 Traffic-light detection and state classification for autonomous driving on NVIDIA Jetson AGX Orin.
 
-- **R1 (current)**: 7-class traffic-light detector — `red`, `yellow`, `green`, `redLeft`, `greenLeft`, `redRight`, `greenRight`
-- **R2 (planned)**: joint detector expanded to **10–14 classes** — 9–12 traffic-light classes (adds `forwardRed` / `forwardGreen` + PM-pending extensions) and 1–2 barrier classes (`barrier` MVP, optional `armOn` / `armOff`). Authoritative scope: [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) §"R2 范围扩展".
+- **R1 (closed 2026-05-12)**: 7-class traffic-light detector — `red`, `yellow`, `green`, `redLeft`, `greenLeft`, `redRight`, `greenRight`. Closure: seven models (YOLO26 n/s/m/l, YOLOv13-s, DEIM-D-FINE-S/M/L) on the merged BSTLD + S2TLD + LISA dataset; DEIM-D-FINE-M is the R1 main candidate pending Orin TRT plugin + deployment-domain eval; YOLO26s-r1 remains current deployment.
+- **R2 (active)**: joint detector expanded to **10–14 classes** — 9–12 traffic-light classes (adds `forwardRed` / `forwardGreen` + PM-pending extensions) and 1–2 barrier classes (`barrier` MVP, optional `armOn` / `armOff`). Authoritative scope: [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) §"R2 范围扩展".
 
 ## Project Structure
 
@@ -156,7 +156,7 @@ nohup ./scripts/run_demos.sh \
 - [`docs/data/r2_data_collection_sop.md`](docs/data/r2_data_collection_sop.md) — **R2 multimodal data collection + annotation SOP** — dual 8MP cameras (normal + wide) + LiDAR; sync/calibration, site coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics, site-based splits, release prep
 - [`docs/planning/temporal_optimization_plan.md`](docs/planning/temporal_optimization_plan.md) — temporal optimization track (TSM detector-level + post-detector smoothers); R2/R3 optional, parallel to main detector selection
 - [`docs/planning/cross_detection_reasoning_plan.md`](docs/planning/cross_detection_reasoning_plan.md) — same-frame multi-light co-occurrence reasoning (Bayesian post-processing → CRF → Relation Network); R3 candidate, gated on R2 self-collected data validation
-- [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) — R1 7-class results, Orin deployment, alt-track launch, R2 scope lock (living doc)
+- [`docs/reports/phase_2_round_1_report.md`](docs/reports/phase_2_round_1_report.md) — R1 7-class results, Orin deployment, alt-track launch, R2 scope lock (CLOSED 2026-05-12)
 - [`docs/reports/phase_2_round_1_results.md`](docs/reports/phase_2_round_1_results.md) — raw R1 eval tables
 - [`docs/_archive/phase_1_report.md`](docs/_archive/phase_1_report.md) — Phase 1 3-class baseline (historical, archived 2026-05-12; fully superseded by R1 7-class)
 - [`docs/README.md`](docs/README.md) — full documentation index
