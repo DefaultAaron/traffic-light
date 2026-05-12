@@ -590,14 +590,14 @@ R1 已关闭，R2 manifest 冻结仍在数据侧推进（hardware lock 已 2026-
 
 | ID | 消化项 | 输入 / 数据 | 输出 / 产物 | 状态门 | 阻塞 | 参考 |
 |----|--------|------------|------------|--------|------|------|
-| **A** | KD A1+A2a+A2b rehearsal 复盘 + A6 path γ 设计 spike | R1 `data/merged/` + DEIM-M 当前 best_stg2 教师 | `runs/rehearsal_kd_A{1,2a,2b}_R1.json` + `runs/rehearsal_kd_A6_design_spike.json` 二次验证 | KD AGREED，runners 已落地 | 无 — 直接可重跑 | [`project_kd_rehearsal_scaffolding`](mem) + [`project_kd_upgrade_review`](mem) |
+| **A** | KD A1+A2a+A2b rehearsal 复盘 + A6 path γ 设计 spike | R1 `data/merged/` + DEIM-M 当前 best_stg2 教师 | `runs/rehearsal_kd_A{1,2a,2b}_R1.json` + `runs/rehearsal_kd_A6_design_spike.json` 二次验证 | KD AGREED，runners 已落地 | 无 — 直接可重跑 | memory: `project_kd_rehearsal_scaffolding` + `project_kd_upgrade_review` |
 | **B** | KD A7 same-family DEIM-L → DEIM-M / DEIM-S 教师试运行 | DEIM-L best_stg1.pth 教师 + `data/merged/` | A7 cell matrix R1-data spike（不锁 R2 决策）| AGREED scaffolding 在 `components/knowledge_distillation/` | DEIM-L 远端权重同步完成（用户已确认进行中）| `components/knowledge_distillation/integration/deim_kd_launch.py` |
 | ~~**C**~~ | ~~DEIM-L per-class AP 提取~~ | DEIM-L `best_stg1.pth` | `logs/deim_eval_l/{eval.pth,per_class.json,per_class.txt}` + [`phase_2_round_1_results.md`](./phase_2_round_1_results.md) §DEIM-D-FINEl 表格已填齐；DEIM-S / M 同步重跑统一口径 | **✅ 已完成 2026-05-12** | — | `scripts/eval/_remote_deim_eval.sh` + `scripts/eval/_parse_deim_per_class.py` |
-| **D** | Copy-paste + class-balance β-sweep（3-arm，R1 7 类）| `data/merged/` + `--copy-paste` / `--cls-weight` 默认 OFF 旁路 | `runs/copy_paste_balance/no_aug` / `cp_only` / `cp_balanced` × YOLO26s | c-stage AGREED-CLEAN（iter-11） | 训练机器 GPU | [`project_copy_paste_balance_scaffold`](mem) — `components/copy_paste_balance/` |
-| **E** | Hard-negative mining FP harvest（2-arm，R1）| Demo 视频假阳帧 + `data/merged/` | `runs/hard_negative_mining/{no_hn, with_hn}` × YOLO26s | a-stage AGREED-CLEAN（iter-2）；data-prep-time 流程 | 一次性 FP 流水 + 训练机器 GPU | [`project_hard_negative_mining_scaffold`](mem) — `components/hard_negative_mining/` |
-| **F** | TSM scaffold 激活 tripwire 与因果性校验 | `components/temporal_shift_module/` + 合成时序 chunk | tripwire schema v1.1 实测命中率 + DEIM 适配脚手段 | scaffolding AGREED iter-6 | 无 — 单机 CPU 可跑 | [`project_tsm_scaffold`](mem) — `scripts/_tsm_activation_schema.json` |
+| **D** | Copy-paste + class-balance β-sweep（3-arm，R1 7 类）| `data/merged/` + `--copy-paste` / `--cls-weight` 默认 OFF 旁路 | `runs/copy_paste_balance/no_aug` / `cp_only` / `cp_balanced` × YOLO26s | c-stage AGREED-CLEAN（iter-11） | 训练机器 GPU | memory: `project_copy_paste_balance_scaffold` — `components/copy_paste_balance/` |
+| **E** | Hard-negative mining FP harvest（2-arm，R1）| Demo 视频假阳帧 + `data/merged/` | `runs/hard_negative_mining/{no_hn, with_hn}` × YOLO26s | a-stage AGREED-CLEAN（iter-2）；data-prep-time 流程 | 一次性 FP 流水 + 训练机器 GPU | memory: `project_hard_negative_mining_scaffold` — `components/hard_negative_mining/` |
+| **F** | TSM scaffold 激活 tripwire 与因果性校验 | `components/temporal_shift_module/` + 合成时序 chunk | tripwire schema v1.1 实测命中率 + DEIM 适配脚手段 | scaffolding AGREED iter-6 | 无 — 单机 CPU 可跑 | memory: `project_tsm_scaffold` — `scripts/_tsm_activation_schema.json` |
 | **G** | `_r2_decide_precision.py` + `_r2_verify.py` b-stage 合成 fixtures | a-stage scaffold + JSON schemas | b-stage 实现 + `scripts/_r2_schemas_test.py` 扩展 | 决策规则 v1 锁定（见 active plan）+ B2/C3 loop | 无 — 单机 CPU 可跑 | active plan §1.0 §2.1.1 |
-| **H** | `export_yolo.sh` + `export_deim.sh` sidecar 离线校验 | 现有 R1 ONNX / 引擎 | sidecar 解析 + `engine_sha256` 校验脚本 | Engine Sidecar Contract 已落地 | 无 — 单机可跑（dry-run）；Orin 端真延迟为 Stage 2 范畴 | [`project_engine_sidecar_contract`](mem) |
+| **H** | `export_yolo.sh` + `export_deim.sh` sidecar 离线校验 | 现有 R1 ONNX / 引擎 | sidecar 解析 + `engine_sha256` 校验脚本 | Engine Sidecar Contract 已落地 | 无 — 单机可跑（dry-run）；Orin 端真延迟为 Stage 2 范畴 | memory: `project_engine_sidecar_contract` |
 | **I** | SAHI c0 grid precheck（R1 demo 视频）| Cam-W spec + 现有 demo 视频近似分辨率 | c0 grid 候选 + 缩放策略 dry-run | §六 SAHI per-camera adaptive AGREED | 无 — 单机 CPU 可跑（不需 GPU 推理）| [`additional_components_plan.md §六`](../planning/additional_components_plan.md) |
 
 ### 排序与触发条件
@@ -616,5 +616,47 @@ R1 已关闭，R2 manifest 冻结仍在数据侧推进（hardware lock 已 2026-
 - 消化项 **D / E** → 进入 R2 §三 copy-paste / §四 hard-negative 的 R2-data 实测前的"管线就绪 + 入参合理性"证据。
 - 消化项 **F / G / H** → 直接 carry into R2 round 工具链（TSM / decide / verify / sidecar），不再为 R2 独立验证。
 - 消化项 **I** → 进入 §六 SAHI 的 R2 c0 grid 候选短名单。
+
+---
+
+## 决策口径补丁（2026-05-12 R1 关闭后追加）
+
+> **注**：本节为 R1 关闭后追加的口径说明，**不修改任何已落地决策与结论**。来源 codex-report-conflictor 3-pass 评审遗留的 process-polish 项（用户授权 R1 关闭后追加补丁，见 commit 7bbf752 之后的 follow-up）。
+
+### 决策规则 4 的 tie metric 口径
+
+R1 决策规则 4（同质性时按 license 优先级择优）的 tie 判定**以 mAP50 为准**——基于以下源文本推断（非原文显式）：`docs/planning/development_plan.md §决策规则` 的 R1 三轨规则 1 / 2 / 3 全部以 mAP50 为阈值（"mAP50 ≥ 0.60" / "+≥ 3 pp mAP50" / "+≥ 5 pp mAP50"），规则 4 文本仅写 "三者差距 < 2 pp"未显式指名 metric；按规则 1-3 上下文一致性推断，规则 4 的"差距"沿用 mAP50 作为 tie metric。
+
+DEIM-M vs YOLO26m 在 mAP50 差为 -1.0 pp（0.859 vs 0.869，**在 ±2 pp 内**），触发 tie；按 license 优先级 DEIM (Apache-2.0) > YOLO26 (AGPL-3.0)，DEIM-M 上位为主力候选。
+
+mAP50-95 在 R1 决策规则中为**辅助参考指标**（差为 -2.7 / -3.3 pp，超出 2 pp），其作用是当 tie metric 触发 license 偏好后，复核选中模型是否在更严格的 IoU 范围下显著退化。R1 评估时该差距被以下 3 项证据补偿：
+1. Recall +13.5 pp（0.847 vs 0.712）
+2. F1 +8.8 pp（0.896 vs 0.808）
+3. 长尾召回（redRight / greenRight）"非零 vs 零"的结构性差异（DEIM 给出预测，YOLO26 在常用置信阈值下不报）
+
+后续 R2 / R3 round 如需修正 tie metric 口径（改用 mAP50-95 或两者 AND-clause），按 `precision_parity_plan.md` reopen criteria 流程，**不允许**在 R1 关闭后追溯修改本轮决策。
+
+### redRight / greenRight 复测触发条件
+
+R1 redRight n=6 / greenRight n=4 远低于 precision parity plan `support ≥ 30` 统计基线，单类 AP / P / R 在该 support 下为高方差噪声占主导（详见 `phase_2_round_1_results.md` §DEIM-D-FINEl 稀有类样本量警示 footnote）。**正式复测触发**：
+
+- **触发条件**：R2 manifest 冻结后，新 val 集 redRight + greenRight **任一类**的实例数（in val） ≥ 30，**或** R2 close gate 校验时长尾类样本达成 SOP 目标支撑度（见 [`docs/data/r2_data_collection_sop.md`](../data/r2_data_collection_sop.md) §R2 训练 imgsz 决策规则 与 §决策规则）。
+- **复测内容**：在新支撑度下重跑 `scripts/eval/_remote_deim_eval.sh` + `scripts/eval/_parse_deim_per_class.py`；输出 `runs/detect/<r2_run>/eval/per_class_AP.json`；将新 P/R/AP 与 R1 同表对照（R1 数字保持原值不变作为 baseline）。
+- **目标**：将长尾类指标从"记录用"升级为"决策用"，验证 DEIM-M 长尾召回优势在足够支撑度下是否保留 / 反转。
+- **负责人 / 时机**：R2 round B0（主训练）后 7 天内由检测组完成；进度跟踪进 R2 round 报告 §变更记录。
+
+### Demo 覆盖率门（demo coverage gate）现状说明
+
+R1 关闭与本补丁追加期间，对 `docs/reports/phase_2_round_1_*.md` 的多次 Write/Edit 操作经由 `.claude/hooks/check_demo_coverage.py` 触发 demo-reviewer ledger gate；当前 ledger 状态：
+
+- `demo/_review/ledger.json` 内容为空（`{"version":1,"updated_at":"","entries":{}}`，从未有任何条目落盘）。`.claude/hooks/check_demo_coverage.py` 在每次 Write/Edit `docs/reports/phase_*.md` 时**实时扫描** `demo/<run>/<engine>/demo*.mp4` 文件系统并与（空）ledger 比对，**hook 当前报告 ~480 个 `(run × engine)` group `never` 状态**（覆盖 R1 全部 10 个 run 的 best / best-1280 / best_1280 / best_1536 引擎 × 上下游 tracker 模式）；这是 hook 计算的 coverage 缺口，**不是 ledger 文件存储的条目**。
+- 本 R1 关闭 + 后续 polish 编辑均通过 **`demo/_review/.gate_override`** 一次性 sentinel 旁路（每次 Edit 消费，每次重置；参考 `CLAUDE.md` 项目段 "Demo coverage hook"）。
+- 跨越 e1c5dc5 → 7bbf752 → 本补丁 commit 的所有编辑均为**数值表格 / 方法学 footnote / banner / 跨引用修复 / 口径补丁文本**，**不依赖**也**不修改** demo 视频证据。
+
+**碳排放（process debt）**：demo-reviewer ledger 大规模 backfill 列入 **R2 retrospective parking lot**（不阻塞 R2 启动）：
+
+1. R2 部分启动时（demo 重跑后），ledger 中 R1 的 `never` 条目应同步刷新为 `current`（如 demo 视频也重新生成）或保持 `never` 但标注"R1 archived; 不再 backfill"（按 R2 demo-reviewer SOP 走标准 PR）。
+2. 若 R2 round 报告（`phase_2_round_2_report.md`）写入前 ledger 状态未改善，应在该报告 §coverage-gaps 节显式列出延期 group 与延期原因（CLAUDE.md 已要求此项）。
+3. 不允许的反模式：长期使用 `.gate_override` 旁路而不补完 ledger — sentinel 设计为"临时单次"用途。
 
 

@@ -106,7 +106,7 @@ v1.1 LOCK 2026-05-10
 - [ ] b. 生成 `runs/_r2_eval_parity/sample_manifest.json`。
 - [ ] b. 生成 `runs/_r2_audit_coverage.json` + `.sha256`。
 - [ ] b. 传播规则：`low_power` → confidence downgrade；`construction_failed` → escape outcome。
-- [ ] b. 应用 [`development_plan.md` §R2 训练 imgsz 决策规则](development_plan.md#r2-训练-imgsz-决策规则2026-05-11-锁定替代之前的r2-锁-imgsz1280无条件项) → 计算 `bbox_width_p50` / `frac_lt_0.03` → 写 `runs/_r2_train_config.json` `{imgsz, multi_scale, rule_branch}`。
+- [ ] b. 应用 [`development_plan.md` §R2 训练 imgsz 决策规则](../planning/development_plan.md#r2-训练-imgsz-决策规则2026-05-11-锁定替代之前的r2-锁-imgsz1280无条件项) → 计算 `bbox_width_p50` / `frac_lt_0.03` → 写 `runs/_r2_train_config.json` `{imgsz, multi_scale, rule_branch}`。
 - [ ] c. image hash / stratified coverage / schema / tamper negative tests 通过；`_r2_train_config.json` schema 校验。
 - [ ] d. manifest + schema + sampling-code hash freeze；任意改动 = 重跑 parity + imgsz 决策。
 - [ ] e. 路径与 hash 写入 `runs/_r2_verification.json`（含 `_r2_train_config.json` 与 `bbox_width_p50` / `frac_lt_0.03` 数值快照）。
