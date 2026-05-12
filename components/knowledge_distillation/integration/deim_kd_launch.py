@@ -277,6 +277,11 @@ def build_teacher(teacher_cfg: str, teacher_ckpt: str, device):
     from engine.core import YAMLConfig  # DEIM module — imports only when run in DEIM venv
 
     cfg = YAMLConfig(teacher_cfg)
+    # The teacher checkpoint is the pretrained/fine-tuned source of truth.
+    # Disable HGNetV2's constructor-time stage1 preload so it does not call
+    # torch.distributed.get_rank() before DEIM/train.py initializes distributed.
+    if "HGNetv2" in cfg.yaml_cfg:
+        cfg.yaml_cfg["HGNetv2"]["pretrained"] = False
     teacher = cfg.model.to(device)
     state = torch.load(teacher_ckpt, map_location=device)
     # DEIM saves under "model" or "ema" / "ema.module" depending on stage.
