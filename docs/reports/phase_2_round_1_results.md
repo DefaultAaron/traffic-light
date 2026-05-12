@@ -163,7 +163,7 @@
 | redRight   |      6 |      6 | 1.000  | 0.500  | 0.505  | 0.287     |
 | greenRight |      3 |      4 | 0.750  | 0.750  | 0.693  | 0.529     |
 
-> 训练完成 132 / 132 epochs。准确率 / 召回率取 IoU=0.5 PR 曲线的 best-F1 操作点（与 Ultralytics val 单点 P/R 口径对齐）；overall 行按 7 类等权平均。指标来源 `runs/detect/deim_dfine_s-r1/eval/latest.pth`（faster_coco_eval 序列化的 COCOeval 结果），训练日志 `runs/detect/deim_dfine_s-r1/log.txt` 132 行 JSONL 与之一致。
+> 训练完成 132 / 132 epochs；best epoch = 131。准确率 / 召回率取 IoU=0.5 PR 曲线的 best-F1 操作点（与 Ultralytics val 单点 P/R 口径对齐）；overall 行按 7 类等权平均。**指标来源已统一**：基于部署用 checkpoint `runs/detect/deim_dfine_s-r1/best_stg2.pth` 通过 `scripts/_remote_deim_eval.sh` + `scripts/_parse_deim_per_class.py` 重跑产出 `logs/deim_eval_s/eval.pth`（pickled COCOeval.eval dict）。**与旧 `eval/latest.pth` 直接 diff 结果**：聚合 AP@50 / AP@50:95 / P / R / per-class AP / per-class P / per-class R **所有四位有效数字下完全相同**（max|Δ|=0.0000 across 28 fields；通过同 `_parse_deim_per_class.py` 在本地解析两个 `eval.pth` 得到，diff 命令复现见 `logs/deim_eval_s/test_only.log` 附近 + 解析脚本，2026-05-12）—— EMA 在最后两 epoch 输出几乎不变即可解释。训练日志 `runs/detect/deim_dfine_s-r1/log.txt` 132 行 JSONL 与之吻合。
 
 
 
@@ -171,16 +171,16 @@
 
 | 类别       | 图片数 | 实例数 | 准确率 | 召回率 | mAP@50 | mAP@50:95 |
 | ---------- | ------ | ------ | ------ | ------ | ------ | --------- |
-| all        | 11,094 | 29,096 | 0.951  | 0.847  | 0.859  | 0.613     |
-| red        |  5,235 | 11,601 | 0.956  | 0.960  | 0.971  | 0.754     |
-| yellow     |    355 |    756 | 0.921  | 0.890  | 0.922  | 0.545     |
-| green      |  5,616 | 12,925 | 0.940  | 0.950  | 0.967  | 0.709     |
-| redLeft    |  2,535 |  3,218 | 0.932  | 0.970  | 0.975  | 0.802     |
-| greenLeft  |    433 |    586 | 0.911  | 0.910  | 0.918  | 0.587     |
+| all        | 11,094 | 29,096 | 0.955  | 0.843  | 0.859  | 0.613     |
+| red        |  5,235 | 11,601 | 0.956  | 0.960  | 0.972  | 0.754     |
+| yellow     |    355 |    756 | 0.930  | 0.880  | 0.920  | 0.545     |
+| green      |  5,616 | 12,925 | 0.940  | 0.950  | 0.968  | 0.709     |
+| redLeft    |  2,535 |  3,218 | 0.941  | 0.960  | 0.975  | 0.802     |
+| greenLeft  |    433 |    586 | 0.919  | 0.900  | 0.918  | 0.588     |
 | redRight   |      6 |      6 | 1.000  | 0.500  | 0.505  | 0.316     |
 | greenRight |      3 |      4 | 1.000  | 0.750  | 0.754  | 0.579     |
 
-> 训练完成 102 / 102 epochs（best epoch = 97，总训练时间 1 天 7:50:21）。准确率 / 召回率取 IoU=0.5 PR 曲线的 best-F1 操作点（与 Ultralytics val 单点 P/R 口径对齐）；overall 行按 7 类等权平均。指标来源 `runs/detect/deim_dfine_m-r1/eval/latest.pth`（faster_coco_eval 序列化的 COCOeval 结果），与 `runs/detect/deim_dfine_m-r1/log.txt` 第 102 行 `test_coco_eval_bbox[0]=0.6131894…` 一致；`logs/deim-d-fine_m.log` 末尾 `best_stat: {'epoch': 97, 'coco_eval_bbox': 0.6134163…}`。
+> 训练完成 102 / 102 epochs（best epoch = 97，总训练时间 1 天 7:50:21）。准确率 / 召回率取 IoU=0.5 PR 曲线的 best-F1 操作点（与 Ultralytics val 单点 P/R 口径对齐）；overall 行按 7 类等权平均。**指标来源已统一**：基于部署用 checkpoint `runs/detect/deim_dfine_m-r1/best_stg2.pth`（epoch 97 全局最优）通过 `scripts/_remote_deim_eval.sh` 重跑产出 `logs/deim_eval_m/eval.pth`。**与旧 `eval/latest.pth`（epoch 102 in-loop snapshot）实测 diff**（同 `_parse_deim_per_class.py` 在本地解析两个 `eval.pth`，2026-05-12）：聚合 AP@50 / AP@50:95 漂移 ≤ 0.0002（4 位有效数字内），聚合 P / R 漂移 ±0.0037 / ±0.0043（3 位有效数字内），per-class P / R max |Δ| = 0.0095 / 0.0100、per-class AP max |Δ| = 0.0012 — 全部位于"5 个 epoch + EMA 衰减"噪声范围内；口径现已与 S / L 一致。`logs/deim-d-fine_m.log` 末尾 `best_stat: {'epoch': 97, 'coco_eval_bbox': 0.6134163…}` 与本表 0.613 吻合。
 
 
 
@@ -188,14 +188,18 @@
 
 | 类别       | 图片数 | 实例数 | 准确率 | 召回率 | mAP@50 | mAP@50:95 |
 | ---------- | ------ | ------ | ------ | ------ | ------ | --------- |
-| all        | 11,094 | 29,096 |  —     |  —     | 0.857  | 0.611     |
-| red        |  5,235 | 11,601 |  TBD   |  TBD   |  TBD   |  TBD      |
-| yellow     |    355 |    756 |  TBD   |  TBD   |  TBD   |  TBD      |
-| green      |  5,616 | 12,925 |  TBD   |  TBD   |  TBD   |  TBD      |
-| redLeft    |  2,535 |  3,218 |  TBD   |  TBD   |  TBD   |  TBD      |
-| greenLeft  |    433 |    586 |  TBD   |  TBD   |  TBD   |  TBD      |
-| redRight   |      6 |      6 |  TBD   |  TBD   |  TBD   |  TBD      |
-| greenRight |      3 |      4 |  TBD   |  TBD   |  TBD   |  TBD      |
+| all        | 11,094 | 29,096 | 0.953  | 0.847  | 0.857  | 0.611     |
+| red        |  5,235 | 11,601 | 0.958  | 0.960  | 0.969  | 0.759     |
+| yellow     |    355 |    756 | 0.919  | 0.890  | 0.917  | 0.547     |
+| green      |  5,616 | 12,925 | 0.935  | 0.960  | 0.969  | 0.714     |
+| redLeft    |  2,535 |  3,218 | 0.942  | 0.960  | 0.972  | 0.804     |
+| greenLeft  |    433 |    586 | 0.919  | 0.910  | 0.914  | 0.581     |
+| redRight   |      6 |      6 | 1.000  | 0.500  | 0.506  | 0.295     |
+| greenRight |      3 |      4 | 1.000  | 0.750  | 0.754  | 0.579     |
 
-> 训练完成 102 / 102 epochs（best epoch = 72；2026-05-12 完成）。**聚合 mAP** 来源 `logs/deim-d-fine_l.log` epoch-72 COCO 评估块 + `runs/detect/deim_dfine_l-r1/eval/best_coco_summary.{json,txt}`：AP@0.50=0.857 / AP@0.50:0.95=0.611 / AP_small=0.526 / AR@100=0.726。**per-class 行待补**（carry-forward 消化项 C，见 [`phase_2_round_1_report.md`](./phase_2_round_1_report.md) §R1→R2 桥接）— DEIM 训练流仅 print COCO 12-tuple 聚合值，per-class 需待远端 `eval/latest.pth` 同步完成后解析。**`best_stg2.pth` 缺省**按 DEIM 设计（stage-2 / no-aug 末段未超过 epoch-72 全局最优 0.6113），`best_stg1.pth` 即可部署 checkpoint。
+> 训练完成 102 / 102 epochs（best epoch = 72；2026-05-12 完成）。准确率 / 召回率取 IoU=0.5 PR 曲线的 best-F1 操作点（与 Ultralytics val 单点 P/R 口径对齐）；overall 行按 7 类等权平均。**指标来源**：部署用 checkpoint `runs/detect/deim_dfine_l-r1/best_stg1.pth`（epoch 72 全局最优）通过 `scripts/_remote_deim_eval.sh` 在远端 GPU 重跑产出 `logs/deim_eval_l/eval.pth`，per-class 解析由 `scripts/_parse_deim_per_class.py` 完成；聚合 AP@0.50=0.857 / AP@0.50:0.95=0.611 与 `runs/detect/deim_dfine_l-r1/eval/best_coco_summary.{json,txt}`（来自 `logs/deim-d-fine_l.log` epoch-72 COCO 评估块）一致。**`best_stg2.pth` 缺省按 DEIM 设计**——stage-2 / no-aug 末段（epoch 90-101）未超过 epoch-72 全局最优 0.6113（参考 `DEIM/engine/solver/det_solver.py:130-149`），`best_stg1.pth` 即可部署 checkpoint。R1 → R2 桥接消化项 C 完成。
+
+> **稀有类样本量警示**（适用于本节 S / M / L 三表）：redRight（实例 6）与 greenRight（实例 4）远低于 §1.0 precision parity plan 的 `support ≥ 30` 统计基线，单类 AP / P / R 在该 support 下高方差噪声占主导，**不可作为部署决策依据**；记录用于完整性与 R2 long-tail 数据补采 SOP 输入。决策仍以 overall + support ≥ 30 类（red / yellow / green / redLeft / greenLeft）的指标为准。
+
+> **方法学等价性核查产物**（DEIM-S / M）：[`r1_evidence/deim_eval_old_vs_new_diff.json`](./r1_evidence/deim_eval_old_vs_new_diff.json)（tracked under `docs/reports/r1_evidence/`，与 `logs/` gitignored 区分）由其同目录下的一次性 reproducer [`docs/reports/r1_evidence/_deim_eval_diff_audit.py`](./r1_evidence/_deim_eval_diff_audit.py) 生成，记录旧 `eval/latest.pth` 与新 `--test-only` 重跑 `logs/deim_eval_{s,m}/eval.pth` 的 **32 字段** field-by-field old / new / Δ（4 aggregate：overall AP@50 / AP@50:95 / P_bestF1 / R_bestF1；加 7 类 × 4 per-class metrics：AP@50 / AP@50:95 / P / R）；DEIM-S max|Δ|=0.0000，DEIM-M max|Δ|=0.0100。重跑命令：`.venv/bin/python docs/reports/r1_evidence/_deim_eval_diff_audit.py`（需远端 `runs/detect/deim_dfine_{s,m}-r1/eval/latest.pth` 已同步至本地 + `logs/deim_eval_{s,m}/eval.pth` 已由 `scripts/_remote_deim_eval.sh` 产出）。
 

@@ -1,0 +1,78 @@
+{
+  "overall": {
+    "class": "all",
+    "imgs": 11094,
+    "insts": 29096,
+    "p_bestf1": 0.9186408577456922,
+    "r_bestf1": 0.8457142857142858,
+    "ap50": 0.8483858453387548,
+    "ap5095": 0.6015095155272135
+  },
+  "per_class": [
+    {
+      "class": "red",
+      "imgs": 5235,
+      "insts": 11601,
+      "p_bestf1": 0.9558874013044971,
+      "r_bestf1": 0.96,
+      "ap50": 0.9713389372534941,
+      "ap5095": 0.7548352302032625
+    },
+    {
+      "class": "yellow",
+      "imgs": 355,
+      "insts": 756,
+      "p_bestf1": 0.9327731092436975,
+      "r_bestf1": 0.88,
+      "ap50": 0.9136415494517384,
+      "ap5095": 0.5446994932357855
+    },
+    {
+      "class": "green",
+      "imgs": 5616,
+      "insts": 12925,
+      "p_bestf1": 0.9288922155688623,
+      "r_bestf1": 0.96,
+      "ap50": 0.9659861039413153,
+      "ap5095": 0.7075193530048065
+    },
+    {
+      "class": "redLeft",
+      "imgs": 2535,
+      "insts": 3218,
+      "p_bestf1": 0.9469813055470426,
+      "r_bestf1": 0.96,
+      "ap50": 0.9753834737399765,
+      "ap5095": 0.8015156786199095
+    },
+    {
+      "class": "greenLeft",
+      "imgs": 433,
+      "insts": 586,
+      "p_bestf1": 0.9159519725557461,
+      "r_bestf1": 0.91,
+      "ap50": 0.9143525392532612,
+      "ap5095": 0.5862128868099078
+    },
+    {
+      "class": "redRight",
+      "imgs": 6,
+      "insts": 6,
+      "p_bestf1": 1.0,
+      "r_bestf1": 0.5,
+      "ap50": 0.5051385815340216,
+      "ap5095": 0.28713396794965956
+    },
+    {
+      "class": "greenRight",
+      "imgs": 3,
+      "insts": 4,
+      "p_bestf1": 0.75,
+      "r_bestf1": 0.75,
+      "ap50": 0.6928597321974763,
+      "ap5095": 0.5286499988671636
+    }
+  ],
+  "source_eval_pth": "/home/jun/traffic-light/logs/deim_eval_s/eval.pth",
+  "source_ann_json": "/home/jun/traffic-light/data/merged/annotations/instances_val.json"
+}

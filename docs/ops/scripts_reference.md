@@ -9,12 +9,15 @@ Quick map:
 |---|---|
 | [Demo sweep (Orin TRT)](#demo-sweep-orin-trt) | `run_demos.sh` |
 | [Training](#training) | `train_deim.sh`, `train_yolov13.sh` |
+| [DEIM per-class evaluation (post-training)](#deim-per-class-evaluation-post-training) | `_remote_deim_eval.sh`, `_parse_deim_per_class.py` |
 | [Dataset (R2 self-collected)](#dataset-r2-self-collected) | `yolo_to_coco.py` |
 | [Model export](#model-export) | `strip_yolo26_head.py`, `export_yolo.sh`, `export_deim.sh` |
 | [Flicker / tracker validation](#flicker--tracker-validation) | `measure_flicker.py`, `validate_flicker_reduction.py` |
 | [Network / ops](#network--ops) | `setup_reverse_tunnel.sh` |
 
 > **R1 dataset scripts retired** (2026-05-08): `annotate_bstld.py`, `annotate_s2tld.py`, `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py` were removed alongside R1 dataset abandonment per R2 data-replacement policy. R2 uses self-collected data only; the active workflow lives in `docs/data/r2_data_collection_sop.md`. Original R1 docs preserved under `docs/_archive/`.
+
+> **One-shot R1-closure scripts retired** (2026-05-12): `_debug_a2b_kd.sh` (KD A2b distributed-init hang diagnostic; underlying bug fixed in commit `1ad1c2b fix(kd): disable HGNetv2 stage1 preload on teacher build`) and `_diag_deim_dets.sh` (one-time DEIM postprocess residual-det diagnostic for commit `8a3ece8` per-query letterbox dedup) were `git rm`'d as one-shot diagnostics with no live callers. `_deim_eval_diff_audit.py` was relocated to `docs/reports/r1_evidence/_deim_eval_diff_audit.py` to colocate the one-shot R1-closure equivalence reproducer with its output JSON `deim_eval_old_vs_new_diff.json`.
 
 ---
 
@@ -159,6 +162,58 @@ through `uv run` (which would otherwise force the project venv into the
 subprocess env and shadow any prior `source DEIM/.venv/bin/activate`).
 Override the venv path with `DEIM_VENV=...` (relative to `DEIM/`); set
 it to a non-existent path to skip auto-activation.
+
+---
+
+## DEIM per-class evaluation (post-training)
+
+After DEIM-D-FINE training completes, `eval/latest.pth` only captures the
+**last** epoch's COCOeval pickle — not the deployment-eligible best
+checkpoint (`best_stg2.pth` for S/M; `best_stg1.pth` for L when stage-2
+did not surpass stage-1). For unified-methodology per-class AP / P / R
+across the DEIM family, re-eval the deployment ckpt directly:
+
+### `_remote_deim_eval.sh`
+
+Runs `DEIM/train.py --test-only` on the deployment-eligible best
+checkpoint for DEIM-S, DEIM-M, DEIM-L and parses the resulting
+`eval.pth` into a paste-ready per-class table.
+
+```bash
+bash scripts/_remote_deim_eval.sh
+```
+
+No CLI args. Outputs land under `logs/deim_eval_<size>/`:
+
+| File | Contents |
+|------|----------|
+| `test_only.log` | DEIM stdout/stderr (COCO 12-tuple at the bottom) |
+| `eval.pth` | pickled `coco_evaluator.coco_eval['bbox'].eval` — precision/recall arrays |
+| `per_class.json` | machine-readable per-class table |
+| `per_class.txt` | markdown table ready to paste into `docs/reports/phase_*_results.md` |
+
+Auto-activates `DEIM/.venv` and runs `scripts/yolo_to_coco.py --splits val`
+if `data/merged/annotations/instances_val.json` is missing. Runs on the
+training rig (4090 D ≈ 10 min total).
+
+### `_parse_deim_per_class.py`
+
+Standalone parser, invoked by `_remote_deim_eval.sh`. Reads
+`eval.pth` + COCO val JSON + `data/traffic_light.yaml` and emits the
+per-class table (P/R at best-F1 point on the IoU=0.5 PR curve; overall
+row = uniform mean across the 7 classes — matches the existing
+results-doc convention).
+
+```bash
+python scripts/_parse_deim_per_class.py \
+    --eval-pth logs/deim_eval_s/eval.pth \
+    --ann-json data/merged/annotations/instances_val.json \
+    --data-yaml data/traffic_light.yaml \
+    --out-json logs/deim_eval_s/per_class.json \
+    --out-txt  logs/deim_eval_s/per_class.txt
+```
+
+Use directly if you need to re-parse without re-running `--test-only`.
 
 ---
 
