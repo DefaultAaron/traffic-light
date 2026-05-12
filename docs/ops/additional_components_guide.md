@@ -313,7 +313,7 @@ uv run python -m components.knowledge_distillation.spikes.a6_design_spike
 ## 衔接
 
 - `docs/planning/additional_components_plan.md` — WHAT spec（cell 矩阵、决策规则、生命周期）
-- `docs/planning/_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §2.5 — pre-R2 rehearsal 启动清单 + 阶段标记
+- `../_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §2.5 — pre-R2 rehearsal 启动清单 + 阶段标记
 - `docs/planning/kd_a6_design_spike.md` — A6 cross-arch path γ 设计文档
 - `docs/planning/temporal_optimization_plan.md` — TSM / HMM 时序优化 plan
 - `docs/planning/development_plan.md` Deferred 表 — §五 / §九 / §十 / §十一 R3+ 入口

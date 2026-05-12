@@ -186,5 +186,5 @@ argmax_{c_1 ... c_K} Σ_i log p_i(c_i) + Σ_{i<j} log π(c_i, c_j)
 - `development_plan.md`：R3 可选轨道定位；planner-prior 决策项。
 - `temporal_optimization_plan.md`：本计划在时序路径之后启动。
 - `additional_components_plan.md` §十一：planner-prior 融合走同一 prior 接口。
-- `_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §4.2：planner-prior carry-forward blocked_on `planning_team`。
+- `../_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §4.2：planner-prior carry-forward blocked_on `planning_team`。
 - `docs/data/r2_data_collection_sop.md`：R2 raw video / track / negative controls 数据入口。

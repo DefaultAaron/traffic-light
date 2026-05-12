@@ -27,7 +27,7 @@ Cross-references:
 - Schemas: _r2_decision_schema.json + _r2_audit_coverage_schema.json
 - Runtime utility: _r2_schema_utils.validate_and_enforce
 - Decision rule: elegant-sauteeing-quail.md "Decision rule — pre-committed"
-- Audit propagation: _archive/pre_r2_kickoff_checklist.md (2026-05-12 归档) §1.1 b-stage rule
+- Audit propagation: docs/_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档) §1.1 b-stage rule
   (low_power → confidence-downgrade; construction_failed → escape outcome)
 """
 

@@ -4,7 +4,7 @@ Role: control + wall-clock anchor for KD-acceptance §六 gate #1 / #4.
 `T_scratch_A1` is the reference; A2+ runs must finish under 2.0 × T_scratch_A1.
 A1 does NOT pass §六 #1 against itself — it IS the reference.
 
-Pre-R2 rehearsal usage (`_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §2.5 row "KD A1 wall-clock"):
+Pre-R2 rehearsal usage (`docs/_archive/pre_r2_kickoff_checklist.md (2026-05-12 归档)` §2.5 row "KD A1 wall-clock"):
     Measures 1-epoch wall-clock on R1 data for both deployees (YOLO26-s and
     DEIM-D-FINE-S) so the §六 #1 budget cap is calibrated before R2 in-round.
 
