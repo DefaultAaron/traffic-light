@@ -226,21 +226,52 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 ## 八、多相机融合
 
+### 硬件配置（2026-05-12 锁定）
+
+- **Cam-W**（wide）：森云 SG3S-ISX031C-GMSL2F（Sony ISX031, 2.95 MP @ 1920×1536, 3.0 µm pixel, HDR + LFM）；水平 FOV ~38°。
+- **Cam-T**（tele）：森云 SG8S-AR0820C-5300-G2A（OnSemi AR0820, 8.3 MP @ 3840×2160, 2.1 µm pixel, HDR only, no LFM）；水平 FOV ~10°。
+- **基线配置**：双相机水平排列，两套基线 ~50 mm + ~250 mm（不同车型）。基线影响 fusion 外参，不改单帧图像内容。
+
+### 单相机运行（fusion fault / pre-deploy fallback）
+
+- 运行 fallback = **Cam-W**（pending range-bucket recall validation against R2 val）。Cam-T-only 仅在 ODD = 高速 / 直线 + TL 前向 cone 内时启用。
+- Cam-W-only 性能数据登记为 §六（SAHI）/ §三（copy-paste-balance）trigger 证据，**不在 §八 内激活上述 section**。
+- Fusion runtime fault（topic loss / sync drift / calib reprojection 超阈值）→ 系统自动 fallback Cam-W-only；fault event 写 `runs/_multi_camera_runtime_faults.json`。
+
+### 模型拓扑（双相机部署时）
+
+- **单一共享模型权重**（R2 选型胜出者）；训练数据合并 wide + tele 帧。
+- Per-camera adapter head 列入 R3 contingency action item（§八 行动项 e2），不进决策表 outcome。
+- 训练数据按 `camera_id ∈ {wide, tele}` 分层；aspect-ratio-aware augmentation；train/val 按 station 切分（与 SOP §3 一致）。
+- 推理：TRT engine `batch=2`（每相机一帧）；单 engine / 单 sidecar / 单 eval-parity check。
+- 评测必须按 `baseline_id × camera_id` stratify：每条 fusion 决策行对应 `{50mm, 250mm} × {wide, tele}` 四象限指标。
+
+### 基线对性能的影响
+
+- 检测模型权重：baseline-shared；两基线共用同一权重。
+- Fusion accuracy：依赖 baseline + 内参 + 外参；每个 baseline 独立 `runs/_camera_calib_<baseline>mm.yaml`。
+- Fusion overlap 几何：50 mm vs 250 mm 在 forward overlap 大小 / 视差余量上不同；R2 fusion A/B 必须分别报告两基线指标。
+
 ### 行动项
 
-- [ ] a. [阻塞] 与自动驾驶团队锁定相机配置、外参、时间同步、ROS2 topic。
-- [ ] b. 晚期融合：投影 + WBF。
-- [ ] c. A/B：单相机 vs 多相机；遮挡 / 远距分桶。
-- [ ] d. 写 `runs/_multi_camera_decision.json`。
-- [ ] e. phase report 子节。
+- [ ] a. [阻塞] 与自动驾驶团队锁定 per-baseline 相机外参 + time-sync 验证（drift < 5 ms target，与 SOP §2.3 一致）+ ROS2 topic 命名 + calibration reprojection error threshold。
+- [ ] b. 晚期融合：投影 + WBF；per-baseline calibration YAML 加载契约；fusion runtime fault → Cam-W-only fallback 路径。
+- [ ] c. A/B：(c1) Cam-W only vs 双相机融合（按 `baseline_id` stratify）；(c2) 同模型在 50 mm vs 250 mm fusion accuracy 差异；遮挡 / 远距 / 横向桶单独报告。
+- [ ] d. 写 `runs/_multi_camera_decision.json` + `runs/_camera_calib_{50mm,250mm}.yaml` + `runs/_multi_camera_runtime_faults.json`。
+- [ ] e. R2 / R3 phase report 子节。
+- [ ] e2. **(R3 contingency)** Per-camera adapter head — 触发条件：wide-only OR tele-only per-camera AP@0.5:0.95 lower-CI 降幅 > 2 pp OR point 降幅 > 4 pp（matched seed-pair, n ≥ 5），相对单相机训练版本。激活时 write `runs/_multi_camera_per_camera_ap.json` 并进入独立 a-stage scaffold。
 
 ### 决策规则
 
 | outcome | condition | JSON write |
 |---|---|---|
-| deploy | 遮挡 recall +10 pp OR 远距 recall +5 pp | `outcome="deploy"` |
-| defer | 单维度提升不显著 | `outcome="defer"` |
-| drop | 相机配置不允许 | `outcome="drop"` |
+| deploy | （两基线**均**满足）遮挡 recall lower-CI +10 pp OR 远距 recall lower-CI +5 pp，且两基线 fusion accuracy（mAP@0.5 lower-CI）相对 Cam-W only 任一基线均不退化 > 2 pp | `outcome="deploy"` |
+| defer | 单基线提升 / 单维度提升不显著；或一基线满足但另一基线退化 > 2 pp lower-CI；与 deploy / drop 冲突时取 defer | `outcome="defer"` |
+| drop | 相机配置不允许：外参未锁定、time-sync drift > 5 ms 持续、calib reprojection error > 2 px、ROS2 topic 失联 ≥ 5 s | `outcome="drop"` |
+
+**优先级**（drawdown 顺序）：calibration + time-sync 验证 第一；fusion A/B 第二；per-camera adapter R3 contingency 最后。SAHI / copy-paste 按各自 section 现有 trigger，不在 §八 抢占。
+
+**Calibration 更新**：每 session 起点引用 `calib/<session_id>.yaml`；月度全标定 + 任何镜头干预 / 重装后必标（与 SOP §2.4 一致）。Calibration freshness > 30 天 OR reprojection error > 2 px → calib `stale=true`，对应 session fusion 评测降权。
 
 ## 九、自适应推理 / ROI
 

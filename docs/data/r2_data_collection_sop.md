@@ -3,7 +3,7 @@
 > **状态**：执行 SOP（待硬件锁定后冻结）。
 > **日期**：2026-04-28
 > **范围**：R2 阶段 10–14 类联合检测器（交通灯 + 栏杆）的数据采集、同步、标注、切分、QA 与发布预备。
-> **传感器配置**：双 8MP 相机（normal FOV + wide FOV）+ LiDAR 点云。
+> **传感器配置**（2026-05-12 锁定，与 `planning/additional_components_plan.md` §八 同步）：异构双相机 — **Cam-W** 森云 SG3S-ISX031C-GMSL2F（2.95 MP @ 1920×1536, 3.0 µm, HDR + LFM, 水平 FOV ~38°）+ **Cam-T** 森云 SG8S-AR0820C-5300-G2A（8.3 MP @ 3840×2160, 2.1 µm, HDR only, no LFM, 水平 FOV ~10°）；双基线部署（~50 mm + ~250 mm 水平排列，不同车型）+ LiDAR 点云。2026-05-12 前归档 session 使用旧标签 `Cam-N`（normal），新 session 一律 `Cam-W` / `Cam-T`；metadata reader 需保留 `Cam-N → Cam-W` legacy alias 处理。
 > **多模态定位**：本 SOP 一次采集，三路价值——
 > （a）2D 检测训练数据（主线 5/15 交付）；
 > （b）replay 阶段的距离 / 抖动 / 遮挡客观真值（用于失败模式诊断）；
@@ -28,20 +28,24 @@
 
 ### 2.1 相机
 
-| 通道 | 分辨率 | 镜头 FOV | 角色 | 主要任务 |
-|---|---|---|---|---|
-| **Cam-N**（normal） | 8 MP（≈3840×2160 或 4096×2160） | 水平 ~50–60° | 主感知通道 | 远距 / 远距小灯主标注源；标准 ADAS 视野 |
-| **Cam-W**（wide） | 8 MP | 水平 ~100–120° | 周边视野 + 多灯龙门 | 龙门两侧灯 / 路侧栏杆 / 接近路口外延 |
+| 通道 | 型号 | 分辨率 | Pixel pitch | HDR / LFM | 镜头 FOV | 角色 | 主要任务 |
+|---|---|---|---|---|---|---|---|
+| **Cam-W**（wide） | 森云 SG3S-ISX031C-GMSL2F（Sony ISX031） | 1920×1536（≈3 MP） | 3.0 µm | HDR + **LFM** | 水平 ~38° | 主感知通道；fusion fault 时单相机 fallback | 路口横向 / 龙门两侧灯 / 近场 + 中距 TL；安全关键 PWM-LED 通道 |
+| **Cam-T**（tele） | 森云 SG8S-AR0820C-5300-G2A（OnSemi AR0820） | 3840×2160（≈8 MP） | 2.1 µm | HDR only（**no LFM**）| 水平 ~10° | 远距增强通道 | 80 m+ 远距小灯（pixel-on-target 优势 ~7×）；高速 / 直线 ODD 主导 |
+
+**遗留标签兼容**：2026-05-12 之前归档 session 使用 `Cam-N`（normal）作为旧"主感知通道"标签 — 在新硬件配置下该角色由 `Cam-W` 承担。Metadata reader 需保留 `Cam-N → Cam-W` legacy alias；新采集 session 一律使用 `Cam-W` / `Cam-T`。
+
+**双基线**：车队同时使用 **~50 mm** 与 **~250 mm** 两套水平基线（不同车型）。`session_meta.yaml` 必填 `baseline_id ∈ {50mm, 250mm}`；calibration 文件按基线独立归档（见 §2.4）。
 
 **安装要求**：
 
-- 同一刚性支架，基线 5–15 cm（小基线，**不**作为可靠测距源；测距交给 LiDAR）。
-- 与车体振动解耦（防抖橡胶垫 / 隔振柱）。**关键**：抖动若来自相机本身而非龙门，会污染后续抖动诊断。
+- 同一刚性支架，水平排列基线 ~50 mm 或 ~250 mm（按车型；**不**作为可靠测距源；测距交给 LiDAR）。
+- 与车体振动解耦（防抖橡胶垫 / 隔振柱）。抖动若来自相机本身而非龙门，会污染后续抖动诊断。
 - 镜头：自动驾驶级（耐温 -20–85 ℃、机械抗振、IR-cut 滤光）。
-- 快门：建议 global shutter（行车 60 km/h 时小灯运动模糊会显著影响远距标注）。若仅 rolling shutter，记录扫描方向并在标注 metadata 中带行字段。
-- 曝光：双通道独立 AE，避免 wide 通道被路面强反光拉低整帧曝光导致灯过曝。
-- 白平衡：建议锁定为日光模式或保存 RAW（DNG）以便离线校正；不允许全自动 WB（导致同一灯前后帧颜色漂移）。
-- 帧率：30 fps **必须**，60 fps **建议**（黄→红状态切换 1 s 内，30 fps 最少 30 帧但仍易遗漏过渡帧）。
+- 快门：建议 global shutter（60 km/h 时小灯运动模糊会显著影响远距标注）。若仅 rolling shutter，记录扫描方向并在标注 metadata 中带行字段。
+- 曝光：双通道独立 AE。Cam-T 缺 LFM — 夜间 PWM-LED 信号灯可能 frame-to-frame 闪烁；夜间 session 必须额外开启 Cam-T 长曝光 / 多帧平均的 ISP 配置（具体参数随 GW5300 firmware 锁定，记录在 `meta.yaml.cam_t_isp_profile`）。
+- 白平衡：锁定日光模式或保存 RAW（DNG）以便离线校正；不允许全自动 WB（同一灯前后帧颜色漂移）。
+- 帧率：30 fps **必须**，60 fps **建议**（黄→红状态切换 1 s 内，30 fps 最少 30 帧但仍易遗漏过渡帧）。Cam-W 与 Cam-T 必须帧同步（PTP 触发，见 §2.3）。
 
 ### 2.2 LiDAR
 
@@ -70,11 +74,14 @@
 | 类型 | 方法 | 频率 |
 |---|---|---|
 | 内参（每相机） | OpenCV 棋盘格或 AprilTag 板 | 每月一次 + 任何镜头干预后 |
-| 相机-相机外参 | 共视棋盘格 | 月度，与内参同步 |
+| 相机-相机外参（per-baseline）| 共视棋盘格 | 月度，与内参同步；**两套基线各自一份** |
 | 相机-LiDAR 外参 | 反光板 / Apriltag 反光靶 | 月度 |
 | 时序对齐验证 | 跑动目标互相关（车辆离开同步触发瞬时） | 每次出车一次（5 分钟标定段） |
+| Reprojection error 自检 | 共视棋盘格 / AprilTag 重投影残差 RMS | 每次出车前；**> 2 px 拒绝出车** |
 
-**标定档归档**：每次 session 起点写入 `calib/<session_id>.yaml`；后续重处理永远引用该文件，不引用全局"最新标定"。
+**标定档归档**：每次 session 起点写入 `calib/<session_id>.yaml`；该文件指向当前 baseline 对应的 `runs/_camera_calib_<baseline>mm.yaml`（与 plan §八 一致）；后续重处理永远引用该 session 文件，不引用全局"最新标定"。
+
+**Freshness 规则**：calibration age > 30 天 OR reprojection RMS > 2 px → 该 session 的 calibration 标 `stale=true`，fusion 评测降权（与 plan §八 calibration 更新规则一致）。Stale calibration session 仍可入训练数据（用于 detector），但 fusion A/B 评测中按附录 §B 加权方案降权。
 
 ---
 
@@ -142,8 +149,8 @@ data/r2/raw/
 │       └── sync_log.csv               # 每秒同步漂移记录
 data/r2/annotated/
 ├── <split>/                           # train / val / test （按 site_id 划分）
-│   ├── images/                        # 抽帧图像（默认 cam-N）
-│   ├── images_wide/                   # 抽帧图像（cam-W；仅子集）
+│   ├── images_wide/                   # 抽帧图像（Cam-W；主标注源）
+│   ├── images_tele/                   # 抽帧图像（Cam-T；远距小灯 + 高速 ODD 子集）
 │   ├── labels/                        # YOLO 格式
 │   └── annotations/                   # COCO 格式
 data/r2/derived/
@@ -160,6 +167,11 @@ data/r2/derived/
 session_id: 20260503-1730-zwu
 site_id: bj-haidian-zhongguancun-N4
 driver: 吴正日
+vehicle_id: agv-pilot-02
+baseline_id: 250mm          # one of {50mm, 250mm}; required for fusion correctness
+camera_w_id: sg3s-001
+camera_t_id: sg8s-001
+cam_t_isp_profile: night_pwm_safe_v1  # required if night session; else null
 weather: light_rain
 lighting: dusk
 glare: front
@@ -167,7 +179,10 @@ gantry_type: modern_horizontal
 duration_s: 1820
 notes: "5 级风，龙门主动采集；日落前 25 min 接近"
 permits: ["驾驶许可 #2026-0503-01"]
-calib_ref: calib/2026-04-monthly.yaml
+calib_ref: calib/2026-04-monthly.yaml      # session-local; points at runs/_camera_calib_<baseline_id>.yaml
+calib_age_days: 9
+calib_reprojection_rms_px: 0.84
+calib_stale: false                          # true iff age>30d OR rms>2px
 sync_drift_max_ms: 0.7
 ```
 
@@ -277,7 +292,7 @@ ATLAS 数据集（CC BY-NC-SA 4.0，IEEE IV 2025；arXiv:2504.19722）的 25 类
 
 #### Tier 1：直接投影（近距，≤ 50 m）
 
-1. 用 session calib 把 LiDAR 点云变换到 cam-N 坐标系并投影到像素平面。
+1. 用 session calib 把 LiDAR 点云变换到 **Cam-W** 坐标系并投影到像素平面（Cam-W 为主标注源；Cam-T 投影流水线对称但远距小灯 IoU 阈值需放宽，见附录）。
 2. 对每个 TL bbox：收集投影落入 bbox 内 **且** 3D 距相机 ∈ [3, 200] m 的点。
 3. 若点数 ≥ 3：`distance_m = trimmed_mean(ranges, trim=0.2)`，`confidence=high`，`anchor_kind=direct`。
 
@@ -321,7 +336,7 @@ Tier 1 点数 < 3 时启用：
 #### QA / 验收门
 
 - 抽 5 % 估计交叉核验：可视化 LiDAR 簇 3D 视图 + 像素投影叠加图，由数据负责人逐条确认。
-  - **不**用 cam-N + cam-W 作 stereo 验距 —— 基线 5–15 cm，远距 stereo 不可靠（LiDAR 本身就是更可靠的 3D 真值源）。
+  - **不**用 Cam-W + Cam-T 作 stereo 验距 —— 双相机异构（不同 sensor / 焦距 / 像素 pitch），基线 ≤ 25 cm，远距 stereo 几何上不可靠（LiDAR 本身就是更可靠的 3D 真值源）。
 - **关联率门槛**：mid-range（50–150 m）标注中 Tier 1 + Tier 2 累计 `confidence ≥ medium` 的比例 < 60 % 时，本信号**不**进入评测；先调 Tier 2 启发式。
 - LiDAR-相机标定漂移自检：5 % 抽检若发现系统性距离偏差 → 触发 §2.4 重标定。
 
@@ -355,7 +370,7 @@ Tier 1 点数 < 3 时启用：
 | 通道 | 原始采样率 | Nyquist | 本节决策频带 | 说明 |
 |---|---|---|---|---|
 | LiDAR 立柱 (x, y, z) 时序 | 10 Hz native | 5 Hz | **1–4 Hz** | 留 1 Hz Nyquist 防混叠保护带 |
-| cam-N 像素 (u, v) 时序 | 30 fps（**60 fps 优先**） | 15 / 30 Hz | **1–5 Hz** | 像素侧仍可探至 5 Hz |
+| Cam-W 像素 (u, v) 时序 | 30 fps（**60 fps 优先**） | 15 / 30 Hz | **1–5 Hz** | 像素侧仍可探至 5 Hz；Cam-W 为主通道（无 LFM 通道 Cam-T 不参与抖动诊断以避免 PWM 闪烁混入） |
 | IMU 车体加速度 | ≥ 100 Hz（车端常规） | ≥ 50 Hz | 用作扣除参考，不做带内决策 | — |
 
 **采样率规则（按通道，互不通用）**：
@@ -368,7 +383,7 @@ Tier 1 点数 < 3 时启用：
 
 1. **车辆静止性核验**：IMU 加速度 RMS 在 5 分钟窗口内 < 阈值（车体未怠速振动）。否则该 session 抖动数据弃用。
 2. **立柱跟踪**（LiDAR 通道，10 Hz）：每帧用 §7.1 Tier 2 提取立柱聚类；按聚类质心连续帧关联（最近邻 + 距离阈值），形成 `(t, x, y, z)` 时序。要求至少一根立柱**在整个 5 分钟内连续可见**。300 s × 10 Hz = 3000 样本。
-3. **像素轨迹**（cam-N 通道，**全帧率不抽帧**）：在 5 分钟段内人工选**一个高对比度灯泡 ROI**（亮 LED bulb，跨 ≥ 5 px），用归一化互相关（NCC）模板匹配跨 9000 / 18 000 帧（30 / 60 fps）逐帧定位中心，得到亚像素精度 (u, v) 时序。**不**依赖逐帧人工 bbox 标注。
+3. **像素轨迹**（Cam-W 通道，**全帧率不抽帧**）：在 5 分钟段内人工选**一个高对比度灯泡 ROI**（亮 LED bulb，跨 ≥ 5 px），用归一化互相关（NCC）模板匹配跨 9000 / 18 000 帧（30 / 60 fps）逐帧定位中心，得到亚像素精度 (u, v) 时序。**不**依赖逐帧人工 bbox 标注。Cam-T 不参与本流程（无 LFM，夜间 PWM-LED 闪烁会冒充结构性振动峰）。
 4. **车体扣除**：IMU 加速度二次积分（带 high-pass 抑制零飘）得到车体位移 → 同时从 LiDAR 立柱时序与像素时序中扣除（坐标变换后），剔除车体怠速 / 阵风导致的整车晃动。
 5. **PSD 估计（Welch）**：两路时序分别做 Welch's method（汉宁窗、30 s 段、50 % 重叠）。频率分辨率 ≈ 0.03 Hz，决策带内有 ~30 个 bin 足够稳定。**不**用一次性 FFT —— 单次 FFT 方差过大，3 σ 阈值不可信。
 6. **逐通道噪声地板**：
@@ -407,13 +422,16 @@ Tier 1 点数 < 3 时启用：
   - 像素级 depth-aware MAE（mask 像素时 condition on LiDAR depth）。
 - **决策**：R3 启动；R2 阶段只**保证数据保留**，不做训练。
 
-### 7.5 双相机 HDR / 视场互补
+### 7.5 双相机 FOV 互补 + 异构曝光（2026-05-12 锁定）
 
-- **HDR**：cam-N 与 cam-W 可设为不同曝光基线（cam-N 暗优先保灯亮区；cam-W 亮优先保路面 / 行人）。重叠视场内可像素级融合（R3 增强），不进入 R2 主线。
-- **视场互补**：cam-W 主要用于：
-  - 龙门两侧 / 视场外缘灯（cam-N 视场被裁掉的）；
-  - 道闸（栏杆通常贴近车头，cam-N 容易切到）；
-  - 大转弯路口的非主观察方向灯。
+新硬件配置 Cam-W（38° FOV, LFM）+ Cam-T（10° FOV, no LFM）的互补关系与旧 normal+wide 拓扑不同：
+
+- **FOV 互补**：Cam-W 单独承担横向 + 中距 TL；Cam-T 在 Cam-W 中心前向 cone 内提供 ~7× pixel-on-target 增强（远距 80 m+ 小灯）。重叠区为 Cam-T 全视场 ⊂ Cam-W 中心 ~10° 锥；非重叠区由 Cam-W 独占（路口横向 / 龙门两侧 / barrier）。
+- **异构曝光**：两相机各自独立 AE。Cam-W 优先保 LED bulb 不饱和（PWM-LED 颜色判别准确性 — LFM 已硬件级支持）；Cam-T 优先保远距小灯的对比度（无 LFM，夜间 PWM-LED 帧间闪烁需 ISP profile 软件补偿，见 §2.1 `cam_t_isp_profile`）。重叠视场内像素级融合属 R3 增强，不进 R2 主线。
+- **道闸（barrier）**：Cam-W 主标注源（barrier 通常贴近车头 + 横向，Cam-T 视场太窄会切到）。
+- **大转弯路口非主观察方向灯**：Cam-W 主标注源（Cam-T 中心 cone 不覆盖）。
+- **远距 TL（80 m+）**：Cam-T 主标注源（Cam-W 在 100 m 处 ~8 px-on-target，Cam-T ~60 px）。
+- **Fusion fault runtime fallback**：Cam-W 单独运行；详细激活逻辑见 plan §八。
 
 ### 7.6 天气自动打分
 
@@ -451,11 +469,13 @@ Tier 1 点数 < 3 时启用：
 
 ### 8.4 双相机标注分工
 
-- **cam-N**：**全标**（主训练源）。
-- **cam-W**：仅在以下情况标：
-  - cam-N 视场外有灯（FOV 互补帧）；
-  - cam-N / cam-W 同一灯出现在重叠区（一致性 QA 用，按 1 % 抽样）。
-- 标注成本：粗算 cam-W 标注量 ≤ cam-N 的 20 %。
+- **Cam-W**：**全标**（主训练源；plan §八 主感知通道 + fusion fault fallback）。
+- **Cam-T**：仅在以下情况标：
+  - 远距 TL（Cam-W 上 ≤ 8 px-on-target、≈ 80 m+）—— Cam-T 为远距小灯主标注源；
+  - Cam-W ∩ Cam-T 重叠区（一致性 QA + fusion training target，按 5 % 抽样）；
+  - Cam-T 独占视场（Cam-W 中心 ~10° cone 内但 Cam-W 像素不足以可靠分类的远距灯）。
+- 标注成本：粗算 Cam-T 标注量 ≈ Cam-W 的 20–30 %（视远距 session 占比）。
+- **Legacy `cam-N` 数据**：2026-05-12 前归档 session 的 `cam-N` 通道直接映射为 `Cam-W`（同主感知角色），原 `cam-W` 标注子集（peripheral）一并保留，但训练时按 `legacy=true` 标记，不进入 R2 主训练 manifest（与 SOP 头部 legacy alias 规则一致）。
 
 ---
 
@@ -535,9 +555,9 @@ Tier 1 点数 < 3 时启用：
 | 风险 | 触发场景 | 缓解 |
 |---|---|---|
 | 同步漂移 > 1 ms | PTP 失锁 | 实时监控 + sync_warn flag；连段失败整 session 弃训练 |
-| 8MP × 2 + LiDAR 存储爆 | ≈ 25–40 GB / 小时 | 提前规划 ≥ 20 TB 项目存储 + 滚动归档策略 |
+| 3MP + 8MP + LiDAR 存储爆 | ≈ 25–40 GB / 小时（Cam-T 8MP 主导）| 提前规划 ≥ 20 TB 项目存储 + 滚动归档策略 |
 | LiDAR 远距打不到灯 | 物理限制 | 用龙门立柱代理（§7.1 已设计） |
-| cam-W 标注成本失控 | 默认全标 | §8.4 限制为子集标注 |
+| Cam-T 标注成本失控 | 默认全标 | §8.4 限制为远距 + 重叠 QA 子集标注 |
 | 站点偏移（少数站点过采） | 单一驾驶员习惯路线 | 按 §3.1 配额硬性约束 + 周度站点覆盖看板 |
 | 法务发布卡点 | 5/15 后才启动评估 | 采集阶段就按可发布标准记录；不影响主线 |
 | Bulb-bbox 子集太小不足 R3 用 | §6.2 仅抽样标 | 抽样比例 ≥ 5 %；远距 / 遮挡样本提升至 ≥ 20 % |
@@ -563,7 +583,7 @@ Tier 1 点数 < 3 时启用：
 2. 站点清单（§3.1）需地面团队补充实地可达站点。
 3. 标注外包还是自建（影响 §8.2 流程时长）。
 4. 数据集发布范围与许可证（§11.2）— **5/15 主线交付前不需要决定**，但建议 5/30 前定。
-5. cam-W 是否进入主训练流（默认否，等 cam-N baseline 建立后再做 wide-FOV ablation）。
+5. Cam-T 是否进入主训练流（默认是，单一共享模型按 plan §八 拓扑混合 Cam-W + Cam-T 帧；fallback to per-camera adapter 仅在 R3 contingency 触发，见 plan §八 行动项 e2）。
 
 ---
 

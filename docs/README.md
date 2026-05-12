@@ -29,7 +29,7 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 
 | File | Contents |
 |---|---|
-| [`r2_data_collection_sop.md`](data/r2_data_collection_sop.md) | **R2 multimodal data collection + annotation SOP** — dual 8MP cameras (normal + wide) + LiDAR; sync, calibration, site/time coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics + cross-modal hard-neg mining, site-based splits, release prep |
+| [`r2_data_collection_sop.md`](data/r2_data_collection_sop.md) | **R2 multimodal data collection + annotation SOP** — heterogeneous dual cameras (Cam-W = SG3S 3MP wide w/ LFM + Cam-T = SG8S 8MP tele no-LFM) at dual baselines (~50mm + ~250mm) + LiDAR; sync, per-baseline calibration + freshness, site/time coverage, 10–14 class taxonomy, hard-case slices, LiDAR-aided distance GT + vibration diagnostics + cross-modal hard-neg mining, site-based splits, release prep |
 
 > R1 dataset prep docs (`class_distribution.md`, `data_conversion.md`, `annotation_tool.md`) are retired — see [`_archive/`](_archive/). R1 datasets (LISA / BSTLD / S2TLD) are no longer part of R2/R3 training or evidence base.
 
