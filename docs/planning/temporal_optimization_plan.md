@@ -296,8 +296,8 @@ Deploy hard-fail: `pretrained_init_mode != "scratch"` OR `deploy_eligible != tru
 
 ## 衔接
 
-- `development_plan.md`：Track 1 / Track 2 定位、5/15 优先级。
+- `development_plan.md`：Track 1 / Track 2 定位、§Stage 1.A 稳定门（flip-flop rate / burst jitter / dwell time / illegal transition）是本 plan 的 success criterion；§Stage 2 latency 不在本 plan 范围。2026-05-15 deadline retired。
 - `additional_components_plan.md`：共享生命周期、SAHI、INT8 QAT。
-- `pre_r2_kickoff_checklist.md`：TSM / HMM carry-forward rows、R2 close gate。
+- `pre_deploy_AGV_integration.md`：TSM / HMM carry-forward 接收（pre_r2_kickoff_checklist.md 2026-05-12 已归档）。
 - `cross_detection_reasoning_plan.md`：时序之后的同帧共现 R3 可选路径。
 - `scripts/_r2_carry_forward_schema.json`：`tsm_phase_1b_passed`、`on_vehicle_replay_failure_modes`、`replay_temporal_flicker_or_state_confusion` tokens。

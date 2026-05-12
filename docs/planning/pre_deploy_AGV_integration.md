@@ -1,6 +1,6 @@
 # Pre-Deploy AGV 集成规划（R4+ 部署阶段 carry-forward 停车场）
 
-> **状态**：stub — 仅作为 R2 / R3 carry-forward 的接收目录；R4 启动前由 PM + 数据负责人共同规划。
+> **状态**：stub — 仅作为 R2 / R3 carry-forward 的接收目录；激活由**证据触发**而非轮次编号（见 §1 范围）。2026-05-12 deadline-bound 规划已 retire；本文档不绑定 R4 / R5 编号。
 > **创建**：2026-05-12
 > **触发**：R2/R3 round 报告产出的 deploy-tuning 任务、定 Case A 部署候选、以及无法在 R2/R3 范围解决但需在实车 / 半实物日志回放后评估的部署模式选项。
 
@@ -25,7 +25,7 @@ R2/R3 round 不在此范围；R2/R3 round 报告把 Case A FP32 ship 候选、Ga
 
 **来源**：`docs/planning/additional_components_plan.md` §八 c6 + codex-plan-conflictor 2026-05-12 review。
 
-**问题**：Cam-W / Cam-T 在 ODD 不同区段（城市 vs 高速）相对收益不同；R2/R3 首先评估 always-on 双相机 + late fusion + WBF，**若按 §八 c1 outcome 规则未优于 Cam-W-only，则 R2 采用 Cam-W-only 作为 in-field feasibility baseline**（plan §八 c1 + `runs/_multi_camera_decision.json` `selected_baseline="cam_w_only"`）。R4 在以下两路径之上评估运行时切换：(a) 如果 R2/R3 部署了 always-on dual fusion，是否切换以摊薄推理成本；(b) 如果 R2/R3 部署了 Cam-W-only，是否在 ODD 高速段切入 Cam-T。
+**问题**：Cam-W / Cam-T 在 ODD 不同区段（城市 vs 高速）相对收益不同；R2/R3 首先评估 always-on 双相机 + late fusion + WBF，**若按 §八 c1 outcome 规则未优于 Cam-W-only，则 R2 / Stage 1 采用 Cam-W-only 作为 feasibility baseline**（plan §八 c1 + `runs/_multi_camera_decision.json` `selected_baseline="cam_w_only"` + `stage1_scope="feasibility_baseline"`；该 baseline 仍须通过 development_plan.md §Stage 2.A + 2.B 后方可 ship）。在 Stage 2 通过 + 实车测试后再评估运行时切换：(a) 如果 ship 走 always-on dual fusion，是否切换以摊薄推理成本；(b) 如果 ship 走 Cam-W-only，是否在 ODD 高速段切入 Cam-T。
 
 **激活前置**（必须**全部**满足才能启动）：
 - 验证过的 ODD 触发源（GPS 速度 OR 地图先验 OR 实时场景分类器；三选一锁定）

@@ -8,7 +8,7 @@ v1.1 LOCK 2026-05-10
 |---|---|
 | 范围 | R2 / R3 训练侧、推理侧、系统集成侧附加组件 |
 | R2 in-round hot path | §三 Copy-paste、§四 硬负样本、§七 KD P0 cells |
-| R2 持续调度 | §六 SAHI（5/15+）、§八 多相机融合（blocked） |
+| R2 持续调度 | §六 SAHI（gated；R2 真机回放暴露小目标 long-tail FN 后启动 a-stage）、§八 多相机融合（[阻塞] 自动驾驶团队 — 外参 / time-sync 锁定后启动）|
 | R3+ deferred | §五 地图先验、§九 自适应推理 / ROI、§十 INT8 QAT、§十一 规划器先验 |
 | v2.0 规则 | WHAT-only；本文件定义共享五步生命周期 |
 
@@ -17,7 +17,7 @@ v1.1 LOCK 2026-05-10
 | §三 Copy-paste + 类平衡 | a-stage LANDED；R2 freeze 后 b/c/d | `runs/_copy_paste_decision.json` |
 | §四 硬负样本挖掘 | a-stage LANDED；pre-R2 rehearsal 可启动 | `runs/_hard_negative_decision.json` |
 | §五 地图先验门控 | DEFERRED → R3+ | `runs/_map_prior_decision.json` |
-| §六 SAHI 切片推理 | 5/15+；a-stage 未启动 | `runs/_sahi_decision.json` |
+| §六 SAHI 切片推理 | gated；a-stage 未启动（trigger：R2 真机回放暴露小目标 long-tail FN）| `runs/_sahi_decision.json` |
 | §七 KD | scaffold v1.3 LANDED；P0 cells 待启动 | `runs/_kd_decisions.json` |
 | §八 多相机融合 | [阻塞] 自动驾驶团队 | `runs/_multi_camera_decision.json` |
 | §九 自适应推理 / ROI | DEFERRED → R3+ | `runs/_adaptive_inference_decision.json` |
@@ -54,7 +54,7 @@ R2 round 关帧前必须完成 a-c：§三、§四、§七 P0 cells。deploy 候
 | 1 | §三 Copy-paste + 类平衡 | R2 freeze | R2 训练前 | a-c 必须 |
 | 2 | §四 硬负样本挖掘 | R1 baseline / demo8/11/13 / R2 难场景 | R2 训练前 | a-c 必须 |
 | 3 | §七 KD | R2 选型胜者 + teacher | R2 训练同步 | P0 必须 |
-| 4 | §六 SAHI | 5/15+；小目标漏检 | 5/15 后 | scheduled |
+| 4 | §六 SAHI | R2 replay 暴露小目标 long-tail FN | replay 触发后启动 a-stage | gated |
 | 5 | §八 多相机融合 | `autonomy_team` | 待对齐 | blocked |
 | 6 | §五 地图先验 | deferred 条件 | R3+ | carry-forward |
 | 7 | §九 自适应推理 | §五 + R3 预算窗口 | R3+ | carry-forward |
@@ -166,6 +166,8 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 求值顺序：D → A → B → C；exactly-one outcome；0 或多匹配写 `decision_case="executor_error"` 并 **block deployment**（不进 Gate #5 sidecar）。
 
+**与项目二阶段交付（`development_plan.md` §Stage 1 / Stage 2 close gate）reconcile**：本节 4-case 中的 `< 50 ms` / `[50, 80) ms` / `≥ 80 ms` 是 SAHI 内部的 recall × latency 分流阈值，**仅用于 R2 / Stage 1 阶段**判断 SAHI 是否值得继续投入（Case A = 内部 deploy 候选；Case B/C = defer 至 Stage 2；Case D = drop）。Stage 1 通过的 SAHI 候选属于"性能优先"产物，**不**即时部署；Stage 2 latency 优化阶段再用 `development_plan.md` §Stage 2.A（p95 < 33 ms on Orin FP16）做最终 ship 决策。SAHI Case A 通过 Stage 1 但 Stage 2.A 未过 → 进 phase report carry-forward，登记 `item_id="sahi_deploy_blocked_on_stage2_latency"`。
+
 边界（按 lower-CI / end-to-end latency 解读）：`+5 pp, 49 ms → A`；`+5 pp, 50.0 ms → B`；`+5 pp, 80.0 ms → D`；`+2 pp, 49 ms → C`；`+2 pp, 50.0 ms → B`；`+1.999 pp, 30 ms → D`。numeric comparison 使用 ≥ / < 严格匹配上表 condition；exactly-equal 边界值（50.0, 80.0, +2.000, +5.000）走表中显式标记的 case。
 
 **Latency breakdown 报告契约**：phase report 子节必须列 Cam-W only / Cam-W + Cam-W SAHI / Cam-W + Cam-T fusion / Cam-W SAHI + Cam-T fusion 四档的 detector forward / slicing / remap / fusion / WBF 分段时延，以便区分 SAHI cost vs fusion cost 的责任归属（fusion overhead 在所有 SAHI variants 中等成本，不应让 SAHI 因 fusion 被错误降级）。
@@ -206,9 +208,9 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 | #1 总 mAP | KD lower-CI > A1_CI_low AND KD lower-CI > A1 point - 0.5 pp；ship-decision 强制 `seed5` |
 | #2 安全类 AP | 每个 `full_val_support ≥ 30` 安全类 AP delta ≥ -0.5 pp |
 | #3 FP | demo8/11/13 背景帧 FP 不上升；与 §四 manifest 共享 |
-| #4 成本 | 每 cell wall-clock < `T_scratch_A1 × 2.0` |
+| #4 成本 | 每 cell wall-clock < `T_scratch_A1 × 2.0`（**Stage 1 training-cost gate only**；KD ship 候选另需通过 `development_plan.md` §Stage 2.A latency + §Stage 2.B quality regression cap）|
 | #5 TRT + sidecar | engine 通过 eval-parity；sidecar 含 `kd_cell_id` / `kd_method` / `kd_teacher_artifact_sha256` |
-| #6 部署稳定性 trigger | **不阻塞 KD ship-decision**。R2 close 后对 ship-flagged 学生（YOLO26-s 或 DEIM-D-FINE-S）跑 demo4/10/12/15 burst 抖动 + demo8/11/13 假阳率测量；若任一指标差于 R1 baseline（DEIM 基线由 A2b rehearsal 测得，YOLO 基线由 A2a rehearsal 测得）则在 `docs/planning/pre_deploy_AGV_integration.md` 注册 deploy-tuning 任务，调优结果回写 `runs/_pre_deploy_tuning_decisions.json`。KD cells 自身 ship-decision 仅依据 Gate #1-#5 |
+| #6 部署稳定性 trigger | **不阻塞 KD Stage 1 ship-candidate decision**。R2 close 后对 ship-flagged 学生（YOLO26-s 或 DEIM-D-FINE-S）跑 demo4/10/12/15 burst 抖动 + demo8/11/13 假阳率测量；若任一指标差于 R1 baseline（DEIM 基线由 A2b rehearsal 测得，YOLO 基线由 A2a rehearsal 测得）则在 `docs/planning/pre_deploy_AGV_integration.md` 注册 deploy-tuning 任务，调优结果回写 `runs/_pre_deploy_tuning_decisions.json`。**KD cells 自身 Stage 1 ship-candidate decision 依据 Gate #1-#5；最终 ship 仍须通过 `development_plan.md` §Stage 2.A latency + §Stage 2.B quality regression** |
 
 ### Cell 矩阵
 
@@ -278,7 +280,7 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 - [ ] a. [阻塞] 与自动驾驶团队锁定 per-baseline 相机外参 + time-sync 验证（SOP §2.3 硬件 target drift < 1 ms；fusion fault gate drift > 5 ms 持续，见决策表 `drop` 行）+ ROS2 topic 命名 + calibration reprojection error threshold。
 - [ ] b. 晚期融合：投影 + WBF；per-baseline calibration YAML 加载契约；fusion runtime fault → Cam-W-only fallback 路径。
-- [ ] c. A/B：(c1) Cam-W only vs 双相机融合（按 `baseline_id` stratify）；(c2) 同模型在 50 mm vs 250 mm fusion accuracy 差异；遮挡 / 远距 / 横向桶单独报告。**c1 outcome 法定有效**：若双相机融合未按本节四行决策规则优于 Cam-W-only，本轮采用 Cam-W-only 作为 in-field feasibility baseline（plan §八 已有 fusion-fault fallback 即 Cam-W-only；该 outcome 为 valid R2 deploy，非"defeat"），双相机进入后续轮次。**JSON 编码**：该 outcome 走决策表 `defer` 行，但 `runs/_multi_camera_decision.json` 必须额外写 `selected_baseline="cam_w_only"` + `deploy_scope="in_field_feasibility"` 区分于普通 `defer`（普通 `defer` 不指定 selected_baseline，等 R3 重测）。
+- [ ] c. A/B：(c1) Cam-W only vs 双相机融合（按 `baseline_id` stratify）；(c2) 同模型在 50 mm vs 250 mm fusion accuracy 差异；遮挡 / 远距 / 横向桶单独报告。**c1 outcome 法定有效**：若双相机融合未按本节四行决策规则优于 Cam-W-only，本轮采用 Cam-W-only 作为 **Stage 1 in-field feasibility baseline**（plan §八 已有 fusion-fault fallback 即 Cam-W-only；该 outcome 为 valid R2 / Stage 1 close 状态，非"defeat"；**但不直接 Stage 2 ship-eligible**——仍须通过 `development_plan.md` §Stage 2.A latency + §Stage 2.B quality regression），双相机本身进入后续轮次。**JSON 编码**：该 outcome 走决策表 `defer` 行，但 `runs/_multi_camera_decision.json` 必须额外写 `selected_baseline="cam_w_only"` + `stage1_scope="feasibility_baseline"` 区分于普通 `defer`（普通 `defer` 不指定 selected_baseline，等 R3 重测）。
 - [ ] c5. **Diagnostic ablation**：跨相机 IoU-NMS（projected to shared frame）作为 WBF 低成本对照，仅用于验证 WBF 复杂度是否带来稳定收益；不新增验收门槛，结果进 phase report appendix。
 - [ ] c6. **Offline-only diagnostic ablation**：Cam-T 远距 / 低置信触发（asymmetric far-range trigger）— 用日志回放估计 recall-latency 权衡；**R2 不作为 online 部署模式**，online 评估（含 hysteresis、engine residency、handoff failure policy）deferred to `pre_deploy_AGV_integration.md` 运行时切换条目。
 - [ ] d. 写 `runs/_multi_camera_decision.json` + `runs/_camera_calib_{50mm,250mm}.yaml` + `runs/_multi_camera_runtime_faults.json`。

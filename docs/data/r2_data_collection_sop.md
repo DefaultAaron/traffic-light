@@ -5,7 +5,7 @@
 > **范围**：R2 阶段 10–14 类联合检测器（交通灯 + 栏杆）的数据采集、同步、标注、切分、QA 与发布预备。
 > **传感器配置**（2026-05-12 锁定，与 `planning/additional_components_plan.md` §八 同步）：异构双相机 — **Cam-W** 森云 SG3S-ISX031C-GMSL2F（2.95 MP @ 1920×1536, 3.0 µm, HDR + LFM, 水平 FOV ~38°）+ **Cam-T** 森云 SG8S-AR0820C-5300-G2A（8.3 MP @ 3840×2160, 2.1 µm, HDR only, no LFM, 水平 FOV ~10°）；双基线部署（~50 mm + ~250 mm 水平排列，不同车型）+ LiDAR 点云。2026-05-12 前归档 session 使用旧标签 `Cam-N`（normal），新 session 一律 `Cam-W` / `Cam-T`；metadata reader 需保留 `Cam-N → Cam-W` legacy alias 处理。
 > **多模态定位**：本 SOP 一次采集，三路价值——
-> （a）2D 检测训练数据（主线 5/15 交付）；
+> （a）2D 检测训练数据（R2 close 主线交付）；
 > （b）replay 阶段的距离 / 抖动 / 遮挡客观真值（用于失败模式诊断）；
 > （c）R3 候选：跨模态自监督预训练 / 3D 融合检测的种子数据。
 >
@@ -316,7 +316,7 @@ Tier 1 点数 < 3 时启用：
 
 #### 实现入口
 
-`scripts/lidar_distance_gt.py`（待 R2 数据流就绪后实现，**不**在 5/15 关键路径上；先有 Tier 1，Tier 2 可后补）。每条 session 跑一次，离线产出。
+`scripts/lidar_distance_gt.py`（待 R2 数据流就绪后实现，**不**在 R2 / Stage 1 关键路径上；先有 Tier 1，Tier 2 可后补）。每条 session 跑一次，离线产出。
 
 #### 输出 schema（`derived/distance_gt/<session>.parquet`）
 
@@ -504,24 +504,23 @@ Tier 1 点数 < 3 时启用：
 
 ---
 
-## 10. 决策门 / 时间轴
+## 10. 决策门 / 硬件锁定状态（2026-05-12 deadline retired）
 
-| 节点 | 日期 | 必达条件 |
+`docs/planning/timeline.md` 已归档至 `docs/_archive/`；周级排期不再驱动决策。本节只跟踪硬件锁定与数据冻结状态。R2 推进改用 evidence-bounded close gate（见 `docs/planning/development_plan.md` §部署就绪门 + R2 close gate）。
+
+| 节点 | 状态 | 必达条件 |
 |---|---|---|
-| 相机硬件锁定 | **2026-05-12 完成** | Cam-W = SG3S 3MP wide+LFM + Cam-T = SG8S 8MP tele no-LFM + 双基线 50mm/250mm（plan §八） |
+| 相机硬件锁定 | **2026-05-12 完成** | Cam-W = SG3S 3MP wide+LFM + Cam-T = SG8S 8MP tele no-LFM + 双基线 50mm/250mm（plan §八）|
 | LiDAR 硬件锁定 | TBD | LiDAR 型号定 + PTP 同步通过自测（§2.2 / §2.3 自检通过）|
-| 标定档 V1 | 2026-05-02 | 内 / 外参 + 时序对齐验证 |
-| 首日采集 | 2026-05-03 | ≥ 1 个龙门站点 + 1 个 barrier 站点 |
-| 1k 帧标注完成 | 2026-05-08 | 模型预标 → 人工修正 → 5 % 抽检 |
-| R2 baseline 第一次训练 | 2026-05-11 | 任一备选检测器 + 当前已标数据 |
-| Replay + 失败桶分析 | 2026-05-13 | 自动产出 §9.2 指标全套 |
-| **5/15 主线交付** | 2026-05-15 | 训练版 R2 + 部署评测 + 困难切片报告 |
+| 标定档 V1 | TBD | 内 / 外参 + 时序对齐验证（reprojection RMS < 2 px；月度刷新规则见 §2.4）|
+| 数据冻结 | TBD | `runs/_r2_val_manifest.txt` + `runs/_r2_audit_coverage.json` + `runs/_hard_negative_eval_manifest.json` 三件套 sha256 冻结 |
+| Replay + 失败桶分析 | TBD（数据冻结后启动）| §9.2 指标全套 + §7 多模态信号 |
 
-5/15 之后所有"启动条件依赖 replay"的实验（NWD、P2 head、SPD-Conv、Bulb-first、抖动滤波、SAHI 全开等）才进入排期。
+"启动条件依赖 replay" 的实验（NWD、P2 head、SPD-Conv、Bulb-first、抖动滤波、SAHI 全开等）按 replay 暴露的失败模式触发，不绑定日期。
 
 ---
 
-## 11. 发布预备（5/15 后启动）
+## 11. 发布预备（R2 close 后启动）
 
 ### 11.1 可发布资产候选
 
@@ -560,7 +559,7 @@ Tier 1 点数 < 3 时启用：
 | LiDAR 远距打不到灯 | 物理限制 | 用龙门立柱代理（§7.1 已设计） |
 | Cam-T 标注成本失控 | 默认全标 | §8.4 限制为远距 + 重叠 QA 子集标注 |
 | 站点偏移（少数站点过采） | 单一驾驶员习惯路线 | 按 §3.1 配额硬性约束 + 周度站点覆盖看板 |
-| 法务发布卡点 | 5/15 后才启动评估 | 采集阶段就按可发布标准记录；不影响主线 |
+| 法务发布卡点 | R2 close 后才启动评估 | 采集阶段就按可发布标准记录；不影响主线 |
 | Bulb-bbox 子集太小不足 R3 用 | §6.2 仅抽样标 | 抽样比例 ≥ 5 %；远距 / 遮挡样本提升至 ≥ 20 % |
 | LiDAR 元数据泄漏 | 直接发 raw bag | 发布通道**禁止**直接发 raw；只发派生数据（§11.1） |
 
@@ -583,7 +582,7 @@ Tier 1 点数 < 3 时启用：
 1. ~~双相机型号最终选定~~ — **2026-05-12 完成**（plan §八 锁定 Cam-W = SG3S + Cam-T = SG8S）。LiDAR 型号仍待定（影响内 / 外参标定模板）。
 2. 站点清单（§3.1）需地面团队补充实地可达站点。
 3. 标注外包还是自建（影响 §8.2 流程时长）。
-4. 数据集发布范围与许可证（§11.2）— **5/15 主线交付前不需要决定**，但建议 5/30 前定。
+4. 数据集发布范围与许可证（§11.2）— **R2 close 前不需要决定**；触发条件：R2 phase report 完成后启动评估。
 5. Cam-T 是否进入主训练流（默认是，单一共享模型按 plan §八 拓扑混合 Cam-W + Cam-T 帧；fallback to per-camera adapter 仅在 R3 contingency 触发，见 plan §八 行动项 e2）。
 
 ---

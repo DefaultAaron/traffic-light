@@ -19,11 +19,13 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 
 | File | Contents |
 |---|---|
-| [`development_plan.md`](planning/development_plan.md) | Master plan: candidate models, datasets, phases, milestones, risks |
-| [`timeline.md`](planning/timeline.md) | Week-by-week schedule through the 2026-05-15 deadline |
-| [`temporal_optimization_plan.md`](planning/temporal_optimization_plan.md) | **R2/R3 optional optimization track**, parallel to main detector selection. Recommended: TSM (detector-level, zero-overhead). Alternatives: post-detector smoothers (HMM → AdaEMA → GRU → Transformer). Plan A (tracker + EMA) already landed; further work activation depends on baseline + replay surfacing specific failure modes |
+| [`development_plan.md`](planning/development_plan.md) | Master plan: candidate models, datasets, **two-stage delivery — Stage 1 (R2 close = performance + stability, no latency gate) → Stage 2 (Orin FP16 p95 < 33 ms with bounded quality regression)**. Evidence-bounded round close. 2026-05-15 deadline retired. |
+| [`additional_components_plan.md`](planning/additional_components_plan.md) | Per-component WHAT spec: §三 copy-paste, §四 hard-negative, §六 SAHI (per-camera adaptive), §七 KD v2 cell matrix, §八 multi-camera fusion (heterogeneous Cam-W + Cam-T, dual baseline) |
+| [`temporal_optimization_plan.md`](planning/temporal_optimization_plan.md) | **Optimization track**, parallel to main detector selection. Recommended: TSM (detector-level, zero-overhead). Alternatives: post-detector smoothers (HMM → AdaEMA → GRU → Transformer). Plan A (tracker + EMA) already landed; further work activation depends on baseline + replay surfacing specific failure modes |
 | [`cross_detection_reasoning_plan.md`](planning/cross_detection_reasoning_plan.md) | **R3 candidate, deferred** — same-frame multi-light co-occurrence reasoning (Bayesian post-processing → CRF → Relation Network). Premise validation must run on R2 self-collected data (R1 data is foreign-domain and gets discarded). Activation gated behind temporal track + persistent edge-class confusion + a 3-gate empirical check on R2 data |
-| `任务计划-吴正日.xlsx` | Personal tracking sheet |
+| [`pre_deploy_AGV_integration.md`](planning/pre_deploy_AGV_integration.md) | R4+ carry-forward parking stub: runtime camera switching, deploy-tuning triggers (post Cam-W feasibility / always-on fusion outcomes). Activation by evidence, not date. |
+| [`kd_a6_design_spike.md`](planning/kd_a6_design_spike.md) | A6 cross-arch DEIM-M → YOLO26-s design spike output; path γ selected (FDR Integral collapse → L1+GIoU bbox KD + cls KL + PKD projection) |
+| _Retired_ | `timeline.md` + `任务计划-吴正日.xlsx` (2026-05-12 deadline pivot) + `pre_r2_kickoff_checklist.md` (R2 in-flight) — all moved to [`_archive/`](_archive/) |
 
 ## data/
 
