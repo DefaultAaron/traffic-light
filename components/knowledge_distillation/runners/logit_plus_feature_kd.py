@@ -6,7 +6,7 @@ Trigger (v1.2 §5.1, CI method per §6#1 — default bootstrap1000):
 Tie-break (≤ 0.1 pp gap on main metric): pick cheaper wall-clock —
   but BOTH candidates must already pass the §6#2 safety-class gate.
 
-Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A4 + §6#1 (P1, all families).
+Spec: docs/planning/additional_components_plan.md §七 row A4 + Gate #1 (P1, all families).
 Status: scaffold — lands when A4 is scheduled (gated on A2/A3 outcomes).
 """
 
@@ -22,7 +22,7 @@ def main() -> int:
     raise NotImplementedError(
         f"KD cell {_CELL} ({_SUMMARY}) is a scaffold stub. "
         "Implementation lands when scheduled — "
-        "see docs/planning/knowledge_distillation_pipeline.md §5.1."
+        "see docs/planning/additional_components_plan.md §七."
     )
 
 

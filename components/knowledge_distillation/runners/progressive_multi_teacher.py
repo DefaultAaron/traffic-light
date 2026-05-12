@@ -4,9 +4,10 @@ Sequence (v1.2 §3.2): teacher 1 = same-family M (stable features),
 teacher 2 = complementary-family M. Synchronous 4-teacher is explicitly
 excluded (cost × 4 + cross-venv overhead + Cao 2023 same-class constraint).
 
-Trigger: A4 passes all 5 §6 acceptance gates.
+Trigger: A4 passes all 6 §六 acceptance gates (Gate #6 deploy-stability trigger is
+non-blocking for KD ship-decision per plan §七 line 189; A4 still needs Gates #1-#5).
 
-Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A5 (P2, all families).
+Spec: docs/planning/additional_components_plan.md §七 row A5 (P2, all families).
 Status: scaffold — lands when A5 is scheduled (gated on A4 full pass).
 """
 
@@ -22,7 +23,7 @@ def main() -> int:
     raise NotImplementedError(
         f"KD cell {_CELL} ({_SUMMARY}) is a scaffold stub. "
         "Implementation lands when scheduled — "
-        "see docs/planning/knowledge_distillation_pipeline.md §5.1."
+        "see docs/planning/additional_components_plan.md §七."
     )
 
 

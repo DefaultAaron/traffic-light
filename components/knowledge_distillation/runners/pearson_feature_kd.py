@@ -4,7 +4,7 @@ Hint layers per v1.2 §5.3:
     YOLO student : neck P3/P4/P5 (stride 8/16/32) + head pre-logit
     DEIM student : encoder memory + decoder intermediate
 
-Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A3 (P0, all families).
+Spec: docs/planning/additional_components_plan.md §七 row A3 (P0, all families).
 Status: scaffold — lands when A3 is scheduled in R2 in-round.
 """
 
@@ -20,7 +20,7 @@ def main() -> int:
     raise NotImplementedError(
         f"KD cell {_CELL} ({_SUMMARY}) is a scaffold stub. "
         "Implementation lands when scheduled — "
-        "see docs/planning/knowledge_distillation_pipeline.md §5.1."
+        "see docs/planning/additional_components_plan.md §七."
     )
 
 

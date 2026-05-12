@@ -201,12 +201,12 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 | A3 | S 双路径 | 同家族 M | PKD feature-level | always | P0 |
 | A4 | S 双路径 | 同家族 M | A2 + A3 | max(A2/A3) lower-CI > A1 point；安全类 delta ≥ -0.5 pp | P1 |
 | A5 | S 双路径 | 同家族 M → 互补家族 M | 渐进 2 教师 | A4 通过全部 6 gate | P2 |
-| A6 | YOLO26-s | DEIM-D-FINE-M | 跨架构 logit + FDR↔DFL 分布对齐 + projection MLP | A4 通过全部 6 gate；**优先级提升**：DEIM 长尾教学信号 → YOLO 稳定推理路径 | P1 |
+| A6 | YOLO26-s | DEIM-D-FINE-M | 跨架构 cls-logit KL + DEIM FDR Integral 坍缩 → scalar bbox L1+GIoU KD + PKD FPN 投影 conv（path γ；A6 spike 选定）| A4 通过全部 6 gate；**优先级提升**：DEIM 长尾教学信号 → YOLO 稳定推理路径 | P1 |
 | A7 | DEIM-D-FINE-S | **DEIM-D-FINE-L**（in training） | TAKD / ESKD / projection MLP | DEIM-L 训练完成自动解锁；仅 DEIM 学生（YOLO26-l 不合格） | P1 |
 
 **Drawdown 顺序更新**：先丢 A5，再丢 A4（如非触发），保留 A6 / A7（独立高价值轨道）。P0 + A6 + A7 不可同时丢。
 
-**A6 优先级上调说明（2026-05-11）**：跨架构 DEIM-M → YOLO26s 是同时利用 "DEIM 长尾召回强 + YOLO 推理稳定" 两端的唯一路径。需要 1-day 投影层设计 spike（DETR query embed ↔ YOLO 多尺度特征）+ 1-week PoC 验证长尾 recall ≥ +5 pp。PoC fail → 降级 P2。
+**A6 优先级上调说明（2026-05-11；spike 完成 2026-05-12 措辞同步）**：跨架构 DEIM-M → YOLO26s 是同时利用 "DEIM 长尾召回强 + YOLO 推理稳定" 两端的唯一路径。1-day 投影层设计 spike 已完成（`docs/planning/kd_a6_design_spike.md`，`runs/rehearsal_kd_A6_design_spike.json`），选定 path γ：DEIM FDR Integral 坍缩 → scalar bbox L1+GIoU KD + cls-logit KL + PKD FPN 投影 conv（YOLO26 `reg_max=1` 无原生 DFL，直接 FDR↔DFL 分布对齐不可行）。1-week PoC 验证长尾 recall ≥ +5 pp。PoC fail → R3 候选诊断：pseudo-label bridge（DEIM teacher pred → confidence-filtered top-k → YOLO target assignment）作为替代路径，**不在 R2 范围**。
 
 ### Runner 映射
 

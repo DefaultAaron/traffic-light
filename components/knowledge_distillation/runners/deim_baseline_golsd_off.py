@@ -9,7 +9,7 @@ and zero its weight or skip its construction. Toggle helper will land at
 `components/knowledge_distillation/schedules/golsd_toggle.py` when A0 is
 scheduled.
 
-Spec: docs/planning/knowledge_distillation_pipeline.md §5.1 row A0 (P0, DEIM only).
+Spec: docs/planning/additional_components_plan.md §七 row A0 (P0, DEIM only).
 Status: scaffold — lands when A0 is scheduled in R2 in-round.
 """
 
@@ -25,7 +25,7 @@ def main() -> int:
     raise NotImplementedError(
         f"KD cell {_CELL} ({_SUMMARY}) is a scaffold stub. "
         "Implementation lands when scheduled — "
-        "see docs/planning/knowledge_distillation_pipeline.md §5.1."
+        "see docs/planning/additional_components_plan.md §七."
     )
 
 
