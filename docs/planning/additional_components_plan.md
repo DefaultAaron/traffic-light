@@ -254,7 +254,7 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 ### 行动项
 
-- [ ] a. [阻塞] 与自动驾驶团队锁定 per-baseline 相机外参 + time-sync 验证（drift < 5 ms target，与 SOP §2.3 一致）+ ROS2 topic 命名 + calibration reprojection error threshold。
+- [ ] a. [阻塞] 与自动驾驶团队锁定 per-baseline 相机外参 + time-sync 验证（SOP §2.3 硬件 target drift < 1 ms；fusion fault gate drift > 5 ms 持续，见决策表 `drop` 行）+ ROS2 topic 命名 + calibration reprojection error threshold。
 - [ ] b. 晚期融合：投影 + WBF；per-baseline calibration YAML 加载契约；fusion runtime fault → Cam-W-only fallback 路径。
 - [ ] c. A/B：(c1) Cam-W only vs 双相机融合（按 `baseline_id` stratify）；(c2) 同模型在 50 mm vs 250 mm fusion accuracy 差异；遮挡 / 远距 / 横向桶单独报告。
 - [ ] d. 写 `runs/_multi_camera_decision.json` + `runs/_camera_calib_{50mm,250mm}.yaml` + `runs/_multi_camera_runtime_faults.json`。
