@@ -127,26 +127,48 @@ DEFERRED → R3+。R2 in-round 不要求 a-stage。
 
 ## 六、SAHI 切片推理
 
+### 自适应配置（per-camera；与 §八 同步，2026-05-12 锁定）
+
+异构双相机 Cam-W + Cam-T 在 pixel-on-target 上差异 ~7×（§八 hardware 配置）；统一 4-tile slicing 在 Cam-T 上是无效成本。Per-camera 切片网格：
+
+| 相机 | 原生分辨率 | 100 m TL pixel-on-target（估算）| Slice 网格 | Overlap | 默认 |
+|---|---|---|---|---|---|
+| Cam-W | 1920×1536 | ~8 px | **c0 precheck 后冻结**（4×4 vs 3×3 vs 2×4 三选一）| 20 % | 4×4 候选；c0 决定 |
+| Cam-T | 3840×2160 | ~60 px | **1×1** 默认；2×2 仅 c3 触发 | 20 % | 1×1（c3 条件：frozen val ≥ 50 个 150 m+ 实例时启动 2×2 ablation）|
+
+**ROI mask 契约**（calibrated image coords，非 tile ID）：
+- **Cam-T-primary core**：Cam-W 校准图中 Cam-T 视场投影内的中心区域，Cam-W SAHI 不切。
+- **Fusion-overlap margin**：core 边界 ±20 % 缓冲带，Cam-W SAHI 切但 fusion 时优先信任 Cam-T。
+- **Cam-W-primary outer ring**：margin 之外，Cam-W SAHI 独占。
+- ROI mask 由 per-baseline calibration（§八）派生，存 `runs/_sahi_roi_mask_<baseline>mm.yaml`。
+- **Slice detection remap contract**：所有 slice 内检测必须 remap 至 native camera coords，再喂 §八 calibration / WBF / fusion 阶段。Batch 调度为实现细节，必须保留 `camera_id` + `baseline_id` tag。
+
 ### 行动项
 
-- [ ] a. `inference/cpp/include/sahi.hpp` 接口；4-tile slicing；与 `trt_pipeline.cpp` 兼容性 review。
-- [ ] b. Python 验证 + C++ 实现 + batch=4 engine。
-- [ ] c. A/B：无 SAHI / 路口内 SAHI / 全程 SAHI；测小目标 recall + Orin latency。
-- [ ] d. 写 `runs/_sahi_decision.json`。
+- [ ] **c0. Grid precheck（pre-implementation）**：Orin 合成张量 dry run，测 1× / 5× / 17× / 22× forward count FP16 latency；若 17× forward 推断 end-to-end > 80 ms 则放弃 Cam-W 4×4，回退 3×3 或 2×4。frozen val 子集（≥ 200 帧）对比 Cam-W 4×4 / 3×3 / 2×4 小目标 recall × latency，冻结一个网格。
+- [ ] a. `inference/cpp/include/sahi.hpp` 接口（per-camera grid 配置 + ROI mask）；与 `trt_pipeline.cpp` + §八 fusion 兼容性 review。
+- [ ] b. Python 验证 + C++ 实现 + per-camera batch engine（Cam-W ROI-gated batch + Cam-T native）；slice→native coord remap 单元测试。
+- [ ] c1. A/B：无 SAHI / Cam-W ROI-gated SAHI / Cam-W full-frame SAHI；post-fusion 小目标 recall 按 `baseline_id × camera_id × distance_bin`（near/mid/far per SOP §7.1）stratify 报告 + per-stage latency breakdown（detector forward / slicing overhead / remap / fusion / WBF）。aggregate post-fusion lower-CI 通过但任一 distance_bin lower-CI 退化 > 2 pp → 进 phase report 风险章节，不进 deploy outcome。
+- [ ] c2. A/B：Cam-W ROI-gated vs full-frame SAHI（boundary-bin reporting：ROI margin 内对象单独报告 recall 与重复率）。
+- [ ] c3. **(conditional)** Cam-T 2×2 vs 1×1：仅当 frozen val ≥ 50 个 150 m+ TL 实例时启动；否则 Cam-T 默认 1×1。
+- [ ] c4. **Alternatives check**：no-SAHI + §三 small-object copy-paste 单独对照行（不计入主决策，但 phase report 必报）；super-resolution 路径 explicitly deferred（不在本 round）。
+- [ ] d. 写 `runs/_sahi_decision.json`（含 per-camera grid + ROI mask path + per-stage latency breakdown）。
 - [ ] e. phase report 子节。
 
-### 决策规则
+### 决策规则（保留 4-case；评估指标 = post-fusion 小目标 recall，Cam-W-only recall 为诊断字段）
 
 | Case | condition | outcome | JSON / carry-forward |
 |---|---|---|---|
-| A | 小目标 recall ≥ +5 pp AND FP16 latency < 50 ms | deploy | `outcome="deploy"` |
-| B | 小目标 recall ≥ +2 pp AND FP16 latency ∈ [50, 80) ms | defer-to-R3-INT8-evaluation | 写 `runs/_sahi_decision.json`；登记 `item_id="sahi_int8_retest"`，`blocked_on=["sahi_b_c_measured"]` |
-| C | 小目标 recall ∈ [+2, +5) pp AND FP16 latency < 50 ms | defer-to-R3-recall-marginal | 登记 `item_id="sahi_recall_marginal_retest"`，`blocked_on=["r3_inference_budget_window"]` |
-| D | 小目标 recall < +2 pp OR FP16 latency ≥ 80 ms | drop | `outcome="drop"` |
+| A | post-fusion 小目标 recall lower-CI ≥ +5 pp AND end-to-end FP16 latency（含 §八 fusion overhead） < 50 ms | deploy | `outcome="deploy"` |
+| B | post-fusion 小目标 recall lower-CI ≥ +2 pp AND end-to-end FP16 latency ∈ [50, 80) ms | defer-to-R3-INT8-evaluation | 写 `runs/_sahi_decision.json`；登记 `item_id="sahi_int8_retest"`，`blocked_on=["sahi_b_c_measured"]` |
+| C | post-fusion 小目标 recall lower-CI ∈ [+2, +5) pp AND end-to-end FP16 latency < 50 ms | defer-to-R3-recall-marginal | 登记 `item_id="sahi_recall_marginal_retest"`，`blocked_on=["r3_inference_budget_window"]` |
+| D | post-fusion 小目标 recall lower-CI < +2 pp OR end-to-end FP16 latency ≥ 80 ms | drop | `outcome="drop"` |
 
-求值顺序：D → A → B → C；exactly-one outcome；0 或多匹配写 `decision_case="executor_error"`。
+求值顺序：D → A → B → C；exactly-one outcome；0 或多匹配写 `decision_case="executor_error"` 并 **block deployment**（不进 Gate #5 sidecar）。
 
-边界：`+5 pp, 49 ms → A`；`+5 pp, 50 ms → B`；`+5 pp, 80 ms → D`；`+2 pp, 49 ms → C`；`+2 pp, 50 ms → B`；`+1.999 pp, 30 ms → D`。
+边界（按 lower-CI / end-to-end latency 解读）：`+5 pp, 49 ms → A`；`+5 pp, 50.0 ms → B`；`+5 pp, 80.0 ms → D`；`+2 pp, 49 ms → C`；`+2 pp, 50.0 ms → B`；`+1.999 pp, 30 ms → D`。numeric comparison 使用 ≥ / < 严格匹配上表 condition；exactly-equal 边界值（50.0, 80.0, +2.000, +5.000）走表中显式标记的 case。
+
+**Latency breakdown 报告契约**：phase report 子节必须列 Cam-W only / Cam-W + Cam-W SAHI / Cam-W + Cam-T fusion / Cam-W SAHI + Cam-T fusion 四档的 detector forward / slicing / remap / fusion / WBF 分段时延，以便区分 SAHI cost vs fusion cost 的责任归属（fusion overhead 在所有 SAHI variants 中等成本，不应让 SAHI 因 fusion 被错误降级）。
 
 ## 七、知识蒸馏 KD
 
