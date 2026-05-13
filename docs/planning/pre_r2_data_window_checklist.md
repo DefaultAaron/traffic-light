@@ -119,11 +119,7 @@
 | B-t1 | `preR2-B-TSM` | TSM concept_validation tripwire smoke：synthetic fixture，c2 zeroing + activation tripwire schema v1.1；artifact 必带 `non_decision_diagnostic: true` + `r2_full_train_readiness: false` + `forbidden_inference` 字段 | `runs/tsm_tripwire_<date>.json` + ablation §七 回填 | — |
 | B-r1 | `preR2-B-R2` | `scripts/_r2_decide_precision.py` + `_r2_verify.py` **CPU b-stage 单元测试**（synthetic fixture only）；**final precision executor 仍 blocked on R2 eval / timing / audit / build-variance** | b-stage tests pass | `scripts/_r2_decision_schema.json` |
 
-**Deferred / 不在本窗口**：
-- `export_yolo.sh` + `export_deim.sh` sidecar offline validation — R2 选型轮一起；收益低。
-- SAHI c0 grid precheck — scaffold 不存在，trigger 未现。
-- KD A6 / A7 / A4 progressive runner 实装 — plan §七 trigger 未到。
-- R1 pseudo-video TSM diagnostic — scope creep。
+**Deferred / 不在本窗口**：`export_*.sh` sidecar offline validation（R2 选型轮一起）；SAHI c0 precheck（scaffold 不存在 + trigger 未现）；KD A6/A7/A4-progressive runner 实装（plan §七 trigger 未到）；R1 pseudo-video TSM diagnostic（scope creep）。
 
 ---
 
@@ -156,6 +152,26 @@
 ## CLI 启动命令（仅已实装 runner）
 
 > 出处验证：rehearsal 一次性命令记录在 `runs/rehearsal_kd_{A1,A2a,A2b,A6}.json:train_command`；本节将 epochs 提到 100 + 改 `--output` / `--output-dir` 路径用于 preR2 full-train 输出。Stub runner 不在此列表，必须先完成 Track B 实装。
+
+### §产物路径（artifact paths）
+
+每个 cell 的 runner 同时落两类产物：(a) 训练框架的 run 目录（Ultralytics `runs/detect/<name>/` 或 DEIM `<output-dir>/`，含 `args.yaml` + `SEED.txt` + `results.csv` + `weights/`），(b) JSON aggregator（KD runner 写的 schema 化结果，`--output` 指定）。
+
+| Cell | 训练框架 run 目录 | JSON aggregator |
+|---|---|---|
+| A1 `preR2-K-A2a` | `runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed{0,1,2}/` ⚠️ **runner-hardcoded** at `yolo_logit_kd.py:243`，即使 `--epochs 100` 也走此命名 | `runs/preR2_K_A2a_R1.json`（`--output`） |
+| A2 `preR2-D0` (yolo path) | `runs/detect/yolo26{n,s,m,l}/`（Ultralytics 默认；与 R1 baseline 命名冲突时自动加后缀 `2`/`3`/...）| `runs/preR2_D0_yolo_<size>_R1.json` |
+| A2 `preR2-D0` (deim path) | `runs/rehearsal_kd_A1_deim_{s,m,l}_seed{N}/` ⚠️ **runner-hardcoded** at `scratch_baseline.py:80` | `runs/preR2_D0_deim_<size>_R1.json` |
+| A3 `preR2-K-A2b` | `runs/preR2_K_A2b_R1_seed{0,1,2}/`（DEIM `--output-dir`，DEIM-CWD-relative `../runs/...`）| n/a — DEIM 把 eval JSON 写在 run 目录内（`eval/best_coco_summary.{json,txt}` + checkpoints `best_stg1.pth` / `best_stg2.pth` / `last.pth`） |
+| A4-Y / A4-D `preR2-CP-*` | TBD（B-c1 实装定）；预期 `runs/preR2_CP_{yolo,deim}_R1_<β>_seed{N}/` | `runs/preR2_CP_{yolo,deim}_R1.json` |
+| A5-Y / A5-D `preR2-HN-*` | TBD（B-h1 实装定）；预期 `runs/preR2_HN_{yolo,deim}_R1_<arm>_seed{N}/` | `runs/preR2_HN_{yolo,deim}_R1.json` |
+| B-h2 FP-harvest | n/a（数据准备） | `runs/preR2_HN_fp_manifest.json` |
+| B-t1 TSM tripwire | n/a（CPU smoke） | `runs/tsm_tripwire_<YYYYMMDD>.json` |
+
+**重命名陷阱**：A1 / A2-deim runner 把 cell 名硬编码进 run 目录名，含 "rehearsal" 字样即使是 100-epoch 全训。`runs/detect/yolo26s-r1-a2a/` 是手动 rename 的结果。
+- 不要在 100-epoch 训练完成前 rename — Ultralytics 检查 dir 存在性来决定是否 resume / 加后缀。
+- B-k1 backfill validator 必须接受**两条**路径：runner-hardcoded (`runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed{N}/`) 和手动 rename (`runs/detect/<custom_name>/`)。
+- B-k1 实装时同步去硬编码（让 runner 接受 `--name` flag 映射到 Ultralytics `train_kwargs["name"]`），新增 cell 后 run 目录与 cell 名一致。
 
 ### A0 — 5-epoch wall-time 探测（先于主队列）
 
@@ -281,6 +297,7 @@ uv run python components/hard_negative_mining/runners/ablation.py \
 
 | 日期 | 动作 |
 |---|---|
+| 2026-05-13 | 加 §产物路径 表 + 重命名陷阱说明：A1 + A2-deim runner 把 cell 名硬编码进 Ultralytics / DEIM run 目录名（即使 100-epoch 全训也写 "rehearsal_kd_..." 前缀）；`runs/detect/yolo26s-r1-a2a` 经验证为手动 rename 结果。B-k1 backfill validator 需兼容硬编码与 rename 两条路径 + B-k1 实装时同步去硬编码。Trim：Deferred 块合一行。 |
 | 2026-05-13 | A4 / A5 改为 dual-track（YOLO 先 DEIM 后）；§CLI 加 `--family yolo/deim` 占位；A4-Y 负迁移 → 跳过 A4-D 节省 ~111 GPU-h；A5-Y 同理省 ~74 h。Note: A2b YOLO 等价 cell 不存在（YOLO26 reg_max=1 → 无 native DFL，LD-on-FDR 架构不可移植），同族 KD 仅限 A2a；跨架构 DEIM→YOLO 为 A6 stub。 |
 | 2026-05-13 | A1 (`preR2-K-A2a`) full-train run reported complete；标 `held:TBD-gated` (raw_metrics_path 待 sync, gate_blocker=B-k1, backfill_deadline=2026-05-20) — 不标 done 以满足 §exit-gate "每条 done 项必须有 §一 evidence row" 的约束。`runs/detect/yolo26s-r1-a2a` 经验证为 May-11 1-epoch rehearsal smoke（args.yaml: epochs=1），**非** 100-epoch full-train。同时 A7 同族 cell 移至 R2-only：DEIM-L 在 R1 上 vs DEIM-M = −0.2 pp / vs DEIM-S = +0.9 pp + epoch-72 早停 saturated → teacher 不足，节省 ~102 GPU-h |
 | 2026-05-13 | 追加 §CLI 启动命令（A0/A1/A2/A3 实装命令 + A4/A5/Track-B 占位 spec 与状态判定） |
