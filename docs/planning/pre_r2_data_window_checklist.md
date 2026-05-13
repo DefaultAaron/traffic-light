@@ -148,8 +148,115 @@
 
 ---
 
+## CLI 启动命令（仅已实装 runner）
+
+> 出处验证：rehearsal 一次性命令记录在 `runs/rehearsal_kd_{A1,A2a,A2b,A6}.json:train_command`；本节将 epochs 提到 100 + 改 `--output` / `--output-dir` 路径用于 preR2 full-train 输出。Stub runner 不在此列表，必须先完成 Track B 实装。
+
+### A0 — 5-epoch wall-time 探测（先于主队列）
+
+```bash
+# YOLO 路径（A1 + A2-yolo / 共用 yolo_logit_kd 路径，验证 KD callback 不漏触发）
+uv run python components/knowledge_distillation/runners/yolo_logit_kd.py \
+    --teacher-ckpt runs/detect/yolo26m-r1/weights/best.pt \
+    --output runs/preR2_A0_yolo_5ep_probe.json \
+    --epochs 5 --seed 0 --execute
+
+# DEIM 路径（A2-deim + A3 共用 deim_kd_launch；同时验证 KD λ/T 启动 + resume 路径不丢 KD state）
+cd DEIM && \
+PYTHONPATH=.. torchrun --master_port=7778 --nproc_per_node=1 \
+    ../components/knowledge_distillation/integration/deim_kd_launch.py \
+    --teacher-cfg configs/deim_dfine/deim_hgnetv2_m_traffic_light.yml \
+    --teacher-ckpt ../runs/detect/deim_dfine_m-r1/best_stg2.pth \
+    --kd-lambda 1.0 --ld-lambda 1.0 --kd-temperature 2.0 --kd-reg-max 32 \
+    -c configs/deim_dfine/deim_hgnetv2_s_traffic_light.yml \
+    --use-amp -u epoches=5 --output-dir ../runs/preR2_A0_deim_5ep_probe \
+    --seed=0
+```
+
+退出条件：检查 epochs 2–5 walltime 中位 + 稳定带（±15%），按 §A0 规则放行或 codex-rescue。
+
+### A1 — `preR2-K-A2a` YOLO26-s ← YOLO26-m, cls-logit KL（100 epoch）
+
+```bash
+uv run python components/knowledge_distillation/runners/yolo_logit_kd.py \
+    --teacher-ckpt runs/detect/yolo26m-r1/weights/best.pt \
+    --output runs/preR2_K_A2a_R1.json \
+    --epochs 100 --seed 0 --execute
+```
+
+种子 ≥ 3 跑法：循环 `--seed 0`, `--seed 1`, `--seed 2`，输出到同一 `--output` 文件（runner `_save_entry` 按 seed key 合并；再用同 file 输入到 B-k1 gate）。
+
+### A2 — `preR2-D0` DEIM-S no-KD scratch baseline（条件触发，100 epoch）
+
+A1 完成后先 diff cfg：
+
+```bash
+# 触发判定（与 R1 DEIM-S full-train 现存 args 对比）
+diff <(uv run python components/knowledge_distillation/runners/scratch_baseline.py \
+        --family deim --size s --epochs 100 --seed 0 \
+        --output runs/preR2_D0_deim_s_R1.json --dry-run \
+        | grep -E "^\s+--" | sort) \
+     <(grep -E "^(epochs|imgsz|batch|seed|optimizer|lr0):" runs/detect/deim_dfine_s-r1/args.yaml | sort)
+
+# 一致 → 跳过 A2，复用 R1 DEIM-S baseline (mAP50=0.848)
+# 任一字段不一致 OR A3 mAP50_CI ∩ [0.828, 0.868] ≠ ∅ → 触发 A2 全跑：
+uv run python components/knowledge_distillation/runners/scratch_baseline.py \
+    --family deim --size s --epochs 100 --seed 0 \
+    --output runs/preR2_D0_deim_s_R1.json --execute
+```
+
+### A3 — `preR2-K-A2b` DEIM-S ← DEIM-M, LD on FDR + cls KL（100 epoch）
+
+```bash
+cd DEIM && \
+PYTHONPATH=.. torchrun --master_port=7778 --nproc_per_node=1 \
+    ../components/knowledge_distillation/integration/deim_kd_launch.py \
+    --teacher-cfg configs/deim_dfine/deim_hgnetv2_m_traffic_light.yml \
+    --teacher-ckpt ../runs/detect/deim_dfine_m-r1/best_stg2.pth \
+    --kd-lambda 1.0 --ld-lambda 1.0 --kd-temperature 2.0 --kd-reg-max 32 \
+    -c configs/deim_dfine/deim_hgnetv2_s_traffic_light.yml \
+    --use-amp -u epoches=100 --output-dir ../runs/preR2_K_A2b_R1 \
+    --seed=0
+```
+
+DEIM 路径 seed ≥ 3：`--seed=0`/`1`/`2` 各跑一次，`--output-dir` 后缀 `_seedN`；B-k1 gate 聚合三 seed。
+
+### A4 / A5 — `preR2-CP` / `preR2-HN`
+
+⚠️ Runner 当前 a-stage stub（`raise NotImplementedError("b-stage")`）。CLI 不可用，等 Track B `preR2-B-CP` / `preR2-B-HN1` b-stage 落地。落地后预期 CLI 形状：
+
+```bash
+# A4 — 落地后（占位 spec，B-c1 决定最终 flag 名）
+uv run python components/copy_paste_balance/runners/ablation.py \
+    --beta low,mid,high --seed-set 0,1,2 \
+    --output-root runs/preR2_CP_R1 --execute
+
+# A5 — 落地后（占位 spec，B-h1 决定最终 flag 名；先跑 B-h2 FP-harvest）
+uv run python components/hard_negative_mining/data/eval_manifest.py \
+    --source-model runs/yolo26s-r1/weights/best.pt \
+    --demos demo/**/*.mp4 --output runs/preR2_HN_fp_manifest.json --execute
+
+uv run python components/hard_negative_mining/runners/ablation.py \
+    --fp-manifest runs/preR2_HN_fp_manifest.json \
+    --arms no_hn,with_hn --seed-set 0,1,2 \
+    --output-root runs/preR2_HN_R1 --execute
+```
+
+### Track B — 实装工作（无 CLI）
+
+| preR2 ID | 当前状态 | 完成判定 |
+|---|---|---|
+| B-c1 / B-h1 | runner stub `NotImplementedError("b-stage")` | `uv run python -m pytest components/{copy_paste_balance,hard_negative_mining}/` 通过 + B2+C3 AGREED |
+| B-h2 | scaffold `eval_manifest.py` 仅含 schema，无 harvest 实装 | manifest JSON 落盘 + 与 B-h1 schema 一致 |
+| B-k1 | `gates/` 空目录 | gate 套件 + `_kd_decision_schema.json` + 一次性 backfill validator + B2+C3 AGREED |
+| B-t1 | 全部 runner / gate 均 stub | `concept_validation.py` runner body + tripwire smoke fixture pass |
+| B-r1 | scripts 中 `_r2_decide_precision.py` 与 `_r2_verify.py` 主 runner 落盘但无 CPU 单元测 | `uv run python -m pytest scripts/test_*.py` 三测全过（拆 case A/B/C/D 各一） |
+
+---
+
 ## 变更记录
 
 | 日期 | 动作 |
 |---|---|
+| 2026-05-13 | 追加 §CLI 启动命令（A0/A1/A2/A3 实装命令 + A4/A5/Track-B 占位 spec 与状态判定） |
 | 2026-05-13 | 文件创建：answering "GPU 窗口怎么用" + TSM full-train R1-blocked + 经 codex-plan-conflictor 三轮重构：pass-1 REJECT（移 A6/A7/copy-paste/hard-neg stub）→ pass-2 APPROVE-WITH-AMENDMENTS（聚类 bootstrap + 稀有类 insufficient_support + B-k1 schema 落地前 `held:TBD-gated` + A2 触发规则 + Idle-GPU 12 h + handoff 沿用 `_r2_carry_forward_schema.json`）→ pass-3 5×ACCEPT-WITH-AMENDMENT（safety-class 改单向逻辑：清晰改进 blocks tag / 清晰退化 trigger `negative-on-r1-safety-regression` 更强 tag；A5 OR semantics 拆成三行 + `unblock_logic:"any"`；§R2 ingest anchor 改指现存 §R2 采集/标注/训练；ETA owner-stamped 默认 deferred；pre-B-k1 tripwire 三字段强制 + B-k1 内一次性 backfill validator） |
