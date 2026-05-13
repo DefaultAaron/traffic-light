@@ -21,7 +21,15 @@
 
 **对比基线**：R1 closed YOLO26s-r1 (无 KD) mAP50=0.849 / mAP50-95=0.608 — 历史 A2a 反而 −2.2 pp vs no-KD，说明早期 KD 实现要么超参未调，要么真的是负迁移。**re-run target**：在 7-iter-scaffold 实现 + tuned λ/T 下重测，目标 ≥ no-KD baseline。
 
-**Full-train re-run (2026-05-13+)** — TBD（trial-1 命中表后回填）。
+**Full-train re-run (2026-05-13)** — 🟡 run reported complete by user 2026-05-13; **numbers pending sync from training rig**。
+- `preR2_tag_status`: `held:TBD-gated`
+- `raw_metrics_path`: `runs/preR2_K_A2a_R1.json`（尚未 sync 到本地仓库；user 提供数值或完成 rsync 后由本表回填）
+- `gate_blocker`: `B-k1`（KD gates b-stage 未落地，无机械 `preR2_tag` 判定）
+- `backfill_deadline`: `2026-05-20`
+- `evidence_scope`: `r1_retired_exclusion_only` / `r2_selection_eligible`: `false` / `rehearsal_on_r1`: `true`
+- 数值 schema：复用本文件历史参考行表头（class / 图片数 / 实例数 / P / R / mAP@50 / mAP@50:95）；B-k1 落地后由 backfill validator 校验。
+
+对比目标（回填后判断）：YOLO26s-r1 (无 KD) mAP50=0.849 / mAP50-95=0.608 — `≥ 0.849` 即 KD 在 R1 上为正迁移；`< 0.839` (= 0.849 − 1.0 pp) 走 §排除规则 (safety-class 双向 + bootstrap CI / seed ≥ 3 前置)。
 
 ## §二 KD A2b — DEIM-S ← DEIM-M LD on FDR + cls-logit KL (R1)
 
@@ -52,4 +60,5 @@ TBD — runner `components/temporal_shift_module/runners/concept_validation.py` 
 | 日期 | 动作 | 提交 |
 |---|---|---|
 | 2026-05-12 | 早期 KD A2a stub 归档至 `docs/_archive/` | 7bbf752 |
-| 2026-05-13 | 从 archive 还原，重整为 R1 full-train ablation 实时日志 | (本提交) |
+| 2026-05-13 | 从 archive 还原，重整为 R1 full-train ablation 实时日志 | 6425860 |
+| 2026-05-13 | §一 A1 (`preR2-K-A2a`) 标 `held:TBD-gated`（用户报告 run 完成；result JSON 尚未 sync 到本地）；记录三 schema 字段 + backfill_deadline=2026-05-20 | (本提交) |
