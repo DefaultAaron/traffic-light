@@ -21,15 +21,21 @@
 
 **对比基线**：R1 closed YOLO26s-r1 (无 KD) mAP50=0.849 / mAP50-95=0.608 — 历史 A2a 反而 −2.2 pp vs no-KD，说明早期 KD 实现要么超参未调，要么真的是负迁移。**re-run target**：在 7-iter-scaffold 实现 + tuned λ/T 下重测，目标 ≥ no-KD baseline。
 
-**Full-train re-run (2026-05-13)** — 🟡 run reported complete by user 2026-05-13; **numbers pending sync from training rig**。
-- `preR2_tag_status`: `held:TBD-gated`
-- `raw_metrics_path`: `runs/preR2_K_A2a_R1.json`（尚未 sync 到本地仓库；user 提供数值或完成 rsync 后由本表回填）
+**Full-train re-run (2026-05-13)** — seed-0 **done**（100 epoch full-train, 与 sync 状态无关）：
+
+- `framework_run_dir`: `runs/detect/yolo26s-r1-A2a/`（capital A，手动 rename 自 runner-hardcoded `runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed02/`）；`args.yaml: epochs=100, seed=0`；`SEED.txt = 0`；walltime ≈ 13.1 h
+- `raw_metrics_path`: `runs/rehearsal_kd_A2a_R1.json`（runner 强制 `rehearsal_` prefix via `--rehearsal-on-r1` at `yolo_logit_kd.py:330` — 旧 doc 里的 `runs/preR2_K_A2a_R1.json` 是 spec error 已 retract）；aggregator 字段：`kd_call_count: 277400`（KD 全程触发）/ `wall_clock_seconds: 47293` / `exit_code: 0` / `kd_lambda: 1.0` / `kd_temperature: 2.0` / `teacher_ckpt: runs/detect/yolo26m-r1/weights/best.pt`. Aggregator **不含 mAP** → metric 由 `framework_run_dir/results.csv` 抽（B-k1 validator cross-load 两源）.
+- seed-0 metric（results.csv，n=1 单点）：
+  - **best mAP50 = 0.82765 @ ep 98** / **best mAP50-95 = 0.59519 @ ep 99**
+  - final ep 100: mAP50 = 0.82722 / mAP50-95 = 0.59446 / P = 0.93064 / R = 0.70866
+  - vs YOLO26s-r1 no-KD baseline (0.849 / 0.608) → **Δ = −2.13 pp / −1.28 pp**
+- `preR2_tag_status`: `held:TBD-gated` — **仅卡统计**，与 run 完成度无关：§排除规则 #1 要求 n≥3 OR bootstrap CI，seed-0 单点不满足 → 不可机械应用 `negative-on-r1`
 - `gate_blocker`: `B-k1`（KD gates b-stage 未落地，无机械 `preR2_tag` 判定）
 - `backfill_deadline`: `2026-05-20`
 - `evidence_scope`: `r1_retired_exclusion_only` / `r2_selection_eligible`: `false` / `rehearsal_on_r1`: `true`
-- 数值 schema：复用本文件历史参考行表头（class / 图片数 / 实例数 / P / R / mAP@50 / mAP@50:95）；B-k1 落地后由 backfill validator 校验。
+- per-class（历史参考行表头）回填：需 `yolo val` 复跑 `runs/detect/yolo26s-r1-A2a/weights/best.pt`（results.csv 仅 aggregate）；与 seed 1/2 reruns 同期处理.
 
-对比目标（回填后判断）：YOLO26s-r1 (无 KD) mAP50=0.849 / mAP50-95=0.608 — `≥ 0.849` 即 KD 在 R1 上为正迁移；`< 0.839` (= 0.849 − 1.0 pp) 走 §排除规则 (safety-class 双向 + bootstrap CI / seed ≥ 3 前置)。
+对比目标判定：seed-0 mAP50 = 0.82765 落在 §排除规则触发带（< 0.839 = 0.849 − 1.0 pp），但**单点不可触发 tag**. Backfill 二选一：(a) 跑 seed 1+2 (~26 h) → 三 seed point set 按 mAP50_CI_high 判，或 (b) B-k1 + 单 seed bootstrap CI 1000× 走 "一次跑+CI" 分支；二者均走 §排除规则 safety-class 双向规则（清晰改进 blocks tag / 清晰退化 trigger `negative-on-r1-safety-regression`）.
 
 ## §二 KD A2b — DEIM-S ← DEIM-M LD on FDR + cls-logit KL (R1)
 
@@ -61,4 +67,4 @@ TBD — runner `components/temporal_shift_module/runners/concept_validation.py` 
 |---|---|---|
 | 2026-05-12 | 早期 KD A2a stub 归档至 `docs/_archive/` | 7bbf752 |
 | 2026-05-13 | 从 archive 还原，重整为 R1 full-train ablation 实时日志 | 6425860 |
-| 2026-05-13 | §一 A1 (`preR2-K-A2a`) 标 `held:TBD-gated`（用户报告 run 完成；result JSON 尚未 sync 到本地）；记录三 schema 字段 + backfill_deadline=2026-05-20 | (本提交) |
+| 2026-05-13 | §一 A1 (`preR2-K-A2a`) seed-0 100-epoch full-train done：best mAP50=0.82765 @ ep 98 / best mAP50-95=0.59519 @ ep 99 / walltime ≈ 13.1 h / Δ=−2.13/−1.28 pp vs YOLO26s-r1 baseline (n=1)；`framework_run_dir = runs/detect/yolo26s-r1-A2a/`（capital A 手动 rename）；`raw_metrics_path = runs/rehearsal_kd_A2a_R1.json`（runner 强制 `rehearsal_` prefix — 旧 `preR2_K_A2a_R1.json` 是 doc spec error 已 retract）；`preR2_tag_status: held:TBD-gated` 仅卡 §排除规则 #1 stat preconds（n=1，无 CI），与 run 完成度无关 | (本提交) |

@@ -48,7 +48,7 @@
 
 | # | preR2 ID | KD matrix | 配置 | Runner | planning band（A0 之后更新） |
 |---|---|---|---|---|---|
-| A1 | `preR2-K-A2a` | A2a | YOLO26-s scratch ← YOLO26-m, cls KL only | `components/knowledge_distillation/runners/yolo_logit_kd.py` | 🟡 `held:TBD-gated`：`runs/detect/yolo26s-r1-a2a/args.yaml` 显示 `epochs: 1`（May-11 rehearsal smoke，非 100-epoch full-train；mAP50=0.569 @ epoch 1）→ 100-epoch run 尚未跑或未 sync。Required fields: `raw_metrics_path: runs/preR2_K_A2a_R1.json` (pending), `gate_blocker: B-k1`, `backfill_deadline: 2026-05-20` |
+| A1 | `preR2-K-A2a` | A2a | YOLO26-s scratch ← YOLO26-m, cls KL only | `components/knowledge_distillation/runners/yolo_logit_kd.py` | **seed-0 done** (100 ep, walltime ≈ 13.1 h)；`framework_run_dir = runs/detect/yolo26s-r1-A2a/` (capital A，manual rename from runner-hardcoded `rehearsal_kd_A2a_yolo26s_R1_seed02`)；`raw_metrics_path = runs/rehearsal_kd_A2a_R1.json` (runner 强制 `rehearsal_` prefix via `--rehearsal-on-r1`，aggregator 含 `kd_call_count: 277400` 确认 KD 全程触发；mAP 从 `framework_run_dir/results.csv` 抽). Seed-0 metric：best mAP50 = **0.82765 @ ep 98** / best mAP50-95 = **0.59519 @ ep 99**；vs YOLO26s-r1 baseline (0.849 / 0.608) Δ = **−2.13 pp / −1.28 pp**. `preR2_tag_status: held:TBD-gated`（**仅卡统计**：§排除规则 #1 要求 n≥3 OR bootstrap CI，seed-0 单点不满足；与 run 完成度无关）. `gate_blocker: B-k1` / `backfill_deadline: 2026-05-20`. Backfill 二选一：(a) 跑 seed 1+2 (~26 h) → n≥3，或 (b) B-k1 落地后单 seed + bootstrap CI 1000× 走 §排除规则 #1 "一次跑+CI" 分支 |
 | A2 | `preR2-D0` | (DEIM no-KD baseline) | DEIM-S scratch, A2b runner-cfg, KD off | `components/knowledge_distillation/runners/scratch_baseline.py` | 35–42 h |
 | A3 | `preR2-K-A2b` | A2b | DEIM-S ← DEIM-M, LD on FDR + cls KL | `components/knowledge_distillation/runners/deim_logit_localization_kd.py` | 36–48 h |
 
@@ -161,12 +161,12 @@
 
 **字段语义（B-k1 validator 契约）**：
 - `framework_run_dir`：训练框架 run 目录，**必填**于全训完成的 row（含 `args.yaml` + `SEED.txt` + 权重 / DEIM ckpt + `results.csv` 或 DEIM `eval/`）。
-- `raw_metrics_path`：metric JSON 来源，**必填**于全训完成的 row。YOLO KD runner 走 `--output` 聚合 JSON；DEIM 直接走 run 目录内 `eval/best_coco_summary.json`（无独立 aggregator）。
-- B-k1 validator 同时检查两个字段：缺一即 row schema-invalid。
+- `raw_metrics_path`：runner-written JSON aggregator，**必填**于全训完成的 row。**YOLO KD runner with `--rehearsal-on-r1`**：filename enforced by runner (`yolo_logit_kd.py:330` 要求 `rehearsal_` 前缀)，default `runs/rehearsal_kd_A2a_R1.json`；aggregator 当前只含 runtime/walltime/`kd_call_count`/seed metadata — **mAP 值由 `framework_run_dir/results.csv` 提供，B-k1 validator 须 cross-load 两源**。**DEIM A3**：直接走 run 目录内 `eval/best_coco_summary.json`（无独立 aggregator，metric self-contained）。
+- B-k1 validator 同时检查两个字段：缺一即 row schema-invalid。YOLO 路径额外校验 `raw_metrics_path` 的 schema_version + cell + family 一致性，metric 抽取从 `framework_run_dir/results.csv`。
 
 | Cell | `framework_run_dir` | `raw_metrics_path` |
 |---|---|---|
-| A1 `preR2-K-A2a` | `runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed{0,1,2}/` ⚠️ **runner-hardcoded** at `yolo_logit_kd.py:243`，即使 `--epochs 100` 也走此命名 | `runs/preR2_K_A2a_R1.json`（`--output` 多 seed 合并） |
+| A1 `preR2-K-A2a` | `runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed{0,1,2}/` ⚠️ **runner-hardcoded** at `yolo_logit_kd.py:243`，即使 `--epochs 100` 也走此命名。实际 seed=0 run 已手动 rename 至 `runs/detect/yolo26s-r1-A2a/` (capital A) | `runs/rehearsal_kd_A2a_R1.json` ✓ synced — **filename enforced by runner**：`--rehearsal-on-r1` 要求 `rehearsal_` 前缀，`runs/preR2_K_A2a_R1.json` 永远不会被写入（先前 §CLI 例子里的 `--output` 与 runner 强制 prefix 冲突）。当前 seed=0 entry 含 `kd_call_count: 277400`、walltime `47293 s`、`exit_code: 0`；mAP 值由 `framework_run_dir/results.csv` 抽取。seed 1+2 跑完后 `_save_entry` 自动合并入同一 JSON |
 | A2 `preR2-D0` (deim path) | `runs/rehearsal_kd_A1_deim_{s,m,l}_seed{N}/` ⚠️ **runner-hardcoded** at `scratch_baseline.py:80` | `runs/preR2_D0_deim_<size>_R1.json` |
 | A3 `preR2-K-A2b` | `runs/preR2_K_A2b_R1_seed{0,1,2}/`（DEIM `--output-dir`，CWD-relative `../runs/...`） | `runs/preR2_K_A2b_R1_seed{0,1,2}/eval/best_coco_summary.json`（每 seed 一个；B-k1 聚合时读三 seed） |
 | A4-Y / A4-D `preR2-CP-*` | TBD（B-c1 实装定）；预期 `runs/preR2_CP_{yolo,deim}_R1_<β>_seed{N}/` | `runs/preR2_CP_{yolo,deim}_R1.json` |
@@ -207,13 +207,14 @@ PYTHONPATH=.. torchrun --master_port=7778 --nproc_per_node=1 \
 ### A1 — `preR2-K-A2a` YOLO26-s ← YOLO26-m, cls-logit KL（100 epoch）
 
 ```bash
+# runner 强制 --rehearsal-on-r1 → default output = runs/rehearsal_kd_A2a_R1.json (prefix enforced at yolo_logit_kd.py:330)
 uv run python components/knowledge_distillation/runners/yolo_logit_kd.py \
     --teacher-ckpt runs/detect/yolo26m-r1/weights/best.pt \
-    --output runs/preR2_K_A2a_R1.json \
+    --rehearsal-on-r1 \
     --epochs 100 --seed 0 --execute
 ```
 
-种子 ≥ 3 跑法：循环 `--seed 0`, `--seed 1`, `--seed 2`，输出到同一 `--output` 文件（runner `_save_entry` 按 seed key 合并；再用同 file 输入到 B-k1 gate）。
+种子 ≥ 3 跑法：循环 `--seed 0`, `--seed 1`, `--seed 2`，三跑共用同一 default aggregator `runs/rehearsal_kd_A2a_R1.json`（`_save_entry` 按 `yolo26s_seed{N}` key 合并）；B-k1 gate 同时读 aggregator + 各 seed 的 `framework_run_dir/results.csv` 抽 mAP。
 
 ### A2 — `preR2-D0` DEIM-S no-KD scratch baseline（条件触发，100 epoch）
 
@@ -305,6 +306,7 @@ uv run python components/hard_negative_mining/runners/ablation.py \
 
 | 日期 | 动作 |
 |---|---|
+| 2026-05-13 | A1 (`preR2-K-A2a`) seed-0 100-epoch full-train done：`framework_run_dir = runs/detect/yolo26s-r1-A2a/`（capital A 手动 rename）；best mAP50=0.82765 @ ep 98 / best mAP50-95=0.59519 @ ep 99；Δ=−2.13/−1.28 pp vs baseline；walltime ≈ 13.1 h. `raw_metrics_path = runs/rehearsal_kd_A2a_R1.json`（runner 强制 `rehearsal_` prefix via `--rehearsal-on-r1` at `yolo_logit_kd.py:330` — 旧 §CLI/§产物路径里 `preR2_K_A2a_R1.json` 是 doc spec error，§产物路径 schema 描述刷新为 YOLO aggregator + `results.csv` 双源 cross-load；§CLI A1 例改用 `--rehearsal-on-r1`）。`preR2_tag_status: held:TBD-gated` 仅卡 §排除规则 #1 stat preconds（n=1，无 CI），与 run 完成度无关. |
 | 2026-05-13 | 经 codex-plan-conflictor terminal-pass 4 处 ACCEPT-WITH-AMENDMENT 修订：(1) §handoff 加 A7 R2 carry-forward 行；(2) §排除规则 A4/A5 拆 per-family + dual-track 跳过例外明示（不污染 tag-only 默认语义）；(3) §产物路径 schema 拆 `framework_run_dir` + `raw_metrics_path` 双字段，A3 走 DEIM run-dir 内 `eval/best_coco_summary.json` (无独立 aggregator)；(4) A2 YOLO 行去除（本窗口不跑 YOLO no-KD refresh，runner 路径保留但 out-of-exit-gate）。 |
 | 2026-05-13 | 加 §产物路径 表 + 重命名陷阱说明：A1 + A2-deim runner 把 cell 名硬编码进 Ultralytics / DEIM run 目录名（即使 100-epoch 全训也写 "rehearsal_kd_..." 前缀）；`runs/detect/yolo26s-r1-a2a` 经验证为手动 rename 结果。B-k1 backfill validator 需兼容硬编码与 rename 两条路径 + B-k1 实装时同步去硬编码。Trim：Deferred 块合一行。 |
 | 2026-05-13 | A4 / A5 改为 dual-track（YOLO 先 DEIM 后）；§CLI 加 `--family yolo/deim` 占位；A4-Y 负迁移 → 跳过 A4-D 节省 ~111 GPU-h；A5-Y 同理省 ~74 h。Note: A2b YOLO 等价 cell 不存在（YOLO26 reg_max=1 → 无 native DFL，LD-on-FDR 架构不可移植），同族 KD 仅限 A2a；跨架构 DEIM→YOLO 为 A6 stub。 |
