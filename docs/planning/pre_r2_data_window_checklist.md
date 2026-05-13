@@ -48,7 +48,7 @@
 
 | # | preR2 ID | KD matrix | 配置 | Runner | planning band（A0 之后更新） |
 |---|---|---|---|---|---|
-| A1 | `preR2-K-A2a` | A2a | YOLO26-s scratch ← YOLO26-m, cls KL only | `components/knowledge_distillation/runners/yolo_logit_kd.py` | 🟡 **run completed 2026-05-13；result-pending-sync** — `preR2_tag_status: held:TBD-gated` (`raw_metrics_path: runs/preR2_K_A2a_R1.json (待 sync 自训练 rig)`, `gate_blocker: B-k1`, `backfill_deadline: 2026-05-20`)；user 提供数值或 rsync 后回填 `docs/reports/ablation_results.md` §一 |
+| A1 | `preR2-K-A2a` | A2a | YOLO26-s scratch ← YOLO26-m, cls KL only | `components/knowledge_distillation/runners/yolo_logit_kd.py` | 🟡 `held:TBD-gated`：`runs/detect/yolo26s-r1-a2a/args.yaml` 显示 `epochs: 1`（May-11 rehearsal smoke，非 100-epoch full-train；mAP50=0.569 @ epoch 1）→ 100-epoch run 尚未跑或未 sync。Required fields: `raw_metrics_path: runs/preR2_K_A2a_R1.json` (pending), `gate_blocker: B-k1`, `backfill_deadline: 2026-05-20` |
 | A2 | `preR2-D0` | (DEIM no-KD baseline) | DEIM-S scratch, A2b runner-cfg, KD off | `components/knowledge_distillation/runners/scratch_baseline.py` | 35–42 h |
 | A3 | `preR2-K-A2b` | A2b | DEIM-S ← DEIM-M, LD on FDR + cls KL | `components/knowledge_distillation/runners/deim_logit_localization_kd.py` | 36–48 h |
 
@@ -58,12 +58,16 @@
 
 **主队列 planning band ≈ 47–62 GPU-h（A2 跳过）/ 82–104 GPU-h（A2 全跑）**。
 
-### A4–A5 — Track B 完成后追加
+### A4–A5 — Track B 完成后追加（**dual-track：YOLO 先 DEIM 后**）
 
-| # | preR2 ID | 配置 | Runner | 触发依赖 |
-|---|---|---|---|---|
-| A4 | `preR2-CP` | Copy-paste β-sweep 3-arm | `components/copy_paste_balance/runners/ablation.py` | **B-c1 b-stage AGREED** |
-| A5 | `preR2-HN` | Hard-neg 2-arm: no_hn / with_hn | `components/hard_negative_mining/runners/ablation.py` | **B-h1 b-stage AGREED + B-h2 FP-harvest manifest 落盘** |
+**Dual-track 顺序原则**：copy-paste / hard-neg / SAHI 等家族无关 (data-side) cell 一律 **YOLO 先，DEIM 后**。理由：YOLO26-s 单 arm ~11 h，DEIM-S 单 arm ~37 h；早期 YOLO 结果暴露负迁移即跳过 DEIM 展开，节省 GPU 窗口（最多省 ~110 GPU-h on A4-D 三 arm）。KD 同族 cell（A2a YOLO / A2b DEIM）已家族分离，不适用此原则；A6 跨架构 KD 不适用（runner stub）。
+
+| # | preR2 ID | 家族 | 配置 | Runner | 触发依赖 | planning band |
+|---|---|---|---|---|---|---|
+| A4-Y | `preR2-CP-yolo` | YOLO26-s scratch | β-sweep 3-arm: β ∈ {β_low, β_mid, β_high} | `components/copy_paste_balance/runners/ablation.py` | **B-c1 b-stage AGREED** | ~33 h (3×11 h) |
+| A4-D | `preR2-CP-deim` | DEIM-S scratch | 同 β 设定 (3-arm) | 同 runner（family flag 切换） | A4-Y done **且** A4-Y 未触发 `negative-on-r1` (单家族负迁移即跳过另一家族 cell 展开) | ~111 h (3×37 h) |
+| A5-Y | `preR2-HN-yolo` | YOLO26-s scratch | no_hn / with_hn 2-arm | `components/hard_negative_mining/runners/ablation.py` | **B-h1 b-stage AGREED + B-h2 FP-harvest manifest 落盘** | ~22 h |
+| A5-D | `preR2-HN-deim` | DEIM-S scratch | 同 arms | 同 runner | A5-Y done **且** A5-Y 未触发 `negative-on-r1` | ~74 h |
 
 **Idle-GPU 规则**：A1–A3 done 时检查 B-c1 / (B-h1+B-h2) 的 **owner-stamped ETA**（Track B developer 提交期手写 estimate，pinned 到 commit message 或 `MEMORY.md` track-B 行）。
 - Owner ETA > **12 h** → 对应 A4 / A5 立即 `deferred-to-r2-plan`，按 §handoff 写 `_r2_carry_forward.json`，**不空转等**。Track A 立刻关闭。
@@ -222,26 +226,44 @@ PYTHONPATH=.. torchrun --master_port=7778 --nproc_per_node=1 \
 
 DEIM 路径 seed ≥ 3：`--seed=0`/`1`/`2` 各跑一次，`--output-dir` 后缀 `_seedN`；B-k1 gate 聚合三 seed。
 
-### A4 / A5 — `preR2-CP` / `preR2-HN`
+### A4 / A5 — `preR2-CP-*` / `preR2-HN-*`（dual-track，YOLO 先 DEIM 后）
 
-⚠️ Runner 当前 a-stage stub（`raise NotImplementedError("b-stage")`）。CLI 不可用，等 Track B `preR2-B-CP` / `preR2-B-HN1` b-stage 落地。落地后预期 CLI 形状：
+⚠️ Runner 当前 a-stage stub（`raise NotImplementedError("b-stage")`）。CLI 不可用，等 Track B `preR2-B-CP` / `preR2-B-HN1` b-stage 落地。落地后预期 CLI 形状（B-c1/B-h1 review 最终决定 flag 名 + `--family` 切换的具体语法）：
 
 ```bash
-# A4 — 落地后（占位 spec，B-c1 决定最终 flag 名）
+# A4-Y — YOLO 先（~33 h；负迁移即跳过 A4-D）
 uv run python components/copy_paste_balance/runners/ablation.py \
+    --family yolo --size s \
     --beta low,mid,high --seed-set 0,1,2 \
-    --output-root runs/preR2_CP_R1 --execute
+    --output-root runs/preR2_CP_yolo_R1 --execute
 
-# A5 — 落地后（占位 spec，B-h1 决定最终 flag 名；先跑 B-h2 FP-harvest）
+# A4-D — DEIM 后（仅在 A4-Y 未触发 negative-on-r1 时启动，~111 h）
+uv run python components/copy_paste_balance/runners/ablation.py \
+    --family deim --size s \
+    --beta low,mid,high --seed-set 0,1,2 \
+    --output-root runs/preR2_CP_deim_R1 --execute
+
+# A5 prerequisite — FP-harvest (B-h2)；YOLO baseline 收 FP，但 manifest 复用给两家族
 uv run python components/hard_negative_mining/data/eval_manifest.py \
-    --source-model runs/yolo26s-r1/weights/best.pt \
+    --source-model runs/detect/yolo26s-r1/weights/best.pt \
     --demos demo/**/*.mp4 --output runs/preR2_HN_fp_manifest.json --execute
 
+# A5-Y — YOLO 先（~22 h；负迁移即跳过 A5-D）
 uv run python components/hard_negative_mining/runners/ablation.py \
+    --family yolo --size s \
     --fp-manifest runs/preR2_HN_fp_manifest.json \
     --arms no_hn,with_hn --seed-set 0,1,2 \
-    --output-root runs/preR2_HN_R1 --execute
+    --output-root runs/preR2_HN_yolo_R1 --execute
+
+# A5-D — DEIM 后（仅在 A5-Y 未触发 negative-on-r1 时启动，~74 h）
+uv run python components/hard_negative_mining/runners/ablation.py \
+    --family deim --size s \
+    --fp-manifest runs/preR2_HN_fp_manifest.json \
+    --arms no_hn,with_hn --seed-set 0,1,2 \
+    --output-root runs/preR2_HN_deim_R1 --execute
 ```
+
+**B-c1 / B-h1 实装注意**：runner 需接受 `--family {yolo,deim}` 切换（参照 `scratch_baseline.py` 的 family-dispatch pattern），输出 schema 内带 `family` 字段供 KD gate（B-k1）跨家族聚合。
 
 ### Track B — 实装工作（无 CLI）
 
@@ -259,6 +281,7 @@ uv run python components/hard_negative_mining/runners/ablation.py \
 
 | 日期 | 动作 |
 |---|---|
-| 2026-05-13 | A1 (`preR2-K-A2a`) full-train run reported complete；标 `held:TBD-gated` (raw_metrics_path 待 sync, gate_blocker=B-k1, backfill_deadline=2026-05-20) — 不标 done 以满足 §exit-gate "每条 done 项必须有 §一 evidence row" 的约束。同时 A7 同族 cell 移至 R2-only：DEIM-L 在 R1 上 vs DEIM-M = −0.2 pp / vs DEIM-S = +0.9 pp + epoch-72 早停 saturated → teacher 不足，节省 ~102 GPU-h |
+| 2026-05-13 | A4 / A5 改为 dual-track（YOLO 先 DEIM 后）；§CLI 加 `--family yolo/deim` 占位；A4-Y 负迁移 → 跳过 A4-D 节省 ~111 GPU-h；A5-Y 同理省 ~74 h。Note: A2b YOLO 等价 cell 不存在（YOLO26 reg_max=1 → 无 native DFL，LD-on-FDR 架构不可移植），同族 KD 仅限 A2a；跨架构 DEIM→YOLO 为 A6 stub。 |
+| 2026-05-13 | A1 (`preR2-K-A2a`) full-train run reported complete；标 `held:TBD-gated` (raw_metrics_path 待 sync, gate_blocker=B-k1, backfill_deadline=2026-05-20) — 不标 done 以满足 §exit-gate "每条 done 项必须有 §一 evidence row" 的约束。`runs/detect/yolo26s-r1-a2a` 经验证为 May-11 1-epoch rehearsal smoke（args.yaml: epochs=1），**非** 100-epoch full-train。同时 A7 同族 cell 移至 R2-only：DEIM-L 在 R1 上 vs DEIM-M = −0.2 pp / vs DEIM-S = +0.9 pp + epoch-72 早停 saturated → teacher 不足，节省 ~102 GPU-h |
 | 2026-05-13 | 追加 §CLI 启动命令（A0/A1/A2/A3 实装命令 + A4/A5/Track-B 占位 spec 与状态判定） |
 | 2026-05-13 | 文件创建：answering "GPU 窗口怎么用" + TSM full-train R1-blocked + 经 codex-plan-conflictor 三轮重构：pass-1 REJECT（移 A6/A7/copy-paste/hard-neg stub）→ pass-2 APPROVE-WITH-AMENDMENTS（聚类 bootstrap + 稀有类 insufficient_support + B-k1 schema 落地前 `held:TBD-gated` + A2 触发规则 + Idle-GPU 12 h + handoff 沿用 `_r2_carry_forward_schema.json`）→ pass-3 5×ACCEPT-WITH-AMENDMENT（safety-class 改单向逻辑：清晰改进 blocks tag / 清晰退化 trigger `negative-on-r1-safety-regression` 更强 tag；A5 OR semantics 拆成三行 + `unblock_logic:"any"`；§R2 ingest anchor 改指现存 §R2 采集/标注/训练；ETA owner-stamped 默认 deferred；pre-B-k1 tripwire 三字段强制 + B-k1 内一次性 backfill validator） |
