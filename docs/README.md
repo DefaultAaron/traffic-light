@@ -41,9 +41,10 @@ Project documentation organized by purpose. Pick the folder that matches what yo
 |---|---|
 | [`phase_2_round_1_report.md`](reports/phase_2_round_1_report.md) | R1 7-class: YOLO26 n/s/m/l + YOLOv13-s + DEIM-D-FINE-S/M/L; Orin deployment (25 ms/frame @ 1280 FP16); demo diagnosis (engine imgsz + xyxy postprocess fixes); R2 scope lock (10–14 classes) — **CLOSED 2026-05-12** |
 | [`phase_2_round_1_results.md`](reports/phase_2_round_1_results.md) | Raw eval tables for R1 — all 7 trained models populated (YOLO26 n/s/m/l, YOLOv13-s, DEIM-D-FINE-S/M/L); DEIM family on unified deployment-checkpoint methodology (see `r1_evidence/`) |
+| [`ablation_results.md`](reports/ablation_results.md) | R1 full-train ablation 实时日志（re-opened 2026-05-13） — KD A2a/A2b/A6/A7 + copy-paste β-sweep + hard-neg + TSM tripwire；GPU 窗口利用、R2 数据就绪前 exclude-options 测试 |
 | [`r1_evidence/`](reports/r1_evidence/) | R1 closure durable audit: DEIM per-class JSONs + old-vs-new methodology diff + one-shot reproducer script |
 
-> Phase 1 historical reports (`phase_1_report.md`, `phase_1_results.md`) and the early KD A2a stub (`ablation_results.md`) are retired — see [`_archive/`](_archive/). R1 7-class results fully supersede the P1 3-class baseline.
+> Phase 1 historical reports (`phase_1_report.md`, `phase_1_results.md`) are retired — see [`_archive/`](_archive/). R1 7-class results fully supersede the P1 3-class baseline.
 
 ## integration/
 
