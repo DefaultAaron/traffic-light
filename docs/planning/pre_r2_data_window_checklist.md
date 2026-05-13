@@ -91,10 +91,11 @@
 |---|---|
 | A1 `preR2-K-A2a` `negative-on-r1` | `student_mAP50_CI_high < (R1 YOLO26s-r1 0.849 − 1.0 pp) = 0.839` |
 | A3 `preR2-K-A2b` `negative-on-r1` | `student_mAP50_CI_high < (A2 mAP50_CI_low − 1.0 pp)`（A2 跳过时回退到 R1 DEIM-S 0.848，threshold 0.838） |
-| A4 `preR2-CP` `negative-on-r1` | 三 arm `mAP50_CI_high` 全部 < `no-copy-paste matched control mAP50_CI_low − 1.0 pp`；matched control = 同种子同 cfg 关 copy-paste flag 跑一次 |
-| A5 `preR2-HN` `negative-on-r1` | `with_hn mAP50_CI_high < no_hn mAP50_CI_low` **且** demo FP-harvest 集 FP rate（denominator = 总 frame × 总 class，CI 95% binomial）下降 < 20% |
+| A4-Y `preR2-CP-yolo` / A4-D `preR2-CP-deim` `negative-on-r1`（**逐家族独立判**）| 当前家族三 arm `mAP50_CI_high` 全部 < 当前家族 `no-copy-paste matched control mAP50_CI_low − 1.0 pp`；matched control = **同家族**同种子同 cfg 关 copy-paste flag 跑一次 |
+| A5-Y `preR2-HN-yolo` / A5-D `preR2-HN-deim` `negative-on-r1`（**逐家族独立判**）| 当前家族 `with_hn mAP50_CI_high < no_hn mAP50_CI_low` **且** demo FP-harvest 集 FP rate（denominator = 总 frame × 总 class，CI 95% binomial）下降 < 20% |
 
-**Tag 语义（pin）**：写入 commit message + `ablation_results.md` 对应 § + `ablation_record.json:preR2_tag_status`。**Tag 仅影响 R2 选型轮 prior，不影响本窗口剩余 cell 是否启动**。R2 plan 不得仅凭 R1 tag drop / skip cell — drop / skip 需 **R2-frozen evidence** 或独立的资源 drawdown 规则。
+**Tag 语义（pin）**：写入 commit message + `ablation_results.md` 对应 § + `ablation_record.json:preR2_tag_status`。**默认 Tag 仅影响 R2 选型轮 prior，不影响本窗口剩余 cell 是否启动**；R2 plan 不得仅凭 R1 tag drop / skip cell — drop/skip 需 R2-frozen evidence 或独立资源 drawdown 规则。
+**例外（dual-track 跳过）**：A4-Y / A5-Y 触发 `negative-on-r1*` → **跳过对应 A4-D / A5-D**（节省 GPU 窗口）。此例外**仅**适用 dual-track 配对的 DEIM 子 cell；不扩展到其他 cell。架构相关效应（如 augmentation × backbone 交互）若需独立验证，记入 R2 plan 而非本窗口。
 
 **B-k1 未完成时**：A1/A3 done 但 KD gate 未落地 → ablation row 标 `held:TBD-gated`，必填 `raw_metrics_path`, `gate_blocker: "B-k1"`, `backfill_deadline: <date>`；在 B-k1 done + gate 应用前 **禁止** 应用 `negative-on-r1`。
 
@@ -139,6 +140,7 @@
 | preR2 item | `item_id` | `status` | `blocked_on`（closed enum） | `next_entrypoint` |
 |---|---|---|---|---|
 | A1 / A3 中断 | `preR2_kd_<cell>` | `blocked` | `[r2_data_freeze]`（R2 round 启动时回退） | `additional_components_plan §七 v2 cell A2a/A2b row` |
+| A7 R1-skipped → R2 重测 | `preR2_kd_A7_same_family` | `blocked` | `[r2_data_freeze]`（R2 数据后 teacher gap 重测；R1 上 DEIM-L 不及 / 持平 DEIM-M，本窗口不启动） | `additional_components_plan §七 v2 cell A7 row` |
 | A4 deferred | `preR2_copy_paste_sweep` | `blocked` | `[r2_data_freeze]` | `additional_components_plan §三` |
 | A5 deferred — B-h2 未完成 | `preR2_hard_neg_sweep` | `blocked` | `[hard_neg_manifest_hash]` | `additional_components_plan §四` |
 | A5 deferred — B-h2 已落但 R2 触发 | `preR2_hard_neg_sweep_postharvest` | `blocked` | `[r2_data_freeze]` | `additional_components_plan §四` |
@@ -157,16 +159,22 @@
 
 每个 cell 的 runner 同时落两类产物：(a) 训练框架的 run 目录（Ultralytics `runs/detect/<name>/` 或 DEIM `<output-dir>/`，含 `args.yaml` + `SEED.txt` + `results.csv` + `weights/`），(b) JSON aggregator（KD runner 写的 schema 化结果，`--output` 指定）。
 
-| Cell | 训练框架 run 目录 | JSON aggregator |
+**字段语义（B-k1 validator 契约）**：
+- `framework_run_dir`：训练框架 run 目录，**必填**于全训完成的 row（含 `args.yaml` + `SEED.txt` + 权重 / DEIM ckpt + `results.csv` 或 DEIM `eval/`）。
+- `raw_metrics_path`：metric JSON 来源，**必填**于全训完成的 row。YOLO KD runner 走 `--output` 聚合 JSON；DEIM 直接走 run 目录内 `eval/best_coco_summary.json`（无独立 aggregator）。
+- B-k1 validator 同时检查两个字段：缺一即 row schema-invalid。
+
+| Cell | `framework_run_dir` | `raw_metrics_path` |
 |---|---|---|
-| A1 `preR2-K-A2a` | `runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed{0,1,2}/` ⚠️ **runner-hardcoded** at `yolo_logit_kd.py:243`，即使 `--epochs 100` 也走此命名 | `runs/preR2_K_A2a_R1.json`（`--output`） |
-| A2 `preR2-D0` (yolo path) | `runs/detect/yolo26{n,s,m,l}/`（Ultralytics 默认；与 R1 baseline 命名冲突时自动加后缀 `2`/`3`/...）| `runs/preR2_D0_yolo_<size>_R1.json` |
+| A1 `preR2-K-A2a` | `runs/detect/rehearsal_kd_A2a_yolo26s_R1_seed{0,1,2}/` ⚠️ **runner-hardcoded** at `yolo_logit_kd.py:243`，即使 `--epochs 100` 也走此命名 | `runs/preR2_K_A2a_R1.json`（`--output` 多 seed 合并） |
 | A2 `preR2-D0` (deim path) | `runs/rehearsal_kd_A1_deim_{s,m,l}_seed{N}/` ⚠️ **runner-hardcoded** at `scratch_baseline.py:80` | `runs/preR2_D0_deim_<size>_R1.json` |
-| A3 `preR2-K-A2b` | `runs/preR2_K_A2b_R1_seed{0,1,2}/`（DEIM `--output-dir`，DEIM-CWD-relative `../runs/...`）| n/a — DEIM 把 eval JSON 写在 run 目录内（`eval/best_coco_summary.{json,txt}` + checkpoints `best_stg1.pth` / `best_stg2.pth` / `last.pth`） |
+| A3 `preR2-K-A2b` | `runs/preR2_K_A2b_R1_seed{0,1,2}/`（DEIM `--output-dir`，CWD-relative `../runs/...`） | `runs/preR2_K_A2b_R1_seed{0,1,2}/eval/best_coco_summary.json`（每 seed 一个；B-k1 聚合时读三 seed） |
 | A4-Y / A4-D `preR2-CP-*` | TBD（B-c1 实装定）；预期 `runs/preR2_CP_{yolo,deim}_R1_<β>_seed{N}/` | `runs/preR2_CP_{yolo,deim}_R1.json` |
 | A5-Y / A5-D `preR2-HN-*` | TBD（B-h1 实装定）；预期 `runs/preR2_HN_{yolo,deim}_R1_<arm>_seed{N}/` | `runs/preR2_HN_{yolo,deim}_R1.json` |
 | B-h2 FP-harvest | n/a（数据准备） | `runs/preR2_HN_fp_manifest.json` |
 | B-t1 TSM tripwire | n/a（CPU smoke） | `runs/tsm_tripwire_<YYYYMMDD>.json` |
+
+**A2 YOLO 路径**：本窗口 Track A 不跑 YOLO no-KD baseline refresh（R1 YOLO26s-r1 0.849 已经是 same-cfg baseline，A1 直接拿 0.849 作 KD 对照）。`scratch_baseline.py --family yolo` 路径仍受 runner 支持，但不在 §exit-gate 产物清单内。
 
 **重命名陷阱**：A1 / A2-deim runner 把 cell 名硬编码进 run 目录名，含 "rehearsal" 字样即使是 100-epoch 全训。`runs/detect/yolo26s-r1-a2a/` 是手动 rename 的结果。
 - 不要在 100-epoch 训练完成前 rename — Ultralytics 检查 dir 存在性来决定是否 resume / 加后缀。
@@ -297,6 +305,7 @@ uv run python components/hard_negative_mining/runners/ablation.py \
 
 | 日期 | 动作 |
 |---|---|
+| 2026-05-13 | 经 codex-plan-conflictor terminal-pass 4 处 ACCEPT-WITH-AMENDMENT 修订：(1) §handoff 加 A7 R2 carry-forward 行；(2) §排除规则 A4/A5 拆 per-family + dual-track 跳过例外明示（不污染 tag-only 默认语义）；(3) §产物路径 schema 拆 `framework_run_dir` + `raw_metrics_path` 双字段，A3 走 DEIM run-dir 内 `eval/best_coco_summary.json` (无独立 aggregator)；(4) A2 YOLO 行去除（本窗口不跑 YOLO no-KD refresh，runner 路径保留但 out-of-exit-gate）。 |
 | 2026-05-13 | 加 §产物路径 表 + 重命名陷阱说明：A1 + A2-deim runner 把 cell 名硬编码进 Ultralytics / DEIM run 目录名（即使 100-epoch 全训也写 "rehearsal_kd_..." 前缀）；`runs/detect/yolo26s-r1-a2a` 经验证为手动 rename 结果。B-k1 backfill validator 需兼容硬编码与 rename 两条路径 + B-k1 实装时同步去硬编码。Trim：Deferred 块合一行。 |
 | 2026-05-13 | A4 / A5 改为 dual-track（YOLO 先 DEIM 后）；§CLI 加 `--family yolo/deim` 占位；A4-Y 负迁移 → 跳过 A4-D 节省 ~111 GPU-h；A5-Y 同理省 ~74 h。Note: A2b YOLO 等价 cell 不存在（YOLO26 reg_max=1 → 无 native DFL，LD-on-FDR 架构不可移植），同族 KD 仅限 A2a；跨架构 DEIM→YOLO 为 A6 stub。 |
 | 2026-05-13 | A1 (`preR2-K-A2a`) full-train run reported complete；标 `held:TBD-gated` (raw_metrics_path 待 sync, gate_blocker=B-k1, backfill_deadline=2026-05-20) — 不标 done 以满足 §exit-gate "每条 done 项必须有 §一 evidence row" 的约束。`runs/detect/yolo26s-r1-a2a` 经验证为 May-11 1-epoch rehearsal smoke（args.yaml: epochs=1），**非** 100-epoch full-train。同时 A7 同族 cell 移至 R2-only：DEIM-L 在 R1 上 vs DEIM-M = −0.2 pp / vs DEIM-S = +0.9 pp + epoch-72 早停 saturated → teacher 不足，节省 ~102 GPU-h |
