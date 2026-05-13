@@ -16,7 +16,8 @@
 | DEIM-S no-KD scratch baseline refresh | ✅ 条件性，见 §A2 触发 | — |
 | Copy-paste β-sweep (3-arm) | ⚠️ runner a-stage stub → Track B 落 b-stage 才跑 | — |
 | Hard-neg mining (2-arm) | ⚠️ runner a-stage stub + 依赖 FP-harvest manifest | — |
-| KD A6 cross-arch / A7 same-family / A4 progressive | ❌ runner stub；plan §七 trigger 未到（A6: "A4 通过 6 gate"）；本窗口不解锁 | R2 / R3 |
+| KD A6 cross-arch / A4 progressive | ❌ runner stub；plan §七 trigger 未到（A6: "A4 通过 6 gate"）；本窗口不解锁 | R2 / R3 |
+| KD A7 same-family (L → M / L → S) | ❌ runner stub **+ teacher 在 R1 上不足**：DEIM-L (0.857) vs DEIM-M (0.859) = **−0.2 pp**（L 不及 M）；DEIM-L vs DEIM-S = +0.9 pp（比 A2b 的 M→S +1.1 pp 更弱）。DEIM-L 在 R1 上 epoch 72 早停 + 30 ep plateau → data-saturated，extra capacity 未发挥。**R1 上跳过 A7-M 和 A7-S，节省 ~102 GPU-h** | R2（数据更大 / 更多样后重测 teacher gap）|
 | TSM full-train ablation | ❌ R1 为单帧 stills，无时序标签；伪标签 / raw LISA 序列已退役，均拒绝 | ✅ R2 视频 / 序列 |
 | TSM 激活 tripwire (synthetic) | ✅ synthetic fixture，**仅 plumbing diagnostic**，结论字段 `non_decision_diagnostic: true` + `r2_full_train_readiness: false` + `forbidden_inference: "tripwire pass does not unlock TSM full-train or R2 selection"` | — |
 | SAHI c0 grid precheck on R1 demos | ⚠️ scaffold 不存在；R2 replay trigger 未现 → 不做 | R2 / R3 |
@@ -47,7 +48,7 @@
 
 | # | preR2 ID | KD matrix | 配置 | Runner | planning band（A0 之后更新） |
 |---|---|---|---|---|---|
-| A1 | `preR2-K-A2a` | A2a | YOLO26-s scratch ← YOLO26-m, cls KL only | `components/knowledge_distillation/runners/yolo_logit_kd.py` | 11–14 h |
+| ~~A1~~ | `preR2-K-A2a` | A2a | YOLO26-s scratch ← YOLO26-m, cls KL only | `components/knowledge_distillation/runners/yolo_logit_kd.py` | ✅ **done 2026-05-13** — full result in `docs/reports/ablation_results.md` §一；B-k1 落地后回填 `preR2_tag_status` |
 | A2 | `preR2-D0` | (DEIM no-KD baseline) | DEIM-S scratch, A2b runner-cfg, KD off | `components/knowledge_distillation/runners/scratch_baseline.py` | 35–42 h |
 | A3 | `preR2-K-A2b` | A2b | DEIM-S ← DEIM-M, LD on FDR + cls KL | `components/knowledge_distillation/runners/deim_logit_localization_kd.py` | 36–48 h |
 
@@ -258,5 +259,6 @@ uv run python components/hard_negative_mining/runners/ablation.py \
 
 | 日期 | 动作 |
 |---|---|
+| 2026-05-13 | A1 (`preR2-K-A2a`) full-train 完成，结果入 `docs/reports/ablation_results.md` §一；行内状态划除。同时 A7 同族 cell 移至 R2-only：DEIM-L 在 R1 上 vs DEIM-M = −0.2 pp / vs DEIM-S = +0.9 pp + epoch-72 早停 saturated → teacher 不足，节省 ~102 GPU-h |
 | 2026-05-13 | 追加 §CLI 启动命令（A0/A1/A2/A3 实装命令 + A4/A5/Track-B 占位 spec 与状态判定） |
 | 2026-05-13 | 文件创建：answering "GPU 窗口怎么用" + TSM full-train R1-blocked + 经 codex-plan-conflictor 三轮重构：pass-1 REJECT（移 A6/A7/copy-paste/hard-neg stub）→ pass-2 APPROVE-WITH-AMENDMENTS（聚类 bootstrap + 稀有类 insufficient_support + B-k1 schema 落地前 `held:TBD-gated` + A2 触发规则 + Idle-GPU 12 h + handoff 沿用 `_r2_carry_forward_schema.json`）→ pass-3 5×ACCEPT-WITH-AMENDMENT（safety-class 改单向逻辑：清晰改进 blocks tag / 清晰退化 trigger `negative-on-r1-safety-regression` 更强 tag；A5 OR semantics 拆成三行 + `unblock_logic:"any"`；§R2 ingest anchor 改指现存 §R2 采集/标注/训练；ETA owner-stamped 默认 deferred；pre-B-k1 tripwire 三字段强制 + B-k1 内一次性 backfill validator） |

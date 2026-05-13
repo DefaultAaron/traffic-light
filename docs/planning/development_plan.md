@@ -40,10 +40,11 @@
 | 里程碑 | 状态 / 交付物 |
 |---|---|
 | P1：3 类基线 | ✅ 完成；YOLO26s 选定；见 `docs/_archive/phase_1_report.md`（2026-05-12 归档）|
-| R1 主力：7 类 YOLO26 n/s/m | ✅ 完成；Orin 1280 FP16 约 25 ms/帧；`xyxy` 后处理修复 |
-| R1 备选：YOLOv13-s / DEIM-D-FINE-S/M | 🚧 训练中 |
+| R1 主力：7 类 YOLO26 n/s/m/l | ✅ 完成；YOLO26s-r1 现役部署 (Orin 1280 FP16 ~25 ms/帧)；`xyxy` 后处理修复 |
+| R1 备选：YOLOv13-s / DEIM-D-FINE-S/M/L | ✅ 完成 2026-05-12；DEIM-D-FINE-M 为 R1 主力候选（待 Orin TRT plugin + 部署域 eval，均 Stage 2 carry-forward）；DEIM-D-FINE-L 用作 KD A6/A7 teacher（mAP50 ≈ M 持平 ±0.2 pp，不进入部署候选）|
 | R1 跟踪：ByteTrack + EMA | ✅ Python + C++ 落地；`inference/tracker/`、`inference/cpp/src/tracker.cpp` |
-| R1 决策 | ⏳ 待三轨训练完成后应用规则 |
+| R1 决策 | ✅ R1 closed 2026-05-12；规则应用见 `docs/reports/phase_2_round_1_report.md` |
+| R1 → R2 GPU 窗口 | 🚧 R2 数据未到期间 ablation 窗口；见 `docs/planning/pre_r2_data_window_checklist.md` (3 KD cells 启动，copy-paste / hard-neg b-stage 并行) |
 | R2 范围 | ✅ 下限 10 类锁定；上限 14 类按 PM / 数据触发 |
 | R2 数据 | ⏳ 自采数据 + SOP；R1 数据集退役 |
 | R2 训练增强 | ⏳ copy-paste、硬负样本、KD P0 cells |
