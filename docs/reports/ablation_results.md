@@ -51,11 +51,11 @@ TBD — R1 closed 后 unlocked（DEIM-L `best_stg1.pth` 已落盘）。触发 R1
 
 ## §五 Copy-paste + Class-balance β-sweep (3-arm, R1)
 
-TBD — runner `components/copy_paste_balance/runners/ablation.py` AGREED-CLEAN at iter-11；β ∈ {α, mid, high}；触发 R1→R2 桥接 §D。
+TBD（eval JSONs 待入）— runner `components/copy_paste_balance/runners/ablation.py` **b-stage runnable** as of commit `d2d5fc9`（2026-05-14）：`NotImplementedError` stub 已被完整 decision-aggregator pipeline 替换，读取 5 个 eval JSON（`no_aug` + `cp_only` + `cp_balanced × {0.99, 0.999, 0.9999}`）+ YAML + weights，应用 §3.7 4-case cascade，写 `runs/_copy_paste_decision.json`；46 smoke cases (28 gate-cell + 6 HN runner + 12 CPB runner) + 10 集成 / UserWarning 验证 覆盖 deploy/defer/drop/executor_error + class-set provenance gates；7-iter B2 + C3 AGREED-CLEAN at iter-7。等 R1 eval JSON 落盘后可直接 invoke。β ∈ {α, mid, high}；触发 R1→R2 桥接 §D。
 
 ## §六 Hard-negative mining (2-arm: no_hn / with_hn, R1 + demo)
 
-TBD — runner `components/hard_negative_mining/runners/ablation.py` AGREED at iter-2；blocked on FP-harvest manifest（Track B 任务）；触发 §E。
+TBD（FP-harvest manifest 待入）— runner `components/hard_negative_mining/runners/ablation.py` **b-stage runnable** as of commit `d2d5fc9`（2026-05-14）：`NotImplementedError` stub 已被完整 decision-aggregator pipeline 替换，读取 2 个 eval JSON（`no_hn` + `with_hn`）+ YAML + frozen FP manifest，应用 §4.7 3-case cascade（defer 路径 mAP-AGNOSTIC），写 `runs/_hard_negative_decision.json`；46 smoke cases (28 gate-cell + 6 HN runner + 12 CPB runner) + 10 集成 / UserWarning 验证 覆盖 deploy/defer/drop/executor_error + class-set provenance gates；7-iter B2 + C3 AGREED-CLEAN at iter-7。仍 blocked on FP-harvest manifest（Track B 任务），c-stage 启动条件未满足；触发 §E。
 
 ## §七 TSM 激活 tripwire (R1, **仅 synthetic concept-validation**)
 
@@ -68,3 +68,4 @@ TBD — runner `components/temporal_shift_module/runners/concept_validation.py` 
 | 2026-05-12 | 早期 KD A2a stub 归档至 `docs/_archive/` | 7bbf752 |
 | 2026-05-13 | 从 archive 还原，重整为 R1 full-train ablation 实时日志 | 6425860 |
 | 2026-05-13 | §一 A1 (`preR2-K-A2a`) seed-0 100-epoch full-train done：best mAP50=0.82765 @ ep 98 / best mAP50-95=0.59519 @ ep 99 / walltime ≈ 13.1 h / Δ=−2.13/−1.28 pp vs YOLO26s-r1 baseline (n=1)；`framework_run_dir = runs/detect/yolo26s-r1-A2a/`（capital A 手动 rename）；`raw_metrics_path = runs/rehearsal_kd_A2a_R1.json`（runner 强制 `rehearsal_` prefix — 旧 `preR2_K_A2a_R1.json` 是 doc spec error 已 retract）；`preR2_tag_status: held:TBD-gated` 仅卡 §排除规则 #1 stat preconds（n=1，无 CI），与 run 完成度无关 | (本提交) |
+| 2026-05-14 | §三 + §四 ablation b-stage LANDED：`components/copy_paste_balance/runners/ablation.py` + `components/hard_negative_mining/runners/ablation.py` 9 个 component 文件 `NotImplementedError` stub 替换为完整 decision-aggregator pipelines；§3.7 4-case + §4.7 3-case cascade；写 `runs/_copy_paste_decision.json` / `runs/_hard_negative_decision.json`；46 smoke cases (28 gate-cell + 6 HN runner + 12 CPB runner) + 10 集成 / UserWarning 验证 覆盖 deploy/defer/drop/executor_error + class-set provenance gates（weights class_names drift / truncated per_class_AP / all-sweep-executor_error refusal / path-collision canonical+symlink+rel-vs-abs）；存活 4 轮 Codex stop-gate（verdict↔delta / NaN tolerance / lexical + canonical path-collision）+ 7-iter B2 (`superpowers:code-reviewer`) + C3 (`codex-review-conflictor`) AGREED-CLEAN at iter-7（~17 findings addressed，0 CRITICAL surfaced）；§五 / §六 runner 状态由 stub 转为 runnable，等 R1 eval JSONs / FP-harvest manifest | d2d5fc9 |

@@ -15,7 +15,10 @@ scripts/
 ├── ops/              setup_reverse_tunnel.sh
 └── (root)            run_demos.sh, export_yolo.sh, export_deim.sh,
                       _r2_*.py / _r2_*.json, _r2_schema_utils.py,
-                      _r2_schemas_test.py, _tsm_activation_schema.json
+                      _r2_schemas_test.py, _tsm_activation_schema.json,
+                      _smoke_decision_gates.py,
+                      _smoke_hn_ablation_runner.py,
+                      _smoke_cpb_ablation_runner.py
 ```
 
 > **Why some scripts stay at root**: `run_demos.sh`, `export_yolo.sh`,
@@ -34,6 +37,7 @@ Quick map:
 | [Dataset (R2 self-collected)](#dataset-r2-self-collected) | `dataset/yolo_to_coco.py` |
 | [Model export](#model-export) | `export/strip_yolo26_head.py`, `export/_export_deim_onnx.py`, `export_yolo.sh`, `export_deim.sh` |
 | [Flicker / tracker validation](#flicker--tracker-validation) | `tracker/measure_flicker.py`, `tracker/validate_flicker_reduction.py` |
+| [Ablation smoke (decision aggregators)](#ablation-smoke-decision-aggregators) | `_smoke_decision_gates.py`, `_smoke_hn_ablation_runner.py`, `_smoke_cpb_ablation_runner.py` |
 | [Network / ops](#network--ops) | `ops/setup_reverse_tunnel.sh` |
 
 > **R1 dataset scripts retired** (2026-05-08): `annotate_bstld.py`, `annotate_s2tld.py`, `convert_bstld.py`, `convert_lisa.py`, `convert_s2tld.py`, `merge_datasets.py` were removed alongside R1 dataset abandonment per R2 data-replacement policy. R2 uses self-collected data only; the active workflow lives in `docs/data/r2_data_collection_sop.md`. Original R1 docs preserved under `docs/_archive/`.
@@ -480,6 +484,79 @@ uv run python scripts/tracker/validate_flicker_reduction.py --seed 1 --flip-rate
 
 Defaults: `--frames 300 --flip-rate 0.3 --seed 0`. Useful when the real
 demo footage is too clean to exercise the reduction path.
+
+---
+
+## Ablation smoke (decision aggregators)
+
+Pure-Python smoke harnesses guarding §三 (copy-paste + class-balance) /
+§四 (hard-negative mining) b-stage decision aggregators. Aggregator-only
+— no GPU, no fixtures on disk; everything is synthesized in a temp dir.
+Run identically on M4 Pro 本地 and 训练服务器。**总计 46 个 case `OK -> `
+行** (28 gate-cell + 6 HN runner + 12 CPB runner) + 10 集成 /
+UserWarning 验证行 (8 integration + 2 UserWarning)；覆盖 4 轮 Codex
+stop-gate + 7-iter B2+C3 review-conflict AGREED-CLEAN 后的所有
+decision-rule 边界。
+
+加入 `feat(ablation): land §三 + §四 b-stage decision aggregators`
+(commit `d2d5fc9`)。三个脚本均不接 CLI 参数；退出码 `0` 表示全部 case
+通过，非零表示有 case 失败。失败诊断路径取决于脚本：HN / CPB runner
+smoke 显式打印 `FAIL <label>` 行到 stdout 后 `SystemExit(1)`；
+decision_gates smoke 用 bare `assert` → 以 `AssertionError` traceback
+写 stderr（不打印 `FAIL` 行）。
+
+### `_smoke_decision_gates.py`
+
+28 个 gate-cell-level smoke case（14 CPB + 14 HN），覆盖
+`apply_decision_rule`（§3.7 + §4.7 cascade、boundary 语义、
+`executor_error` 路径）。另含 8 行
+`PerClassAP` → `ArmMetrics` → `DecisionInputs` → `apply_decision_rule`
+的端到端集成验证 + 2 个 empty `rare_safety` `UserWarning` 路径用例。
+脚本自带 `sys.path` shim，无需 fixture / 无需 `PYTHONPATH` 前缀。
+
+```bash
+uv run python scripts/_smoke_decision_gates.py
+```
+
+预期输出末行为 `ALL OK`；每个 case 一行 `  CPB <label> OK -> <decision>` 或 `  HN  <label> OK -> <decision>` / `  (a)|(b) ... OK`。未通过通过 bare `assert` 语句失败 → 进程以 `AssertionError` 抛出非零退出（不打印 `FAIL` 行，区别于 sister runner smoke 脚本）。
+
+### `_smoke_hn_ablation_runner.py`
+
+6 个 HN runner 端到端 case：在临时目录合成 config YAML + frozen FP
+manifest（带 canonical-SHA256 stamp） + 2 份 per-arm eval JSON，
+subprocess 驱动 `components.hard_negative_mining.runners.ablation`，
+读取产出 `_hard_negative_decision.json` 验证 verdict 与预期一致。覆盖
+deploy / defer (mAP-AGNOSTIC) / drop literal × 2 / drop catch-all /
+`executor_error` (bad verdict)。
+
+```bash
+uv run python scripts/_smoke_hn_ablation_runner.py
+```
+
+预期输出末行为 `ALL OK`；每个 case 一行 `  HN <label> OK -> <decision> | with_hn.notes: ...`。
+
+### `_smoke_cpb_ablation_runner.py`
+
+12 个 CPB runner 端到端 case：合成 config YAML + class-weights YAML +
+5 份 per-arm eval JSON，subprocess 驱动
+`components.copy_paste_balance.runners.ablation`。覆盖 deploy
+(`cp_balanced` 0.999 anchor) / deploy (`cp_only` anchor best β default)
+/ deploy (`cp_only` anchor best β mixed sweep) / defer
+(`cp_balanced` 0.99) / drop literal (mAP regress) / drop middle-case
+(rare=3pp) / path collision lexical / path collision symlink alias /
+path collision rel-vs-abs / weights `class_names` drift / truncated
+`per_class_AP` / all-sweep `executor_error` refusal。
+
+```bash
+uv run python scripts/_smoke_cpb_ablation_runner.py
+```
+
+预期输出末行为 `ALL OK`；每个 case 一行 `  CPB <label> OK -> <decision> | sweep: ...`（含 anchor_beta），或 path-collision / drift / truncation case 输出 `OK -> exit 2 | ...`。
+
+> **No GPU / no fixture footprint.** 三个 smoke 都在 `tempfile` 创建
+> 完整 input 树，跑完即清理；不会污染 `runs/` 或 `components/*/runs/`。
+> 适合作为 commit 前的本地快速 sanity，也是 CI hook 的候选触发点
+> （目前未挂 hook，按需手动跑）。
 
 ---
 

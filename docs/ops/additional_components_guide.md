@@ -18,8 +18,8 @@
 
 | 组件 | 入口 | 当前阶段 | 可执行性 |
 |---|---|---|---|
-| §三 Copy-paste + 类平衡 | `components/copy_paste_balance/runners/ablation.py` | **a-stage scaffold** | ❌ b-stage runner CLI 未实现 |
-| §四 硬负样本挖掘 | `components/hard_negative_mining/runners/ablation.py` | **a-stage scaffold** | ❌ b-stage runner CLI 未实现 |
+| §三 Copy-paste + 类平衡 | `components/copy_paste_balance/runners/ablation.py` | **a + b-stage LANDED** (`d2d5fc9`) | ✅ runner CLI runnable；等 R1 eval JSONs |
+| §四 硬负样本挖掘 | `components/hard_negative_mining/runners/ablation.py` | **a + b-stage LANDED** (`d2d5fc9`) | ✅ runner CLI runnable；等 FP-harvest manifest |
 | §五 地图先验门控 | — | **DEFERRED → R3+** | ⏸ 不在 R2 范围 |
 | §六 SAHI 切片推理 | — | **gated** | ⏸ 待 a-stage 启动 |
 | §七 KD A0 (DEIM baseline GO-LSD off) | `components/knowledge_distillation/runners/deim_baseline_golsd_off.py` | **scaffold STUB** | ❌ |
@@ -172,9 +172,9 @@ YOLO26-s `reg_max=1` 无原生 DFL → §七 A6 行原 "FDR↔DFL 分布对齐 +
 
 ## §三 Copy-paste 增强 + 类平衡损失
 
-**当前阶段**：a-stage scaffold（commits b6670a1 + d8b3c02，C3 AGREED-CLEAN at iter-11）。
+**当前阶段**：a-stage scaffold（commits b6670a1 + d8b3c02，C3 AGREED-CLEAN at iter-11）+ b-stage runner LANDED（commit `d2d5fc9` 2026-05-14，7-iter B2 + C3 AGREED-CLEAN at iter-7）。
 
-**入口现状**：`components/copy_paste_balance/runners/ablation.py::main()` 抛 `NotImplementedError("b-stage")`。
+**入口现状**：`components/copy_paste_balance/runners/ablation.py::main()` 已实现：argparse 接 `--no-aug-eval / --cp-only-eval / --cp-balanced-eval (×3) / --cp-balanced-beta (×3) / --config / --weights / --output / --anchor-arm {cp_only,cp_balanced} / --anchor-beta`，读取 5 个 per-arm eval JSON + 配置/权重 YAML，应用 §3.7 4-case cascade，写 `runs/_copy_paste_decision.json`。
 
 **已落地（a-stage）**：
 - `config.py` / `data/` / `gates/` / `modules/`
@@ -183,17 +183,22 @@ YOLO26-s `reg_max=1` 无原生 DFL → §七 A6 行原 "FDR↔DFL 分布对齐 +
 - `gates/ablation_gate.py` 决策规则
 - `main.py train --copy-paste β --cls-weight <yaml>` 训练侧已通
 
-**待实现（b-stage CLI）**：runner orchestration 读取 5 个 per-arm eval JSON、cross-arm invariant 校验、3-arm β-sweep 聚合、决策 JSON 写出。预估 ~250 LOC，独立 review-conflict 周期。
+**已落地（b-stage runner）**：
+- 9 个 component 文件 `NotImplementedError` runner/gate/config stub 替换为完整 decision-aggregator pipeline
+- 新增 `components/copy_paste_balance/_internals.py`（HN parity，公开 `is_hex_sha256`）
+- `scripts/_smoke_cpb_ablation_runner.py`（12 cases）+ 共享 `scripts/_smoke_decision_gates.py`（14 CPB gate-cell + integration / UserWarning）
+- 存活 4 轮 Codex stop-gate（verdict↔delta / NaN tolerance / lexical + canonical path-collision）
+- 7-iter B2 (`superpowers:code-reviewer`) + C3 (`codex-review-conflictor`) AGREED-CLEAN at iter-7
 
-**激活前置**：R2 数据 freeze 后，把 5 个训练 arm（no_aug / cp_only / cp_balanced × {β=0.99, 0.999, 0.9999}）跑出 per-arm eval JSON，再调 aggregator。
+**仍 pending（trainer-time hook + c-stage）**：R2 freeze 后启用 YOLO `copy_paste` / DEIM dataloader hook；保持 `fliplr=0`；paste y-center 约束在上画面区域；跑 5 个训练 arm（no_aug / cp_only / cp_balanced × {β=0.99, 0.999, 0.9999}）产 per-arm eval JSON，再调 aggregator。
 
 ---
 
 ## §四 硬负样本挖掘
 
-**当前阶段**：a-stage scaffold（commit e802250，C3 AGREED-CLEAN at iter-2）。
+**当前阶段**：a-stage scaffold（commits e802250 + 58bf859 + 7428f88 + 57e281b，C3 AGREED-CLEAN at iter-2）+ b-stage runner LANDED（commit `d2d5fc9` 2026-05-14，7-iter B2 + C3 AGREED-CLEAN at iter-7）。
 
-**入口现状**：`components/hard_negative_mining/runners/ablation.py::main()` 抛 `NotImplementedError("b-stage")`。
+**入口现状**：`components/hard_negative_mining/runners/ablation.py::main()` 已实现：argparse 接 `--no-hn-eval / --with-hn-eval / --config / --frozen-manifest / --output / --anchor-arm {with_hn}`，读取 2 个 per-arm eval JSON + YAML + frozen FP manifest，应用 §4.7 3-case cascade（defer 路径 mAP-AGNOSTIC），写 `runs/_hard_negative_decision.json`。
 
 **已落地（a-stage）**：
 - `config.py` / `_internals.py` / `data/` / `gates/` / `modules/`
@@ -201,9 +206,12 @@ YOLO26-s `reg_max=1` 无原生 DFL → §七 A6 行原 "FDR↔DFL 分布对齐 +
 - 2-arm（no_hn / with_hn）§4.7 决策规则代码
 - 共享 `runs/_r2_hard_negative_eval_manifest.json` 冻结 FP 评估清单
 
-**待实现（b-stage CLI）**：runner 读取 2 个 per-arm eval JSON、frozen manifest hash 校验、决策 JSON 写出。预估 ~200 LOC。
+**已落地（b-stage runner）**：
+- runner / gate / config / data 9 文件 `NotImplementedError` stub 替换为完整 decision-aggregator pipeline（与 §三 同 commit）
+- canonical-SHA256 frozen-manifest 校验（sorted-keys / no-whitespace）+ 跨 arm hash 一致性 + verdict↔delta 一致性
+- `scripts/_smoke_hn_ablation_runner.py`（6 runner cases）+ 共享 gate-level smoke
 
-**激活前置**：R2 数据 freeze + 难场景 FP manifest 冻结后，跑 no_hn / with_hn 两个训练 arm，再调 aggregator。
+**仍 pending（mining-time + c-stage）**：R1 baseline 跑 demo8/11/13 + R2 难场景；构建 `bg/` / empty-image；人工核验 ≥10%（Track B 任务）；FP-harvest manifest 冻结后跑 no_hn / with_hn 两个训练 arm，再调 aggregator。
 
 ---
 

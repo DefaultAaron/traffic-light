@@ -14,8 +14,8 @@ v1.1 LOCK 2026-05-10
 
 | 组件 | v2.0 状态 | 输出 |
 |---|---|---|
-| §三 Copy-paste + 类平衡 | a-stage LANDED；R2 freeze 后 b/c/d | `runs/_copy_paste_decision.json` |
-| §四 硬负样本挖掘 | a-stage LANDED；pre-R2 rehearsal 可启动 | `runs/_hard_negative_decision.json` |
+| §三 Copy-paste + 类平衡 | a-stage + b-stage runner LANDED (`d2d5fc9`)；trainer-time hook + c/d 待启动 | `runs/_copy_paste_decision.json` |
+| §四 硬负样本挖掘 | a-stage + b-stage runner LANDED (`d2d5fc9`)；mining-side b. + c/d 待启动 | `runs/_hard_negative_decision.json` |
 | §五 地图先验门控 | DEFERRED → R3+ | `runs/_map_prior_decision.json` |
 | §六 SAHI 切片推理 | gated；a-stage 未启动（trigger：R2 真机回放暴露小目标 long-tail FN）| `runs/_sahi_decision.json` |
 | §七 KD | scaffold v1.3 LANDED；P0 cells 待启动 | `runs/_kd_decisions.json` |
@@ -66,7 +66,7 @@ R2 round 关帧前必须完成 a-c：§三、§四、§七 P0 cells。deploy 候
 ### 行动项
 
 - [x] a. `components/copy_paste_balance/` LANDED；commits `b6670a1` + `d8b3c02`；C3 AGREED-CLEAN。
-- [ ] b. R2 freeze 后启用 YOLO `copy_paste` / DEIM dataloader hook；保持 `fliplr=0`；paste y-center 约束在上画面区域。
+- [x] b. **Runner b-stage LANDED**（commit `d2d5fc9`，2026-05-14）：`components/copy_paste_balance/runners/ablation.py` 替换 `NotImplementedError` stub 为完整 decision-aggregator pipeline，读取 5 个 eval JSON（`no_aug` + `cp_only` + `cp_balanced × {0.99, 0.999, 0.9999}`）+ YAML + weights，应用 §3.7 4-case cascade，写 `runs/_copy_paste_decision.json`；46 smoke cases (28 gate-cell + 6 HN runner + 12 CPB runner) + 10 集成 / UserWarning 验证 覆盖 deploy/defer/drop/executor_error + class-set provenance gates；7-iter B2 (`superpowers:code-reviewer`) + C3 (`codex-review-conflictor`) AGREED-CLEAN at iter-7。**Trainer-time 启用 hook 仍 pending**：R2 freeze 后启用 YOLO `copy_paste` / DEIM dataloader hook；保持 `fliplr=0`；paste y-center 约束在上画面区域（随 c. 三臂消融执行）。
 - [ ] c. 三臂消融：无 copy-paste / copy-paste / copy-paste + class-balanced。
 - [ ] d. 写 `runs/_copy_paste_decision.json`。
 - [ ] e. R2 phase report 子节。
@@ -86,7 +86,7 @@ FP 计数使用 §四 frozen manifest；confidence ≥ 0.25；NMS IoU = 0.5。
 ### 行动项
 
 - [x] a. `components/hard_negative_mining/` LANDED；commits `e802250` + `58bf859` + `7428f88` + `57e281b`；C3 final AGREED-CLEAN。
-- [ ] b. R1 baseline 跑 demo8/11/13 + R2 难场景；构建 `bg/` / empty-image；人工核验 ≥10%。
+- [x] b. **Runner b-stage LANDED**（commit `d2d5fc9`，2026-05-14）：`components/hard_negative_mining/runners/ablation.py` 替换 `NotImplementedError` stub 为完整 decision-aggregator pipeline，读取 2 个 eval JSON（`no_hn` + `with_hn`）+ YAML + frozen FP manifest，应用 §4.7 3-case cascade（defer 路径 mAP-AGNOSTIC），写 `runs/_hard_negative_decision.json`；46 smoke cases (28 gate-cell + 6 HN runner + 12 CPB runner) + 10 集成 / UserWarning 验证 覆盖 deploy/defer/drop/executor_error + class-set provenance gates；7-iter B2 (`superpowers:code-reviewer`) + C3 (`codex-review-conflictor`) AGREED-CLEAN at iter-7。**Mining-time 工作仍 pending**：R1 baseline 跑 demo8/11/13 + R2 难场景；构建 `bg/` / empty-image；人工核验 ≥10%（Track B 任务，FP-harvest manifest 落地后 c. 可启动）。
 - [ ] c. A/B：无硬负 vs 有硬负；记录 FP、真实灯 recall、总 mAP。
 - [ ] d. 写 `runs/_hard_negative_decision.json`。
 - [ ] e. R2 phase report 子节。

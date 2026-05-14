@@ -14,8 +14,8 @@
 | KD A2a (YOLO26-s ← YOLO26-m, cls KL) | ✅ scratch student, 单帧 | — |
 | KD A2b (DEIM-S ← DEIM-M, LD + cls) | ✅ 单帧 | — |
 | DEIM-S no-KD scratch baseline refresh | ✅ 条件性，见 §A2 触发 | — |
-| Copy-paste β-sweep (3-arm) | ⚠️ runner a-stage stub → Track B 落 b-stage 才跑 | — |
-| Hard-neg mining (2-arm) | ⚠️ runner a-stage stub + 依赖 FP-harvest manifest | — |
+| Copy-paste β-sweep (3-arm) | ✅ runner b-stage LANDED (`d2d5fc9`)；等 5 个 per-arm eval JSON 触发 c-stage | — |
+| Hard-neg mining (2-arm) | ✅ runner b-stage LANDED (`d2d5fc9`)；仍 blocked on FP-harvest manifest (B-h2) | — |
 | KD A6 cross-arch / A4 progressive | ❌ runner stub；plan §七 trigger 未到（A6: "A4 通过 6 gate"）；本窗口不解锁 | R2 / R3 |
 | KD A7 same-family (L → M / L → S) | ❌ runner stub **+ teacher 在 R1 上不足**：DEIM-L (0.857) vs DEIM-M (0.859) = **−0.2 pp**（L 不及 M）；DEIM-L vs DEIM-S = +0.9 pp（比 A2b 的 M→S +1.1 pp 更弱）。DEIM-L 在 R1 上 epoch 72 早停 + 30 ep plateau → data-saturated，extra capacity 未发挥。**R1 上跳过 A7-M 和 A7-S，节省 ~102 GPU-h** | R2（数据更大 / 更多样后重测 teacher gap）|
 | TSM full-train ablation | ❌ R1 为单帧 stills，无时序标签；伪标签 / raw LISA 序列已退役，均拒绝 | ✅ R2 视频 / 序列 |
@@ -253,48 +253,37 @@ DEIM 路径 seed ≥ 3：`--seed=0`/`1`/`2` 各跑一次，`--output-dir` 后缀
 
 ### A4 / A5 — `preR2-CP-*` / `preR2-HN-*`（dual-track，YOLO 先 DEIM 后）
 
-⚠️ Runner 当前 a-stage stub（`raise NotImplementedError("b-stage")`）。CLI 不可用，等 Track B `preR2-B-CP` / `preR2-B-HN1` b-stage 落地。落地后预期 CLI 形状（B-c1/B-h1 review 最终决定 flag 名 + `--family` 切换的具体语法）：
+✅ Runner b-stage **LANDED** at commit `d2d5fc9` (2026-05-14)。CLI 形状与本 checklist 草案预期不同（无 `--family` / `--size` / `--seed-set` / `--execute` — 这些是 plan-time 草稿；实际 d-stage runner 是 **decision-aggregator** 形态，消费**已训练**的 per-arm eval JSON 而不是驱动训练）。完整契约见 `docs/ops/additional_components_guide.md` §三 / §四 + `docs/ops/scripts_reference.md` ablation smoke 段；摘要：
 
 ```bash
-# A4-Y — YOLO 先（~33 h；负迁移即跳过 A4-D）
-uv run python components/copy_paste_balance/runners/ablation.py \
-    --family yolo --size s \
-    --beta low,mid,high --seed-set 0,1,2 \
-    --output-root runs/preR2_CP_yolo_R1 --execute
+# CPB — 消费 5 个 per-arm eval JSON + YAML + class-weights YAML
+uv run python -m components.copy_paste_balance.runners.ablation \
+    --no-aug-eval <no_aug.json> \
+    --cp-only-eval <cp_only.json> \
+    --cp-balanced-eval <eval_0.99.json>  --cp-balanced-beta 0.99 \
+    --cp-balanced-eval <eval_0.999.json> --cp-balanced-beta 0.999 \
+    --cp-balanced-eval <eval_0.9999.json> --cp-balanced-beta 0.9999 \
+    --config configs/copy_paste_balance.yaml \
+    --weights configs/data_R2_class_weights.yaml \
+    --output runs/_copy_paste_decision.json \
+    --anchor-arm cp_balanced --anchor-beta 0.999
 
-# A4-D — DEIM 后（仅在 A4-Y 未触发 negative-on-r1 时启动，~111 h）
-uv run python components/copy_paste_balance/runners/ablation.py \
-    --family deim --size s \
-    --beta low,mid,high --seed-set 0,1,2 \
-    --output-root runs/preR2_CP_deim_R1 --execute
-
-# A5 prerequisite — FP-harvest (B-h2)；YOLO baseline 收 FP，但 manifest 复用给两家族
-uv run python components/hard_negative_mining/data/eval_manifest.py \
-    --source-model runs/detect/yolo26s-r1/weights/best.pt \
-    --demos demo/**/*.mp4 --output runs/preR2_HN_fp_manifest.json --execute
-
-# A5-Y — YOLO 先（~22 h；负迁移即跳过 A5-D）
-uv run python components/hard_negative_mining/runners/ablation.py \
-    --family yolo --size s \
-    --fp-manifest runs/preR2_HN_fp_manifest.json \
-    --arms no_hn,with_hn --seed-set 0,1,2 \
-    --output-root runs/preR2_HN_yolo_R1 --execute
-
-# A5-D — DEIM 后（仅在 A5-Y 未触发 negative-on-r1 时启动，~74 h）
-uv run python components/hard_negative_mining/runners/ablation.py \
-    --family deim --size s \
-    --fp-manifest runs/preR2_HN_fp_manifest.json \
-    --arms no_hn,with_hn --seed-set 0,1,2 \
-    --output-root runs/preR2_HN_deim_R1 --execute
+# HN — 消费 2 个 per-arm eval JSON + YAML + frozen FP manifest
+uv run python -m components.hard_negative_mining.runners.ablation \
+    --no-hn-eval <no_hn.json> --with-hn-eval <with_hn.json> \
+    --config configs/hard_negative_mining.yaml \
+    --frozen-manifest runs/_hard_negative_eval_manifest.json \
+    --output runs/_hard_negative_decision.json \
+    --anchor-arm with_hn
 ```
 
-**B-c1 / B-h1 实装注意**：runner 需接受 `--family {yolo,deim}` 切换（参照 `scratch_baseline.py` 的 family-dispatch pattern），输出 schema 内带 `family` 字段供 KD gate（B-k1）跨家族聚合。
+**草案 CLI 已废**：上述 `--family` / `--size` / `--seed-set` / `--execute` 形态从未实装；d-stage runner 不驱动训练，仅聚合训好的 eval。c-stage 训练驱动（5 个 CP arm + 2 个 HN arm）由 `main.py train` + 配置 YAML 完成，**待 R2 data freeze + FP-harvest manifest (B-h2) 后启动**。
 
 ### Track B — 实装工作（无 CLI）
 
 | preR2 ID | 当前状态 | 完成判定 |
 |---|---|---|
-| B-c1 / B-h1 | runner stub `NotImplementedError("b-stage")` | `uv run python -m pytest components/{copy_paste_balance,hard_negative_mining}/` 通过 + B2+C3 AGREED |
+| B-c1 / B-h1 | ✅ **DONE** at `d2d5fc9` (2026-05-14)：runner d-stage decision-aggregator b-stage 完整实装；46 smoke cases 全过；7-iter B2+C3 AGREED-CLEAN at iter-7。注意：runner 是 d-stage aggregator，不驱动训练（草案 CLI `--family` / `--seed-set` 形态废） | (completed) |
 | B-h2 | scaffold `eval_manifest.py` 仅含 schema，无 harvest 实装 | manifest JSON 落盘 + 与 B-h1 schema 一致 |
 | B-k1 | `gates/` 空目录 | gate 套件 + `_kd_decision_schema.json` + 一次性 backfill validator + B2+C3 AGREED |
 | B-t1 | 全部 runner / gate 均 stub | `concept_validation.py` runner body + tripwire smoke fixture pass |

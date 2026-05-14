@@ -242,12 +242,13 @@ def _run_path_collision_canonical_cases() -> None:
     Codex stop-gate fix: ``Path("./a")`` and ``Path("/abs/a")`` compare
     UNEQUAL even when they point at the same file; ``Path("a")`` and a
     symlink ``a_link → a`` also compare unequal. ``Path.resolve()``
-    canonicalizes both — the check must use resolved forms. Three
+    canonicalizes both — the check must use resolved forms. Two
     sub-cases:
       (a) two eval paths colliding via SYMLINK (the symlink and its
           target are lexically different paths to the same inode);
-      (b) two eval paths colliding via RELATIVE vs ABSOLUTE form;
-      (c) output_json equal to an input via SYMLINK — would clobber.
+      (b) two eval paths colliding via RELATIVE-vs-ABSOLUTE form
+          combined with ``..`` traversal — both lexically distinct
+          Paths but resolve to the same target.
     """
     # --- sub-case (a): symlink alias ---------------------------------------
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="cpb_ablation_symlink_"))
