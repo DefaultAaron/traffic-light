@@ -437,10 +437,193 @@ def apply_decision_rule(inputs: DecisionInputs) -> DecisionResult:
         The runner copies this into the headline if anchor_arm matches.
 
     Raises:
-        NotImplementedError: a-stage scaffold.
         ValueError: hard programmer errors only (wrong dataclass type,
-            etc.). Legitimate-but-malformed numeric inputs are returned
-            as ``HardNegativeDecision.EXECUTOR_ERROR`` rather than
-            raised — see the executor semantics block above.
+            unexpected ``candidate.arm_id``). Legitimate-but-malformed
+            numeric inputs are returned as
+            ``HardNegativeDecision.EXECUTOR_ERROR`` rather than raised —
+            see the executor semantics block above.
     """
-    raise NotImplementedError("b-stage")
+    if not isinstance(inputs, DecisionInputs):
+        raise ValueError(
+            f"inputs must be DecisionInputs; got {type(inputs).__name__}"
+        )
+
+    arm_id_str = inputs.candidate.arm_id
+    if arm_id_str != "with_hn":
+        # DecisionInputs already rejects baseline candidates via
+        # is_baseline_reference; this guards against any future ArmId
+        # extension that adds a non-with_hn candidate label.
+        raise ValueError(
+            f"candidate.arm_id must be 'with_hn'; got {arm_id_str!r} "
+            f"(no_hn is REJECTED upstream by DecisionInputs.__post_init__'s "
+            f"is_baseline_reference check)"
+        )
+    arm_id = ArmId.WITH_HN
+
+    cand = inputs.candidate
+
+    # Defensive NaN/inf re-check on the three metric fields the rule
+    # consumes plus the tolerance knob. ArmMetrics.__post_init__ already
+    # rejected these at construction, but defense-in-depth against a
+    # future refactor that bypasses ArmMetrics. EXECUTOR_ERROR is
+    # returned (not raised) so the runner can still serialize a complete
+    # output block.
+    for field_name, value in (
+        ("fp_drop_frac", cand.fp_drop_frac),
+        ("real_light_recall_delta_pp", cand.real_light_recall_delta_pp),
+        ("total_map_delta_pp", cand.total_map_delta_pp),
+        ("map_regression_tolerance_pp", inputs.map_regression_tolerance_pp),
+    ):
+        if not math.isfinite(value):
+            return DecisionResult(
+                arm_id=arm_id,
+                decision=HardNegativeDecision.EXECUTOR_ERROR,
+                notes=(
+                    f"executor_error: defensive NaN/inf re-check failed on "
+                    f"{field_name}={value!r} (ArmMetrics / DecisionInputs "
+                    f"construction should have rejected this — a future "
+                    f"refactor likely bypassed the dataclass boundary)"
+                ),
+            )
+
+    fp_drop = cand.fp_drop_frac
+    recall_delta = cand.real_light_recall_delta_pp
+    total_map = cand.total_map_delta_pp
+    map_no_regr = inputs.map_no_regression
+    tolerance = inputs.map_regression_tolerance_pp
+
+    # Defensive verdict ↔ delta consistency re-check. Upstream is
+    # supposed to compute ``map_no_regression`` from
+    # ``(candidate_total_map - baseline_total_map)`` vs
+    # ``map_regression_tolerance_pp``, but a buggy upstream pipeline (or
+    # a hand-built ArmMetrics that paired a stale verdict with a fresh
+    # delta) could stamp ``map_no_regression=True`` while the recorded
+    # delta is below tolerance — and ship as DEPLOY without the literal
+    # drop triggers firing (none of recall/fp_drop literal triggers
+    # cover mAP regression on its own per §4.7). Re-derive the verdict
+    # from the recorded delta and tolerance; mismatch is malformed
+    # input → EXECUTOR_ERROR. Boundary semantics: ``total_map_pp ==
+    # -tolerance_pp`` exactly satisfies the no-regression guard per the
+    # docstring's pinned boundary table, matching the non-strict ≥ in
+    # the deploy condition.
+    expected_no_regression = total_map >= -tolerance
+    if map_no_regr != expected_no_regression:
+        return DecisionResult(
+            arm_id=arm_id,
+            decision=HardNegativeDecision.EXECUTOR_ERROR,
+            notes=(
+                f"executor_error: map_no_regression verdict / "
+                f"total_map_delta inconsistency. Upstream stamped "
+                f"map_no_regression={map_no_regr}, but "
+                f"total_map_delta_pp={total_map:.6f}pp vs "
+                f"map_regression_tolerance_pp={tolerance} implies "
+                f"expected_no_regression={expected_no_regression}. The "
+                f"upstream eval pipeline must re-derive the verdict "
+                f"from the SAME (delta, tolerance) inputs the rule "
+                f"consumes — a desynchronized verdict can otherwise "
+                f"ship a regressing arm as DEPLOY (§4.7 has no literal "
+                f"drop trigger on mAP alone; the verdict is the only "
+                f"mAP-side guard against deploy)."
+            ),
+        )
+
+    # Deploy guards (plan §4.7 deploy condition; non-strict ≥ per boundary
+    # semantics in the module docstring).
+    deploy_fp = fp_drop >= DecisionInputs.DEPLOY_FP_DROP_MIN_FRAC
+    deploy_recall = (
+        recall_delta >= DecisionInputs.DEPLOY_RECALL_MIN_DELTA_PP
+    )
+    if deploy_fp and deploy_recall and map_no_regr:
+        return DecisionResult(
+            arm_id=arm_id,
+            decision=HardNegativeDecision.DEPLOY,
+            notes=(
+                f"deploy: fp_drop={fp_drop:.4f} "
+                f"(≥{DecisionInputs.DEPLOY_FP_DROP_MIN_FRAC}); "
+                f"recall_delta={recall_delta:.3f}pp "
+                f"(≥{DecisionInputs.DEPLOY_RECALL_MIN_DELTA_PP}pp); "
+                f"total_map={total_map:.3f}pp, "
+                f"map_no_regression=True (tolerance={tolerance}pp)"
+            ),
+        )
+
+    # Defer condition (plan §4.7 defer prose, Codex stop-gate fix
+    # 2026-05-10): fp_drop ∈ [0.20, 0.50) (inclusive lower, EXCLUSIVE
+    # upper per S2 ambiguity resolution) AND recall_delta ≥ -0.5pp.
+    # mAP no-regression is NOT a defer guard for §四 (sister §3.7 does
+    # gate defer on mAP no-regression; do NOT cargo-cult that constraint
+    # here — that exact divergence is the Codex stop-gate catch on
+    # commit e802250).
+    defer_fp = (
+        DecisionInputs.DEFER_FP_DROP_MIN_FRAC
+        <= fp_drop
+        < DecisionInputs.DEPLOY_FP_DROP_MIN_FRAC
+    )
+    defer_recall = (
+        recall_delta >= DecisionInputs.DEPLOY_RECALL_MIN_DELTA_PP
+    )
+    if defer_fp and defer_recall:
+        map_status = (
+            "True" if map_no_regr else f"False (total_map={total_map:.3f}pp; "
+            f"defer is mAP-agnostic per §4.7 — recorded for audit)"
+        )
+        return DecisionResult(
+            arm_id=arm_id,
+            decision=HardNegativeDecision.DEFER,
+            notes=(
+                f"defer: fp_drop={fp_drop:.4f} (∈ "
+                f"[{DecisionInputs.DEFER_FP_DROP_MIN_FRAC}, "
+                f"{DecisionInputs.DEPLOY_FP_DROP_MIN_FRAC}) per plan §4.7 "
+                f"with EXCLUSIVE upper); recall_delta={recall_delta:.3f}pp "
+                f"(≥{DecisionInputs.DEPLOY_RECALL_MIN_DELTA_PP}pp); "
+                f"map_no_regression={map_status}. R3 action: re-evaluate "
+                f"with broader / re-tuned mining."
+            ),
+        )
+
+    # Drop catch-all. Two distinguishable cases for audit:
+    #   (1) literal drop trigger: recall_delta < -0.5pp OR fp_drop < 0.20
+    #   (2) catch-all drop: fp_drop ≥ 0.50, recall_delta ≥ -0.5pp, mAP
+    #       regressed past tolerance — deploy fails on mAP guard; defer
+    #       fails on fp_drop ≥ 0.50; literal triggers don't fire. The
+    #       cascade forces drop. This is the ONLY legitimate mAP-driven
+    #       catch-all path per the §四 plan prose (defer is mAP-agnostic
+    #       so the (defer-range-fp, mAP-regress, recall-OK) corner goes
+    #       to defer, NOT drop).
+    drop_recall = (
+        recall_delta < -DecisionInputs.DROP_RECALL_REGRESSION_PP
+    )
+    drop_fp_low = fp_drop < DecisionInputs.DEFER_FP_DROP_MIN_FRAC
+
+    if drop_recall or drop_fp_low:
+        trigger_parts: list[str] = []
+        if drop_recall:
+            trigger_parts.append(
+                f"recall_delta={recall_delta:.3f}pp (< "
+                f"-{DecisionInputs.DROP_RECALL_REGRESSION_PP}pp)"
+            )
+        if drop_fp_low:
+            trigger_parts.append(
+                f"fp_drop={fp_drop:.4f} (< "
+                f"{DecisionInputs.DEFER_FP_DROP_MIN_FRAC} defer floor)"
+            )
+        notes = "drop (literal trigger): " + "; ".join(trigger_parts)
+    else:
+        # Catch-all path: documented as fp_drop ≥ 0.50, recall ≥ -0.5,
+        # mAP regress. State the actual values so the reviewer can
+        # confirm.
+        notes = (
+            f"drop (catch-all): fp_drop={fp_drop:.4f} (deploy-range ≥ "
+            f"{DecisionInputs.DEPLOY_FP_DROP_MIN_FRAC} OR outside defer "
+            f"range); recall_delta={recall_delta:.3f}pp "
+            f"(≥-{DecisionInputs.DROP_RECALL_REGRESSION_PP}pp); "
+            f"total_map={total_map:.3f}pp, map_no_regression="
+            f"{map_no_regr} — deploy failed mAP no-regression guard, "
+            f"defer failed fp_drop range guard, no literal trigger fired"
+        )
+
+    return DecisionResult(
+        arm_id=arm_id,
+        decision=HardNegativeDecision.DROP,
+        notes=notes,
+    )

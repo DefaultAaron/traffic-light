@@ -145,23 +145,50 @@ class AblationConfig:
         # B2 review I4 2026-05-10: reject path collisions across the 5
         # Path-typed fields. ``output_json == any-input-path`` is the
         # catastrophic case; ``no_hn_eval_json == with_hn_eval_json`` is
-        # the silent-arm-collapse case. A generic "all distinct" check
-        # is cheaper than enumerating dangerous pairs.
-        path_values = [value for _, value in path_fields]
-        if len(set(path_values)) != len(path_values):
-            duplicates = sorted({
-                str(p) for p in path_values
-                if path_values.count(p) > 1
-            })
+        # the silent-arm-collapse case.
+        #
+        # Codex stop-gate fix: compare canonical forms via Path.resolve()
+        # so that lexically distinct paths pointing at the same file are
+        # still detected — symlinks, relative-vs-absolute drift, and
+        # ``..`` traversal all alias multiple lexical paths onto one
+        # inode. Path equality alone (``Path("./a") == Path("/abs/a")``
+        # is False) misses these. ``resolve(strict=False)`` handles
+        # non-existent paths (e.g. output_json before write) without
+        # error. Hard links are out of scope.
+        canonical_by_field: list[tuple[str, Path, Path]] = []
+        for name, value in path_fields:
+            try:
+                canonical = value.resolve(strict=False)
+            except (OSError, RuntimeError) as e:
+                raise ValueError(
+                    f"AblationConfig path field {name}={value!r} could not "
+                    f"be canonicalized via Path.resolve(strict=False): {e}"
+                ) from e
+            canonical_by_field.append((name, value, canonical))
+        canonicals = [canon for _, _, canon in canonical_by_field]
+        if len(set(canonicals)) != len(canonicals):
+            seen: dict[Path, list[tuple[str, Path]]] = {}
+            for name, value, canon in canonical_by_field:
+                seen.setdefault(canon, []).append((name, value))
+            duplicates = {
+                str(canon): [
+                    f"{name} (input={value!s})" for name, value in pairs
+                ]
+                for canon, pairs in seen.items()
+                if len(pairs) > 1
+            }
             raise ValueError(
-                f"AblationConfig path fields must all be distinct; got "
-                f"{len(path_values)} fields collapsing to "
-                f"{len(set(path_values))} unique paths "
-                f"(duplicates: {duplicates}). Common offenders: "
-                f"output_json equal to any input path (would clobber the "
-                f"input mid-write); no_hn_eval_json == with_hn_eval_json "
-                f"(would silently collapse the two arms onto one eval "
-                f"source)."
+                f"AblationConfig path fields must canonicalize to distinct "
+                f"filesystem locations; got {len(canonicals)} fields "
+                f"collapsing to {len(set(canonicals))} unique resolved "
+                f"paths (duplicates by canonical form: {duplicates}). "
+                f"Common offenders: output_json equal to any input path "
+                f"(would clobber the input mid-write); no_hn_eval_json == "
+                f"with_hn_eval_json — lexically OR via symlink / "
+                f"relative-vs-absolute drift — would silently collapse the "
+                f"two arms onto one eval source. The check uses "
+                f"Path.resolve(strict=False) so symlinks and ``..`` "
+                f"traversal are normalized."
             )
         # anchor_arm: string in {"with_hn"} only. Module prose explicitly
         # REJECTS "no_hn" — mirrored at the dataclass boundary.
@@ -206,47 +233,397 @@ def run_ablation(config: AblationConfig) -> None:
     Raises:
         ValueError: schema / config violations from the underlying modules.
         FileNotFoundError: any input path missing.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    import hashlib
+    import json
+    import os
+
+    import jsonschema
+
+    from components.hard_negative_mining._internals import is_hex_sha256
+    from components.hard_negative_mining.config import (
+        load_hard_negative_mining_yaml,
+    )
+    from components.hard_negative_mining.data.eval_manifest import (
+        load_frozen_eval_manifest,
+    )
+    from components.hard_negative_mining.gates.ablation_gate import (
+        compute_arm_metrics,
+    )
+    from components.hard_negative_mining.gates.decision_gate import (
+        DecisionInputs,
+        apply_decision_rule,
+    )
+
+    # ----- Step 0: load configs, manifest, and per-arm eval JSONs ----------
+    cfg = load_hard_negative_mining_yaml(config.config_yaml)
+    manifest = load_frozen_eval_manifest(config.frozen_manifest_json)
+
+    config_yaml_sha = hashlib.sha256(
+        config.config_yaml.read_bytes()
+    ).hexdigest()
+
+    def _load_eval(path: Path, arm_label: str) -> dict:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{arm_label} eval JSON does not exist: {path}"
+            )
+        with path.open("r", encoding="utf-8") as fh:
+            eval_data = json.load(fh)
+        if not isinstance(eval_data, dict):
+            raise ValueError(
+                f"{path}: {arm_label} eval JSON top-level must be an object"
+            )
+        # Required-key check + light type validation (the dataclasses do the
+        # rest at construction).
+        required = {
+            "fp_count": int,
+            "real_light_recall": float,
+            "total_mAP_at_0_5": float,
+            "data_yaml_sha256": str,
+            "eval_manifest_sha256": str,
+            "fp_manifest_sha256": str,
+            "map_no_regression": bool,
+            "map_regression_tolerance_pp": float,
+        }
+        for key, expected_type in required.items():
+            if key not in eval_data:
+                raise ValueError(
+                    f"{path}: {arm_label} eval JSON missing required key "
+                    f"{key!r}"
+                )
+            value = eval_data[key]
+            # Allow int for float fields (JSON serializes 0 as 0).
+            if expected_type is float and isinstance(value, int) and not isinstance(value, bool):
+                eval_data[key] = float(value)
+                continue
+            # Strict bool check first (Python bool is int).
+            if expected_type is bool and not isinstance(value, bool):
+                raise ValueError(
+                    f"{path}: {arm_label} eval JSON key {key!r} must be bool; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            if expected_type is int and (
+                not isinstance(value, int) or isinstance(value, bool)
+            ):
+                raise ValueError(
+                    f"{path}: {arm_label} eval JSON key {key!r} must be int; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            if expected_type is float and not isinstance(value, float):
+                raise ValueError(
+                    f"{path}: {arm_label} eval JSON key {key!r} must be float; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            if expected_type is str and not isinstance(value, str):
+                raise ValueError(
+                    f"{path}: {arm_label} eval JSON key {key!r} must be str; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+        # B2 review MINOR-8 fix: validate hex format AT the per-key
+        # validation loop so the diagnostic names which eval JSON
+        # produced the malformed hash (rather than surfacing later
+        # as a generic "not valid hex" downstream of cross-arm checks).
+        for hash_key in (
+            "data_yaml_sha256", "eval_manifest_sha256", "fp_manifest_sha256",
+        ):
+            if not is_hex_sha256(eval_data[hash_key]):
+                raise ValueError(
+                    f"{path}: {arm_label} eval JSON key {hash_key!r} must "
+                    f"be 64-char lowercase hex; got {eval_data[hash_key]!r}"
+                )
+        return eval_data
+
+    no_hn = _load_eval(config.no_hn_eval_json, "no_hn")
+    with_hn = _load_eval(config.with_hn_eval_json, "with_hn")
+
+    # ----- Step 0: cross-artifact equality checks --------------------------
+    # Manifest self-hash already verified inside load_frozen_eval_manifest;
+    # cross-check that both eval JSONs reference that same hash.
+    for arm_label, ev in (("no_hn", no_hn), ("with_hn", with_hn)):
+        if ev["fp_manifest_sha256"] != manifest.manifest_sha256:
+            raise ValueError(
+                f"{arm_label} eval JSON's fp_manifest_sha256 "
+                f"({ev['fp_manifest_sha256']!r}) does not match the loaded "
+                f"frozen FP manifest's manifest_sha256 "
+                f"({manifest.manifest_sha256!r}). The trainer must have "
+                f"evaluated this arm against a different FP manifest than "
+                f"the one the runner is consuming — §4.7 anti-gaming check "
+                f"failed."
+            )
+    if no_hn["eval_manifest_sha256"] != with_hn["eval_manifest_sha256"]:
+        raise ValueError(
+            f"no_hn / with_hn disagree on eval_manifest_sha256 "
+            f"({no_hn['eval_manifest_sha256']!r} vs "
+            f"{with_hn['eval_manifest_sha256']!r}). Every cell must consume "
+            f"the SAME frozen R2 val manifest."
+        )
+    if no_hn["data_yaml_sha256"] != with_hn["data_yaml_sha256"]:
+        raise ValueError(
+            f"no_hn / with_hn disagree on data_yaml_sha256 "
+            f"({no_hn['data_yaml_sha256']!r} vs "
+            f"{with_hn['data_yaml_sha256']!r}). Class-label drift across "
+            f"arms silently corrupts AP comparisons."
+        )
+    if cfg.data_yaml_sha256 != no_hn["data_yaml_sha256"]:
+        raise ValueError(
+            f"config data_yaml_sha256 ({cfg.data_yaml_sha256!r}) does not "
+            f"match the per-arm eval JSONs' data_yaml_sha256 "
+            f"({no_hn['data_yaml_sha256']!r}). The YAML must point at the "
+            f"SAME data.yaml the trainer evaluated against."
+        )
+    if no_hn["map_regression_tolerance_pp"] != with_hn["map_regression_tolerance_pp"]:
+        raise ValueError(
+            f"no_hn / with_hn disagree on map_regression_tolerance_pp "
+            f"({no_hn['map_regression_tolerance_pp']} vs "
+            f"{with_hn['map_regression_tolerance_pp']}). Tolerance is a "
+            f"runner-side knob; the SAME value must stamp every cell."
+        )
+    if cfg.map_regression_tolerance_pp != no_hn["map_regression_tolerance_pp"]:
+        raise ValueError(
+            f"config map_regression_tolerance_pp "
+            f"({cfg.map_regression_tolerance_pp}) does not match the per-arm "
+            f"eval JSONs' map_regression_tolerance_pp "
+            f"({no_hn['map_regression_tolerance_pp']}). The YAML's tolerance "
+            f"is authoritative and must equal the upstream eval pipeline's."
+        )
+    if not no_hn["map_no_regression"]:
+        raise ValueError(
+            "no_hn eval JSON's map_no_regression is False — baseline is "
+            "self-compared so the verdict is trivially True. Either the "
+            "trainer pipeline mis-stamped the baseline cell or the wrong "
+            "JSON was passed as --no-hn-eval."
+        )
+
+    eval_manifest_sha = no_hn["eval_manifest_sha256"]
+    fp_manifest_sha = manifest.manifest_sha256
+    data_yaml_sha = cfg.data_yaml_sha256
+    tolerance = cfg.map_regression_tolerance_pp
+
+    if not is_hex_sha256(eval_manifest_sha):
+        raise ValueError(
+            f"eval_manifest_sha256 from eval JSONs is not valid hex: "
+            f"{eval_manifest_sha!r}"
+        )
+
+    # ----- Step 1: build ArmMetrics for both arms --------------------------
+    baseline_arm = compute_arm_metrics(
+        arm_id="no_hn",
+        is_baseline_reference=True,
+        baseline_fp_count=no_hn["fp_count"],
+        candidate_fp_count=no_hn["fp_count"],
+        baseline_real_light_recall=no_hn["real_light_recall"],
+        candidate_real_light_recall=no_hn["real_light_recall"],
+        baseline_total_map=no_hn["total_mAP_at_0_5"],
+        candidate_total_map=no_hn["total_mAP_at_0_5"],
+        eval_manifest_sha256=eval_manifest_sha,
+        fp_manifest_sha256=fp_manifest_sha,
+        map_no_regression=True,
+        map_regression_tolerance_pp=tolerance,
+        data_yaml_sha256=data_yaml_sha,
+    )
+    candidate_arm = compute_arm_metrics(
+        arm_id="with_hn",
+        is_baseline_reference=False,
+        baseline_fp_count=no_hn["fp_count"],
+        candidate_fp_count=with_hn["fp_count"],
+        baseline_real_light_recall=no_hn["real_light_recall"],
+        candidate_real_light_recall=with_hn["real_light_recall"],
+        baseline_total_map=no_hn["total_mAP_at_0_5"],
+        candidate_total_map=with_hn["total_mAP_at_0_5"],
+        eval_manifest_sha256=eval_manifest_sha,
+        fp_manifest_sha256=fp_manifest_sha,
+        map_no_regression=with_hn["map_no_regression"],
+        map_regression_tolerance_pp=tolerance,
+        data_yaml_sha256=data_yaml_sha,
+    )
+
+    # ----- Step 2: apply decision rule on with_hn --------------------------
+    # B2 review MAJOR-6 fix: source ``map_no_regression`` from the
+    # ArmMetrics dataclass field, not the raw eval dict (single source of
+    # truth — see CPB sister runner for full rationale).
+    inputs = DecisionInputs(
+        baseline=baseline_arm,
+        candidate=candidate_arm,
+        map_no_regression=candidate_arm.map_no_regression,
+        map_regression_tolerance_pp=tolerance,
+    )
+    decision_result = apply_decision_rule(inputs)
+
+    # ----- Step 3: assemble output dict per schema -------------------------
+    def _arm_to_block(arm) -> dict:
+        return {
+            "fp_drop_frac": arm.fp_drop_frac,
+            "real_light_recall_delta_pp": arm.real_light_recall_delta_pp,
+            "total_map_delta_pp": arm.total_map_delta_pp,
+            "is_baseline_reference": arm.is_baseline_reference,
+            "map_no_regression": arm.map_no_regression,
+            "map_regression_tolerance_pp": arm.map_regression_tolerance_pp,
+            "eval_manifest_sha256": arm.eval_manifest_sha256,
+            "fp_manifest_sha256": arm.fp_manifest_sha256,
+            "data_yaml_sha256": arm.data_yaml_sha256,
+        }
+
+    candidate_block = _arm_to_block(candidate_arm)
+    baseline_block = _arm_to_block(baseline_arm)
+    artifact = {
+        "schema_version": "1",
+        "config_yaml_sha256": config_yaml_sha,
+        "data_yaml_sha256": data_yaml_sha,
+        "fp_manifest_sha256": fp_manifest_sha,
+        "eval_manifest_sha256": eval_manifest_sha,
+        "headline_arm": "with_hn",
+        "headline_metrics": candidate_block,
+        "headline_decision": decision_result.decision.value,
+        "notes": (
+            f"§四 hard-negative-mining ablation; anchor_arm=with_hn; "
+            f"tolerance={tolerance}pp; manifest entries={len(manifest.entries)}"
+        ),
+        "no_hn": {
+            "metrics": baseline_block,
+            "notes": (
+                f"no_hn baseline reference (self-comparison); "
+                f"fp_count={no_hn['fp_count']}, "
+                f"recall={no_hn['real_light_recall']:.6f}, "
+                f"mAP={no_hn['total_mAP_at_0_5']:.6f}"
+            ),
+        },
+        "with_hn": {
+            "metrics": candidate_block,
+            "decision": decision_result.decision.value,
+            "notes": decision_result.notes,
+        },
+    }
+
+    # ----- Step 4: schema-validate before assert_artifact_invariants -------
+    schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "gates"
+        / "_hard_negative_decision_schema.json"
+    )
+    with schema_path.open("r", encoding="utf-8") as fh:
+        schema = json.load(fh)
+    jsonschema.validate(instance=artifact, schema=schema)
+
+    # ----- Step 5: cross-row invariants (the schema can't express) --------
+    assert_artifact_invariants(artifact)
+
+    # ----- Step 6: atomic write .tmp → final --------------------------------
+    # B2 review MAJOR-3: atomic-write hygiene. Use a process-unique tmp
+    # name (mkstemp) so concurrent runs sharing the output directory don't
+    # race on the same .tmp filename. Unlink the tmp on any exception
+    # between fdopen and replace so a partial / orphaned .tmp doesn't
+    # pollute runs/.
+    import tempfile
+
+    out_path = config.output_json
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        prefix=out_path.name + ".",
+        suffix=".tmp",
+        dir=str(out_path.parent),
+    )
+    # B2 iter-2 MINOR-2 fix: enter try IMMEDIATELY after mkstemp so an
+    # asynchronous KeyboardInterrupt arriving between mkstemp and the
+    # try block cannot leak both the fd and the .tmp file.
+    try:
+        tmp_path = Path(tmp_name)
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(artifact, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp_path, out_path)
+    except BaseException:
+        try:
+            os.close(tmp_fd)
+        except OSError:
+            pass
+        try:
+            Path(tmp_name).unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def main() -> int:
     """CLI entry: parse args → build ``AblationConfig`` → ``run_ablation``.
 
-    Argparse contract (b-stage):
+    Argparse contract:
         --no-hn-eval FILE       baseline arm's eval JSON (must carry
                                  map_no_regression=True)
         --with-hn-eval FILE     candidate arm's eval JSON
         --config FILE           configs/hard_negative_mining.yaml path
         --frozen-manifest FILE  runs/_hard_negative_eval_manifest.json path
         --output FILE           runs/_hard_negative_decision.json path
-        --anchor-arm {with_hn}  REQUIRED; argparse enforces single-value
-                                 choice (with_hn). The single-element
-                                 enum is intentional defense (mirrors
-                                 the schema's single-element
-                                 headline_arm enum) — making the
-                                 constraint explicit at the CLI is the
-                                 documentation that no_hn is rejected.
+        --anchor-arm {with_hn}  REQUIRED; single-value choice (with_hn).
+                                 The single-element enum is intentional
+                                 defense (mirrors the schema's
+                                 headline_arm enum) — no_hn is rejected.
 
-    a-stage scaffold behavior: at this layer the function raises
-    ``NotImplementedError`` (process exit code 1 — Python's default for
-    uncaught exceptions). b-stage will replace the body with the
-    aggregator implementation; b-stage's contract (NOT the a-stage
-    behavior) is documented below for forward reference:
-
-      Returns (b-stage):
+    Returns:
         0 — AGREED-CLEAN run; output JSON written.
         1 — ``executor_error`` in the headline row (output JSON still
             written but contains diagnostic notes).
         2 — internal contract violation (e.g. schema validation failure
             after ``assert_artifact_invariants`` passed; should be
             unreachable in practice).
-
-    Raises:
-        NotImplementedError: a-stage scaffold (b-stage replaces the body).
     """
-    raise NotImplementedError("b-stage")
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="hard_negative_mining.runners.ablation",
+        description=(
+            "§四 hard-negative-mining ablation d-stage runner. Aggregates "
+            "no_hn / with_hn eval JSONs into runs/_hard_negative_decision.json "
+            "per plan §4.7 (Codex stop-gate fix 2026-05-10: defer is "
+            "mAP-agnostic; only deploy requires map_no_regression=True)."
+        ),
+    )
+    parser.add_argument("--no-hn-eval", type=Path, required=True)
+    parser.add_argument("--with-hn-eval", type=Path, required=True)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--frozen-manifest", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--anchor-arm",
+        choices=("with_hn",),
+        required=True,
+        help=(
+            "Single-value enum {with_hn} mirroring the schema's "
+            "headline_arm enum. no_hn is REJECTED — baseline carries no "
+            "decision. Required at the CLI to make the constraint "
+            "explicit."
+        ),
+    )
+    args = parser.parse_args()
+
+    try:
+        config = AblationConfig(
+            no_hn_eval_json=args.no_hn_eval,
+            with_hn_eval_json=args.with_hn_eval,
+            config_yaml=args.config,
+            frozen_manifest_json=args.frozen_manifest,
+            output_json=args.output,
+            anchor_arm=args.anchor_arm,
+        )
+        run_ablation(config)
+    except (FileNotFoundError, ValueError) as e:
+        # AblationConfig.__post_init__ ValueErrors (distinct-path,
+        # anchor-arm, etc.) AND run_ablation Step 0 hard fails BOTH
+        # surface here. Both are pre-output-write conditions so exit 2
+        # (no artifact produced); the runner does not write a partial
+        # output JSON on these paths.
+        print(f"hard_negative_mining ablation: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 2
+
+    # Re-read the output to determine the exit code from the headline
+    # decision. The runner doesn't return a DecisionResult so this is the
+    # canonical post-run check.
+    with args.output.open("r", encoding="utf-8") as fh:
+        artifact = json.load(fh)
+    return 1 if artifact["headline_decision"] == "executor_error" else 0
 
 
 def assert_artifact_invariants(artifact: dict) -> None:

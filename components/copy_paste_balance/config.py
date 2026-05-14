@@ -295,6 +295,140 @@ def load_copy_paste_balance_yaml(path: str | Path) -> CopyPasteBalanceYamlConfig
     Raises:
         FileNotFoundError: ``path`` does not exist.
         ValueError: schema / range / enum violations as described above.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    import yaml as _yaml
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist")
+    with path.open("r", encoding="utf-8") as fh:
+        raw = _yaml.safe_load(fh)
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{path}: top-level YAML must be a mapping; got {type(raw).__name__}"
+        )
+
+    def _path_or_none(val: object, field: str) -> Path | None:
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return None if val == "" else Path(val)
+        raise ValueError(
+            f"{path}: {field} must be string or null; got "
+            f"{type(val).__name__}={val!r}"
+        )
+
+    def _str_tuple(val: object, field: str) -> tuple[str, ...]:
+        # C3 review MINOR-3 fix: reject non-string entries at the YAML
+        # layer instead of stringifying. ``class_names: [0, 1, ...]`` would
+        # silently coerce to ``["0", "1", ...]`` and break the per-class
+        # label contract downstream. Mirrors HN's strict _str_tuple.
+        if not isinstance(val, list):
+            raise ValueError(
+                f"{path}: {field} must be a YAML list; got "
+                f"{type(val).__name__}"
+            )
+        out: list[str] = []
+        for i, item in enumerate(val):
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"{path}: {field}[{i}] must be str; got "
+                    f"{type(item).__name__}={item!r}"
+                )
+            out.append(item)
+        return tuple(out)
+
+    def _int_tuple(val: object, field: str) -> tuple[int, ...]:
+        if not isinstance(val, list):
+            raise ValueError(
+                f"{path}: {field} must be a YAML list; got "
+                f"{type(val).__name__}"
+            )
+        out: list[int] = []
+        for i, item in enumerate(val):
+            if not isinstance(item, int) or isinstance(item, bool):
+                raise ValueError(
+                    f"{path}: {field}[{i}] must be int; got "
+                    f"{type(item).__name__}={item!r}"
+                )
+            out.append(item)
+        return tuple(out)
+
+    if raw.get("num_classes") is None:
+        raise ValueError(
+            f"{path}: num_classes must be set explicitly; got null"
+        )
+
+    cp_raw = raw.get("copy_paste", {})
+    if not isinstance(cp_raw, dict):
+        raise ValueError(
+            f"{path}: copy_paste block must be a mapping; got "
+            f"{type(cp_raw).__name__}"
+        )
+    cp = CopyPasteConfig(
+        num_classes=raw["num_classes"],
+        probability=float(cp_raw.get("probability", 0.0))
+        if not isinstance(cp_raw.get("probability"), bool)
+        else cp_raw["probability"],
+        y_center_max_frac=(
+            None if cp_raw.get("y_center_max_frac") is None
+            else float(cp_raw["y_center_max_frac"])
+        ),
+        paste_source_class_ids=_int_tuple(
+            cp_raw.get("paste_source_class_ids", []),
+            "copy_paste.paste_source_class_ids",
+        ),
+        min_per_batch_K=cp_raw.get("min_per_batch_K", 0),
+        required_fliplr=float(cp_raw.get("required_fliplr", 0.0))
+        if not isinstance(cp_raw.get("required_fliplr"), bool)
+        else cp_raw["required_fliplr"],
+        required_mosaic_lock=cp_raw.get("required_mosaic_lock", False),
+    )
+
+    cb_raw = raw.get("class_balance", {})
+    if not isinstance(cb_raw, dict):
+        raise ValueError(
+            f"{path}: class_balance block must be a mapping; got "
+            f"{type(cb_raw).__name__}"
+        )
+    apply_mode_raw = cb_raw.get("apply_mode")
+    if not isinstance(apply_mode_raw, str):
+        raise ValueError(
+            f"{path}: class_balance.apply_mode must be str; got "
+            f"{type(apply_mode_raw).__name__}={apply_mode_raw!r}"
+        )
+    try:
+        apply_mode = ClassBalanceApplyMode(apply_mode_raw)
+    except ValueError as e:
+        raise ValueError(
+            f"{path}: class_balance.apply_mode={apply_mode_raw!r} is not a "
+            f"valid ClassBalanceApplyMode "
+            f"({[m.value for m in ClassBalanceApplyMode]})"
+        ) from e
+
+    return CopyPasteBalanceYamlConfig(
+        num_classes=raw["num_classes"],
+        class_names=_str_tuple(raw.get("class_names", []), "class_names"),
+        rare_class_threshold=raw.get("rare_class_threshold", 0),
+        safety_class_ids=_int_tuple(
+            raw.get("safety_class_ids", []), "safety_class_ids"
+        ),
+        copy_paste_config=cp,
+        class_balance_beta=float(cb_raw.get("beta", 0.0))
+        if not isinstance(cb_raw.get("beta"), bool)
+        else cb_raw["beta"],
+        class_balance_apply_mode=apply_mode,
+        class_balance_max_weight_ratio=float(
+            cb_raw.get("max_weight_ratio", 1.0)
+        )
+        if not isinstance(cb_raw.get("max_weight_ratio"), bool)
+        else cb_raw["max_weight_ratio"],
+        class_counts_path=_path_or_none(
+            cb_raw.get("class_counts_path"), "class_balance.class_counts_path"
+        ),
+        map_regression_tolerance_pp=float(
+            raw.get("map_regression_tolerance_pp", 0.0)
+        )
+        if not isinstance(raw.get("map_regression_tolerance_pp"), bool)
+        else raw["map_regression_tolerance_pp"],
+    )

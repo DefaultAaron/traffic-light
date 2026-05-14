@@ -246,6 +246,70 @@ class AblationConfig:
                     f"cp_balanced_eval_jsons[{i}] must be Path; got "
                     f"{type(p).__name__}={p!r}"
                 )
+        # Distinct-path check across ALL 8 Path fields (5 individual + 3
+        # cp_balanced sweep entries). Mirrors HN AblationConfig's B2 review
+        # I4 contract: output_json equal to any input path would clobber the
+        # input mid-write; two eval-input paths colliding would silently
+        # collapse two arms onto one eval source (e.g. cp_only_eval_json ==
+        # cp_balanced_eval_jsons[0], or two cp_balanced sweep entries
+        # pointing at the same file).
+        #
+        # Codex stop-gate fix: compare canonical forms via Path.resolve()
+        # so that lexically distinct paths pointing at the same file are
+        # still detected — symlinks, relative-vs-absolute drift, and
+        # ``..`` traversal all alias multiple lexical paths onto one
+        # inode. Path equality alone (``Path("./a") == Path("/abs/a")``
+        # is False) misses these. ``resolve(strict=False)`` handles
+        # non-existent paths (e.g. output_json before write) without
+        # error. Hard links are out of scope — Path.resolve doesn't
+        # detect them; if it ever becomes a real hazard, switch to
+        # os.path.samefile for existing-file pairs.
+        all_paths = [
+            ("no_aug_eval_json", self.no_aug_eval_json),
+            ("cp_only_eval_json", self.cp_only_eval_json),
+            ("config_yaml", self.config_yaml),
+            ("weights_yaml", self.weights_yaml),
+            ("output_json", self.output_json),
+        ] + [
+            (f"cp_balanced_eval_jsons[{i}]", p)
+            for i, p in enumerate(self.cp_balanced_eval_jsons)
+        ]
+        canonical_by_field: list[tuple[str, Path, Path]] = []
+        for name, value in all_paths:
+            try:
+                canonical = value.resolve(strict=False)
+            except (OSError, RuntimeError) as e:
+                raise ValueError(
+                    f"AblationConfig path field {name}={value!r} could not "
+                    f"be canonicalized via Path.resolve(strict=False): {e}"
+                ) from e
+            canonical_by_field.append((name, value, canonical))
+        canonicals = [canon for _, _, canon in canonical_by_field]
+        if len(set(canonicals)) != len(canonicals):
+            seen: dict[Path, list[tuple[str, Path]]] = {}
+            for name, value, canon in canonical_by_field:
+                seen.setdefault(canon, []).append((name, value))
+            duplicates = {
+                str(canon): [
+                    f"{name} (input={value!s})" for name, value in pairs
+                ]
+                for canon, pairs in seen.items()
+                if len(pairs) > 1
+            }
+            raise ValueError(
+                f"AblationConfig path fields must canonicalize to distinct "
+                f"filesystem locations; got {len(canonicals)} fields "
+                f"collapsing to {len(set(canonicals))} unique resolved "
+                f"paths (duplicates by canonical form: {duplicates}). "
+                f"Common offenders: output_json equal to any input path "
+                f"(would clobber the input mid-write); two eval paths "
+                f"colliding lexically OR via symlink / relative-vs-absolute "
+                f"drift (would silently collapse two arms onto one eval "
+                f"source); two cp_balanced sweep entries pointing at the "
+                f"same file (would silently give two betas the same "
+                f"metrics). The check uses Path.resolve(strict=False) so "
+                f"symlinks and ``..`` traversal are normalized."
+            )
         # cp_balanced_betas: tuple of float, length == 3, set equality with
         # the plan-pinned sweep. Bool-exclusion before the membership test
         # mirrors the laplace_alpha / class_balance_beta hard-pin pattern.
@@ -343,40 +407,663 @@ def run_ablation(config: AblationConfig) -> None:
     Raises:
         ValueError: schema / config violations from the underlying modules.
         FileNotFoundError: any input path missing.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    import hashlib
+    import json
+    import os
+
+    import jsonschema
+    import yaml as _yaml
+
+    from components.copy_paste_balance.config import (
+        load_copy_paste_balance_yaml,
+    )
+    from components.copy_paste_balance._internals import is_hex_sha256
+    from components.copy_paste_balance.gates.ablation_gate import (
+        PerClassAP,
+        compute_arm_metrics,
+    )
+    from components.copy_paste_balance.gates.decision_gate import (
+        ArmId,
+        DecisionInputs,
+        apply_decision_rule,
+    )
+
+    # ----- Load config + weights yaml + their hashes -----------------------
+    cfg = load_copy_paste_balance_yaml(config.config_yaml)
+    config_yaml_sha = hashlib.sha256(
+        config.config_yaml.read_bytes()
+    ).hexdigest()
+    if not config.weights_yaml.exists():
+        raise FileNotFoundError(
+            f"weights YAML does not exist: {config.weights_yaml}"
+        )
+    weights_yaml_sha = hashlib.sha256(
+        config.weights_yaml.read_bytes()
+    ).hexdigest()
+    with config.weights_yaml.open("r", encoding="utf-8") as fh:
+        weights_raw = _yaml.safe_load(fh)
+    if not isinstance(weights_raw, dict):
+        raise ValueError(
+            f"{config.weights_yaml}: top-level must be a mapping; got "
+            f"{type(weights_raw).__name__}"
+        )
+    weights_data_yaml_sha = weights_raw.get("data_yaml_sha256")
+    weights_num_classes = weights_raw.get("num_classes")
+    weights_rare_threshold = weights_raw.get("rare_class_threshold")
+    weights_class_names_raw = weights_raw.get("class_names")
+    # Cross-check config ↔ weights
+    if weights_num_classes != cfg.num_classes:
+        raise ValueError(
+            f"weights YAML num_classes ({weights_num_classes}) != config "
+            f"num_classes ({cfg.num_classes}); stale weights file"
+        )
+    if weights_rare_threshold != cfg.rare_class_threshold:
+        raise ValueError(
+            f"weights YAML rare_class_threshold ({weights_rare_threshold}) "
+            f"!= config rare_class_threshold ({cfg.rare_class_threshold}); "
+            f"the rare set the §三 rule consumes must come from a single "
+            f"source of truth"
+        )
+    # C3 iter-3 MAJOR-1 fix: validate weights class_names against config.
+    # The runner's Step 0 invariant block documents the contract
+    # ``counts.class_names == config.class_names`` but the implementation
+    # was checking num_classes + rare_threshold + data_yaml_sha only — a
+    # stale weights YAML with matching hashes / num_classes but DIFFERENT
+    # class-name ordering would pass through silently, leaving a
+    # decision artifact that looks provenance-clean while the
+    # safety-class interpretation is stale.
+    if not isinstance(weights_class_names_raw, list):
+        raise ValueError(
+            f"weights YAML class_names must be a YAML list; got "
+            f"{type(weights_class_names_raw).__name__}={weights_class_names_raw!r}"
+        )
+    weights_class_names = tuple(weights_class_names_raw)
+    for i, name in enumerate(weights_class_names):
+        if not isinstance(name, str):
+            raise ValueError(
+                f"weights YAML class_names[{i}] must be str; got "
+                f"{type(name).__name__}={name!r}"
+            )
+    if weights_class_names != cfg.class_names:
+        # Find first mismatch index for diagnostic.
+        first_diff = next(
+            (
+                i for i in range(min(len(weights_class_names), len(cfg.class_names)))
+                if weights_class_names[i] != cfg.class_names[i]
+            ),
+            min(len(weights_class_names), len(cfg.class_names)),
+        )
+        raise ValueError(
+            f"weights YAML class_names != config class_names; first "
+            f"divergence at index {first_diff} "
+            f"(weights[{first_diff}]={weights_class_names[first_diff] if first_diff < len(weights_class_names) else '<missing>'!r}, "
+            f"config[{first_diff}]={cfg.class_names[first_diff] if first_diff < len(cfg.class_names) else '<missing>'!r}). "
+            f"Stale weights / config pairing — class-name drift would "
+            f"silently shift the safety-class interpretation underneath the "
+            f"§三 decision rule."
+        )
+
+    # ----- Load + validate eval JSONs --------------------------------------
+    # B2 review MAJOR-4: explicit type validation symmetric with HN runner.
+    # JSON has no float-vs-int discrimination, so a trainer that serializes
+    # ``total_mAP_at_0_5: 0`` produces an int — accept and coerce. Strict
+    # bool exclusion first (Python bool is int subclass).
+    def _load_eval(path: Path, label: str) -> dict:
+        if not path.exists():
+            raise FileNotFoundError(f"{label} eval JSON does not exist: {path}")
+        with path.open("r", encoding="utf-8") as fh:
+            ev = json.load(fh)
+        if not isinstance(ev, dict):
+            raise ValueError(
+                f"{path}: {label} eval JSON top-level must be object"
+            )
+        required: dict[str, type] = {
+            "per_class_AP": list,
+            "total_mAP_at_0_5": float,
+            "rare_fp_count": int,
+            "data_yaml_sha256": str,
+            "eval_manifest_sha256": str,
+            "fp_manifest_sha256": str,
+            "map_no_regression": bool,
+            "map_regression_tolerance_pp": float,
+        }
+        for key, expected_type in required.items():
+            if key not in ev:
+                raise ValueError(
+                    f"{path}: {label} eval JSON missing required key {key!r}"
+                )
+            value = ev[key]
+            # Strict bool check first (Python bool is int subclass; would
+            # silently pass `isinstance(value, int)`).
+            if expected_type is bool and not isinstance(value, bool):
+                raise ValueError(
+                    f"{path}: {label} eval JSON key {key!r} must be bool; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            # JSON has no float-vs-int discrimination — accept int and
+            # coerce to float for float-typed keys.
+            if expected_type is float and isinstance(value, int) and not isinstance(value, bool):
+                ev[key] = float(value)
+                continue
+            if expected_type is int and (
+                not isinstance(value, int) or isinstance(value, bool)
+            ):
+                raise ValueError(
+                    f"{path}: {label} eval JSON key {key!r} must be int; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            if expected_type is float and not isinstance(value, float):
+                raise ValueError(
+                    f"{path}: {label} eval JSON key {key!r} must be float; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            if expected_type is str and not isinstance(value, str):
+                raise ValueError(
+                    f"{path}: {label} eval JSON key {key!r} must be str; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+            if expected_type is list and not isinstance(value, list):
+                raise ValueError(
+                    f"{path}: {label} eval JSON key {key!r} must be list; "
+                    f"got {type(value).__name__}={value!r}"
+                )
+        # C3 iter-2 MINOR-1 fix: per-key hex format validation mirroring
+        # the iter-1 MINOR-8 fix in HN. Reject malformed hashes at the
+        # eval JSON layer so the diagnostic names the offending file
+        # rather than surfacing later as a generic "not valid hex" from
+        # downstream of cross-arm checks (which would have already
+        # passed equality if both arms produced the SAME malformed
+        # value, silently corrupting provenance).
+        for hash_key in (
+            "data_yaml_sha256", "eval_manifest_sha256", "fp_manifest_sha256",
+        ):
+            if not is_hex_sha256(ev[hash_key]):
+                raise ValueError(
+                    f"{path}: {label} eval JSON key {hash_key!r} must be "
+                    f"64-char lowercase hex; got {ev[hash_key]!r}"
+                )
+        return ev
+
+    arms: dict[str, dict] = {
+        "no_aug": _load_eval(config.no_aug_eval_json, "no_aug"),
+        "cp_only": _load_eval(config.cp_only_eval_json, "cp_only"),
+    }
+    for beta, p in zip(config.cp_balanced_betas, config.cp_balanced_eval_jsons):
+        arms[f"cp_balanced_{beta}"] = _load_eval(p, f"cp_balanced[β={beta}]")
+
+    # ----- Cross-arm invariants --------------------------------------------
+    baseline_ev = arms["no_aug"]
+    if not baseline_ev["map_no_regression"]:
+        raise ValueError(
+            "no_aug eval has map_no_regression=False — baseline is "
+            "self-compared and must be True trivially"
+        )
+    eval_manifest_sha = baseline_ev["eval_manifest_sha256"]
+    fp_manifest_sha = baseline_ev["fp_manifest_sha256"]
+    data_yaml_sha = baseline_ev["data_yaml_sha256"]
+    tolerance = baseline_ev["map_regression_tolerance_pp"]
+    if cfg.map_regression_tolerance_pp != tolerance:
+        raise ValueError(
+            f"config map_regression_tolerance_pp "
+            f"({cfg.map_regression_tolerance_pp}) != eval JSONs "
+            f"({tolerance})"
+        )
+    if weights_data_yaml_sha != data_yaml_sha:
+        raise ValueError(
+            f"weights YAML data_yaml_sha256 ({weights_data_yaml_sha!r}) != "
+            f"eval JSONs data_yaml_sha256 ({data_yaml_sha!r}); class-label "
+            f"drift between weight fit time and eval time"
+        )
+    for label, ev in arms.items():
+        if ev["eval_manifest_sha256"] != eval_manifest_sha:
+            raise ValueError(
+                f"arm {label}: eval_manifest_sha256 mismatch vs baseline"
+            )
+        if ev["fp_manifest_sha256"] != fp_manifest_sha:
+            raise ValueError(
+                f"arm {label}: fp_manifest_sha256 mismatch vs baseline"
+            )
+        if ev["data_yaml_sha256"] != data_yaml_sha:
+            raise ValueError(
+                f"arm {label}: data_yaml_sha256 mismatch vs baseline"
+            )
+        if ev["map_regression_tolerance_pp"] != tolerance:
+            raise ValueError(
+                f"arm {label}: map_regression_tolerance_pp mismatch"
+            )
+    # Class-set parity. C3 iter-4 NEW-MAJOR fix: validate per-arm
+    # ``per_class_AP`` against the FULL configured class set
+    # ``[0..cfg.num_classes)`` — not just pairwise across arms. If every
+    # arm omitted the SAME non-empty subset of classes (e.g. all 5 evals
+    # produced rows only for IDs [0..7], silently dropping 8, 9), the
+    # earlier cross-arm parity would pass while the rare-class
+    # computation operates on a truncated population. Each arm must
+    # cover exactly ``range(cfg.num_classes)`` in order with class_names
+    # matching cfg.class_names by index. The post-iter-3 cross-arm
+    # (class_id, class_name) tuple check is kept as redundant
+    # provenance defense (catches mid-run trainer drift even with full
+    # coverage).
+    expected_ids = tuple(range(cfg.num_classes))
+    for label, ev in arms.items():
+        pca = ev["per_class_AP"]
+        if len(pca) != cfg.num_classes:
+            raise ValueError(
+                f"arm {label}: per_class_AP must have exactly "
+                f"{cfg.num_classes} rows (one per configured class); "
+                f"got {len(pca)} rows"
+            )
+        for i, row in enumerate(pca):
+            if not isinstance(row, dict):
+                raise ValueError(
+                    f"arm {label}: per_class_AP[{i}] must be a mapping; "
+                    f"got {type(row).__name__}"
+                )
+            cid = row.get("class_id")
+            if not isinstance(cid, int) or isinstance(cid, bool):
+                raise ValueError(
+                    f"arm {label}: per_class_AP[{i}].class_id must be int; "
+                    f"got {type(cid).__name__}={cid!r}"
+                )
+            cname = row.get("class_name")
+            if not isinstance(cname, str):
+                raise ValueError(
+                    f"arm {label}: per_class_AP[{i}].class_name must be "
+                    f"str; got {type(cname).__name__}={cname!r}"
+                )
+            if cid != expected_ids[i]:
+                raise ValueError(
+                    f"arm {label}: per_class_AP[{i}].class_id={cid} != "
+                    f"expected {expected_ids[i]} (rows must cover "
+                    f"range({cfg.num_classes}) in order — class-set "
+                    f"truncation or re-ordering would silently shift the "
+                    f"rare population)"
+                )
+            if cname != cfg.class_names[cid]:
+                raise ValueError(
+                    f"arm {label}: per_class_AP[{i}].class_name="
+                    f"{cname!r} != cfg.class_names[{cid}]="
+                    f"{cfg.class_names[cid]!r} — class-label drift between "
+                    f"trainer eval pipeline and YAML config"
+                )
+    # Redundant cross-arm provenance defense: identical (class_id,
+    # class_name) tuples across all 5 evals. Even with full coverage
+    # enforced above, this guards against a mid-run trainer that
+    # produced different class_name for the same class_id across arms.
+    baseline_pca = baseline_ev["per_class_AP"]
+    baseline_pairs = tuple(
+        (p["class_id"], p["class_name"]) for p in baseline_pca
+    )
+    for label, ev in arms.items():
+        pairs = tuple(
+            (p["class_id"], p["class_name"]) for p in ev["per_class_AP"]
+        )
+        if pairs != baseline_pairs:
+            raise ValueError(
+                f"arm {label}: per_class_AP (class_id, class_name) pairs "
+                f"differ from baseline. Class-name drift across arms with "
+                f"matching class_ids would silently corrupt the rare-class "
+                f"AP comparison."
+            )
+
+    # ----- Build PerClassAP list per arm ----------------------------------
+    def _to_pca(eval_pca: list) -> tuple[PerClassAP, ...]:
+        # B2 review MINOR-7 fix: symmetric int→float coercion across both
+        # numeric fields. JSON has no float-vs-int discrimination, so a
+        # trainer that serializes ``ap_at_0_5: 0`` (exact 0) produces an
+        # int; same for ``full_val_support: 25.0`` if a numpy round-trip
+        # via json.dumps writes a float. Coerce only when the value is
+        # cleanly representable in the target type; bool excluded.
+        out: list[PerClassAP] = []
+        for p in eval_pca:
+            ap_raw = p["ap_at_0_5"]
+            if isinstance(ap_raw, int) and not isinstance(ap_raw, bool):
+                ap_val = float(ap_raw)
+            elif isinstance(ap_raw, float) and not isinstance(ap_raw, bool):
+                ap_val = ap_raw
+            else:
+                ap_val = ap_raw  # pass through; PerClassAP.__post_init__ rejects
+            sup_raw = p["full_val_support"]
+            if isinstance(sup_raw, float) and not isinstance(sup_raw, bool) and sup_raw.is_integer():
+                sup_val = int(sup_raw)
+            else:
+                sup_val = sup_raw  # pass through; PerClassAP.__post_init__ rejects
+            out.append(PerClassAP(
+                class_id=p["class_id"],
+                class_name=p["class_name"],
+                ap_at_0_5=ap_val,
+                full_val_support=sup_val,
+            ))
+        return tuple(out)
+
+    baseline_pca_typed = _to_pca(baseline_pca)
+    arm_pca: dict[str, tuple[PerClassAP, ...]] = {
+        label: _to_pca(ev["per_class_AP"]) for label, ev in arms.items()
+    }
+
+    # ----- Build ArmMetrics + apply rule per cell --------------------------
+    def _arm_metrics(arm_id: str, ev: dict, pca: tuple[PerClassAP, ...]):
+        return compute_arm_metrics(
+            arm_id=arm_id,
+            baseline_per_class=baseline_pca_typed,
+            candidate_per_class=pca,
+            baseline_total_map=float(baseline_ev["total_mAP_at_0_5"]),
+            candidate_total_map=float(ev["total_mAP_at_0_5"]),
+            baseline_rare_fp_count=baseline_ev["rare_fp_count"],
+            candidate_rare_fp_count=ev["rare_fp_count"],
+            rare_class_threshold=cfg.rare_class_threshold,
+            safety_class_ids=cfg.safety_class_ids,
+            eval_manifest_sha256=eval_manifest_sha,
+            fp_manifest_sha256=fp_manifest_sha,
+            map_no_regression=ev["map_no_regression"],
+            map_regression_tolerance_pp=tolerance,
+            data_yaml_sha256=data_yaml_sha,
+        )
+
+    baseline_arm = _arm_metrics("no_aug", baseline_ev, baseline_pca_typed)
+    cp_only_arm = _arm_metrics("cp_only", arms["cp_only"], arm_pca["cp_only"])
+    cp_balanced_arms: dict[float, object] = {}
+    for beta in config.cp_balanced_betas:
+        ev = arms[f"cp_balanced_{beta}"]
+        cp_balanced_arms[beta] = _arm_metrics(
+            "cp_balanced", ev, arm_pca[f"cp_balanced_{beta}"]
+        )
+
+    # Apply rule to cp_only + 3 cp_balanced cells.
+    # B2 review MAJOR-6 fix: source ``map_no_regression`` from the
+    # ArmMetrics dataclass field, not the raw eval dict. The two are
+    # equal by construction today (compute_arm_metrics stamps the
+    # dataclass from the same eval dict), but a future refactor that
+    # sanitizes / zeroes the dataclass field would leave the raw-dict
+    # value behind and the DecisionInputs cross-side equality check
+    # would fire on a confusing diagnostic. Single source of truth.
+    cp_only_inputs = DecisionInputs(
+        baseline=baseline_arm,
+        candidate=cp_only_arm,
+        map_no_regression=cp_only_arm.map_no_regression,
+        map_regression_tolerance_pp=tolerance,
+    )
+    cp_only_decision = apply_decision_rule(cp_only_inputs, beta=None)
+    sweep_decisions: dict[float, object] = {}
+    for beta in config.cp_balanced_betas:
+        arm = cp_balanced_arms[beta]
+        di = DecisionInputs(
+            baseline=baseline_arm,
+            candidate=arm,
+            map_no_regression=arm.map_no_regression,
+            map_regression_tolerance_pp=tolerance,
+        )
+        sweep_decisions[beta] = apply_decision_rule(di, beta=beta)
+
+    # ----- Assemble output dict per schema --------------------------------
+    def _block(arm) -> dict:
+        return {
+            "rare_class_mean_delta_AP_pp": arm.rare_class_mean_delta_AP_pp,
+            "rare_class_max_delta_AP_pp": arm.rare_class_max_delta_AP_pp,
+            "rare_safety_min_delta_AP_pp": arm.rare_safety_min_delta_AP_pp,
+            "rare_related_fp_delta_frac": arm.rare_related_fp_delta_frac,
+            "total_map_delta_pp": arm.total_map_delta_pp,
+            "rare_class_ids": list(arm.rare_class_ids),
+            "rare_safety_class_ids": list(arm.rare_safety_class_ids),
+            "zero_support_rare_classes": list(arm.zero_support_rare_classes),
+            "eval_manifest_sha256": arm.eval_manifest_sha256,
+            "fp_manifest_sha256": arm.fp_manifest_sha256,
+            "is_baseline_reference": arm.is_baseline_reference,
+            "map_no_regression": arm.map_no_regression,
+            "map_regression_tolerance_pp": arm.map_regression_tolerance_pp,
+            "data_yaml_sha256": arm.data_yaml_sha256,
+        }
+
+    # Sensitivity sweep rows (sorted by beta ascending for determinism).
+    sweep_rows: list[dict] = []
+    for beta in sorted(config.cp_balanced_betas):
+        arm = cp_balanced_arms[beta]
+        decision = sweep_decisions[beta]
+        sweep_rows.append({
+            "beta": beta,
+            "deploy_anchor": (
+                config.anchor_arm == "cp_balanced"
+                and config.anchor_beta == beta
+            ),
+            "metrics": _block(arm),
+            "decision": decision.decision.value,
+            "notes": decision.notes,
+        })
+
+    # Headline selection.
+    if config.anchor_arm == "cp_only":
+        headline_metrics = _block(cp_only_arm)
+        headline_decision = cp_only_decision.decision.value
+        headline_beta = None
+        # deploy_anchor_beta still must be a real value in the schema; pick
+        # an arbitrary sweep beta (no row will set deploy_anchor=true).
+        deploy_anchor_beta = config.cp_balanced_betas[0]
+    else:  # cp_balanced
+        anchor_arm_obj = cp_balanced_arms[config.anchor_beta]
+        anchor_decision = sweep_decisions[config.anchor_beta]
+        headline_metrics = _block(anchor_arm_obj)
+        headline_decision = anchor_decision.decision.value
+        headline_beta = config.anchor_beta
+        deploy_anchor_beta = config.anchor_beta
+
+    # When headline is cp_only, no sweep row populates headline_*, but
+    # the schema requires exactly one sweep row with deploy_anchor=true
+    # AND cp_balanced.deploy_anchor_beta matching that row's beta. The
+    # field then represents the "canonical cp_balanced sensitivity-sweep
+    # anchor" — informational, not the headline.
+    #
+    # B2 review MAJOR-1 fix: rank sweep rows by decision quality
+    # (deploy > defer > drop > executor_error) so the canonical anchor
+    # carries informational meaning rather than pointing at an
+    # arbitrary first-beta cell that could be on executor_error /
+    # drop. Among rows with the same decision, pick the lowest beta
+    # (most conservative).
+    #
+    # C3 iter-2 MAJOR-1 fix: if every sweep row is executor_error,
+    # there is no usable canonical anchor — the cp_balanced evidence
+    # for the round is entirely unreliable. Refuse to write the
+    # artifact rather than silently stamp an executor_error cell as
+    # the canonical anchor (which would let a downstream report look
+    # structurally complete while all cp_balanced evidence failed).
+    # The operator must fix the upstream cause (malformed eval JSONs,
+    # NaN tolerance, etc.) before re-running.
+    if config.anchor_arm == "cp_only":
+        _decision_rank = {
+            "deploy": 0, "defer": 1, "drop": 2, "executor_error": 3,
+        }
+        sorted_sweep = sorted(
+            sweep_rows,
+            key=lambda r: (_decision_rank.get(r["decision"], 99), r["beta"]),
+        )
+        if sorted_sweep[0]["decision"] == "executor_error":
+            sweep_decisions_summary = [
+                f"β={r['beta']}: {r['decision']}" for r in sweep_rows
+            ]
+            raise ValueError(
+                f"copy_paste_balance ablation: all cp_balanced sweep rows "
+                f"are executor_error "
+                f"({'; '.join(sweep_decisions_summary)}). The canonical "
+                f"deploy_anchor cannot point at a usable cell; refusing to "
+                f"write a structurally-complete artifact that hides the "
+                f"failed sweep evidence. Investigate the upstream eval "
+                f"pipeline (malformed eval JSONs, NaN tolerance, verdict "
+                f"↔ delta inconsistency) before re-running."
+            )
+        best_beta = sorted_sweep[0]["beta"]
+        deploy_anchor_beta = best_beta
+        for row in sweep_rows:
+            row["deploy_anchor"] = row["beta"] == best_beta
+
+    artifact = {
+        "schema_version": "1",
+        "config_yaml_sha256": config_yaml_sha,
+        "data_yaml_sha256": data_yaml_sha,
+        "weights_yaml_sha256": weights_yaml_sha,
+        "headline_arm": config.anchor_arm,
+        "headline_beta": headline_beta,
+        "headline_metrics": headline_metrics,
+        "headline_decision": headline_decision,
+        "notes": (
+            f"§三 copy-paste + class-balance ablation; "
+            f"anchor_arm={config.anchor_arm}; anchor_beta={config.anchor_beta}; "
+            f"tolerance={tolerance}pp; baseline rare set "
+            f"{list(baseline_arm.rare_class_ids)}"
+        ),
+        "no_aug": {
+            "metrics": _block(baseline_arm),
+            "notes": (
+                f"no_aug baseline reference (self-comparison); "
+                f"total_mAP={baseline_ev['total_mAP_at_0_5']:.6f}; "
+                f"rare_fp_count={baseline_ev['rare_fp_count']}"
+            ),
+        },
+        "cp_only": {
+            "metrics": _block(cp_only_arm),
+            "decision": cp_only_decision.decision.value,
+            "notes": cp_only_decision.notes,
+        },
+        "cp_balanced": {
+            "deploy_anchor_beta": deploy_anchor_beta,
+            "sensitivity_sweep": sweep_rows,
+        },
+    }
+
+    # ----- Schema validate, cross-row invariants, atomic write ------------
+    schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "gates" / "_copy_paste_decision_schema.json"
+    )
+    with schema_path.open("r", encoding="utf-8") as fh:
+        schema = json.load(fh)
+    jsonschema.validate(instance=artifact, schema=schema)
+
+    assert_artifact_invariants(artifact)
+
+    # B2 review MAJOR-3: atomic-write hygiene. Use a process-unique tmp
+    # name (NamedTemporaryFile) so concurrent runs sharing the output
+    # directory don't race on the same .tmp filename. Unlink the tmp on
+    # any exception between open and replace so a partial / orphaned
+    # .tmp doesn't pollute runs/.
+    import tempfile
+
+    out_path = config.output_json
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        prefix=out_path.name + ".",
+        suffix=".tmp",
+        dir=str(out_path.parent),
+    )
+    # B2 iter-2 MINOR-2 fix: enter try IMMEDIATELY after mkstemp so an
+    # asynchronous KeyboardInterrupt arriving between mkstemp and the
+    # try block cannot leak both the fd and the .tmp file. The fd-close
+    # and tmp_path.unlink are both inside the cleanup path now.
+    try:
+        tmp_path = Path(tmp_name)
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            json.dump(artifact, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp_path, out_path)
+    except BaseException:
+        # Best-effort cleanup. Close the raw fd if fdopen never wrapped it
+        # (e.g. an exception before `with os.fdopen` ran). unlink handles
+        # the case where os.replace already moved the file before raising.
+        try:
+            os.close(tmp_fd)
+        except OSError:
+            pass
+        try:
+            Path(tmp_name).unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def main() -> int:
     """CLI entry: parse args → build ``AblationConfig`` → ``run_ablation``.
 
-    Argparse contract (b-stage; C3 iter-10 NEW-MAJOR 2026-05-09:
-    --eval-metrics-json REMOVED — verdicts now arrive per-arm inside
-    each eval JSON):
-        --no-aug-eval FILE       baseline arm's eval JSON (must carry
-                                  map_no_regression=True)
-        --cp-only-eval FILE      copy-paste arm's eval JSON
-        --cp-balanced-eval FILE  one per β; pass 3 times in β order
-        --config FILE            configs/copy_paste_balance.yaml path
-        --weights FILE           configs/data_R2_class_weights.yaml path
-        --output FILE            runs/_copy_paste_decision.json path
+    Argparse contract:
+        --no-aug-eval FILE        baseline arm's eval JSON
+        --cp-only-eval FILE       copy-paste arm's eval JSON
+        --cp-balanced-eval FILE   one per β; pass 3 times in β order
+        --config FILE             configs/copy_paste_balance.yaml path
+        --weights FILE            configs/data_R2_class_weights.yaml path
+        --output FILE             runs/_copy_paste_decision.json path
         --anchor-arm {cp_only,cp_balanced}
-                                  which arm populates headline_*; no_aug
-                                  is REJECTED (no decision row exists).
-        --anchor-beta FLOAT      required iff anchor-arm == cp_balanced;
-                                  must match one of {0.99, 0.999, 0.9999}.
+        --anchor-beta FLOAT       required iff anchor-arm == cp_balanced
 
     Returns:
-        process exit code: 0 on AGREED-CLEAN run, 1 on
-        ``executor_error`` in the headline row, 2 on
-        ``NotImplementedError`` from any a-stage stub (so scaffold-time
-        smoke tests don't silently exit 0).
-
-    Raises:
-        NotImplementedError: a-stage scaffold.
+        0 on AGREED-CLEAN run, 1 on executor_error headline,
+        2 on Step 0 hard fail (FileNotFoundError / ValueError before
+        artifact write).
     """
-    raise NotImplementedError("b-stage")
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="copy_paste_balance.runners.ablation",
+        description=(
+            "§三 copy-paste + class-balance ablation d-stage runner. "
+            "Aggregates no_aug / cp_only / cp_balanced × 3 β eval JSONs "
+            "into runs/_copy_paste_decision.json per plan §3.7."
+        ),
+    )
+    parser.add_argument("--no-aug-eval", type=Path, required=True)
+    parser.add_argument("--cp-only-eval", type=Path, required=True)
+    parser.add_argument(
+        "--cp-balanced-eval", type=Path, action="append",
+        required=True,
+        help="Pass 3 times in β order matching --cp-balanced-beta.",
+    )
+    parser.add_argument(
+        "--cp-balanced-beta", type=float, action="append",
+        required=True,
+        help="One per --cp-balanced-eval. Must equal {0.99, 0.999, 0.9999} "
+             "as a set.",
+    )
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--weights", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--anchor-arm", choices=("cp_only", "cp_balanced"), required=True,
+    )
+    parser.add_argument("--anchor-beta", type=float, default=None)
+    args = parser.parse_args()
+
+    if len(args.cp_balanced_eval) != len(args.cp_balanced_beta):
+        print(
+            f"--cp-balanced-eval count ({len(args.cp_balanced_eval)}) must "
+            f"equal --cp-balanced-beta count ({len(args.cp_balanced_beta)})",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        config = AblationConfig(
+            no_aug_eval_json=args.no_aug_eval,
+            cp_only_eval_json=args.cp_only_eval,
+            cp_balanced_eval_jsons=tuple(args.cp_balanced_eval),
+            cp_balanced_betas=tuple(args.cp_balanced_beta),
+            config_yaml=args.config,
+            weights_yaml=args.weights,
+            output_json=args.output,
+            anchor_arm=args.anchor_arm,
+            anchor_beta=args.anchor_beta,
+        )
+        run_ablation(config)
+    except (FileNotFoundError, ValueError) as e:
+        # AblationConfig.__post_init__ ValueErrors (distinct-path,
+        # anchor-arm, beta-sweep, etc.) AND run_ablation Step 0 hard
+        # fails BOTH surface here. Both are pre-output-write conditions
+        # so exit 2 (no artifact produced); the runner does not write a
+        # partial output JSON on these paths.
+        print(f"copy_paste_balance ablation: {type(e).__name__}: {e}",
+              file=sys.stderr)
+        return 2
+
+    with args.output.open("r", encoding="utf-8") as fh:
+        artifact = json.load(fh)
+    return 1 if artifact["headline_decision"] == "executor_error" else 0
 
 
 def assert_artifact_invariants(artifact: dict) -> None:

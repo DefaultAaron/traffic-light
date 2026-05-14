@@ -317,6 +317,84 @@ def compute_arm_metrics(
         ValueError: malformed inputs (NaN, negative counts, recall
             outside [0,1], etc.) OR
             ``(arm_id == "no_hn") != is_baseline_reference``.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    # arm_id / is_baseline_reference cross-check per B2 review C4 — a
+    # single self-explaining message rather than the confusing
+    # ArmMetrics.__post_init__ cascade if the two disagree.
+    if not isinstance(arm_id, str):
+        raise ValueError(
+            f"arm_id must be str; got {type(arm_id).__name__}={arm_id!r}"
+        )
+    if not isinstance(is_baseline_reference, bool):
+        raise ValueError(
+            f"is_baseline_reference must be bool; got "
+            f"{type(is_baseline_reference).__name__}={is_baseline_reference!r}"
+        )
+    if (arm_id == "no_hn") != is_baseline_reference:
+        raise ValueError(
+            f"arm_id / is_baseline_reference mismatch: arm_id={arm_id!r}, "
+            f"is_baseline_reference={is_baseline_reference}. The contract is "
+            f"is_baseline_reference == (arm_id == 'no_hn'); pass them "
+            f"together so the helper can build the baseline cell without "
+            f"the dataclass-level cascade surfacing 'fp_drop_frac == 0' "
+            f"errors that obscure the actual mismatch."
+        )
+
+    # FP counts: non-negative ints (bool-excluded).
+    for name, val in (
+        ("baseline_fp_count", baseline_fp_count),
+        ("candidate_fp_count", candidate_fp_count),
+    ):
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise ValueError(
+                f"{name} must be int; got {type(val).__name__}={val!r}"
+            )
+        if val < 0:
+            raise ValueError(f"{name} must be >= 0; got {val}")
+
+    # Recalls + total mAPs: finite floats in [0, 1].
+    for name, val in (
+        ("baseline_real_light_recall", baseline_real_light_recall),
+        ("candidate_real_light_recall", candidate_real_light_recall),
+        ("baseline_total_map", baseline_total_map),
+        ("candidate_total_map", candidate_total_map),
+    ):
+        if not isinstance(val, float) or isinstance(val, bool):
+            raise ValueError(
+                f"{name} must be float; got {type(val).__name__}={val!r}"
+            )
+        if not math.isfinite(val):
+            raise ValueError(f"{name} must be finite; got {val!r}")
+        if not (0.0 <= val <= 1.0):
+            raise ValueError(f"{name} must be in [0, 1]; got {val}")
+
+    # FP drop frac: positive = candidate has FEWER FPs (desired). The
+    # max(.,1) floor avoids zero-divide when baseline already has zero
+    # FPs (the metric is undefined there; the §4.7 rule's catch-all
+    # handles the pathological case).
+    fp_drop_frac = float(baseline_fp_count - candidate_fp_count) / float(
+        max(baseline_fp_count, 1)
+    )
+
+    # Δrecall, ΔmAP in pp; the math returns 0 for self-comparison and
+    # ArmMetrics.__post_init__ enforces the zero-delta invariant when
+    # is_baseline_reference=True. No need to short-circuit.
+    real_light_recall_delta_pp = (
+        candidate_real_light_recall - baseline_real_light_recall
+    ) * 100.0
+    total_map_delta_pp = (
+        candidate_total_map - baseline_total_map
+    ) * 100.0
+
+    return ArmMetrics(
+        arm_id=arm_id,
+        is_baseline_reference=is_baseline_reference,
+        fp_drop_frac=fp_drop_frac,
+        real_light_recall_delta_pp=real_light_recall_delta_pp,
+        total_map_delta_pp=total_map_delta_pp,
+        map_no_regression=map_no_regression,
+        map_regression_tolerance_pp=map_regression_tolerance_pp,
+        eval_manifest_sha256=eval_manifest_sha256,
+        fp_manifest_sha256=fp_manifest_sha256,
+        data_yaml_sha256=data_yaml_sha256,
+    )

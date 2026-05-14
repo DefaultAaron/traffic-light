@@ -44,19 +44,16 @@ Scaffold (a-stage): API signatures only.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import ClassVar, Iterable
 
-
-def _is_hex_sha256(value: object) -> bool:
-    """True iff ``value`` is a 64-char lowercase hex string."""
-    if not isinstance(value, str) or len(value) != 64:
-        return False
-    try:
-        int(value, 16)
-    except ValueError:
-        return False
-    return value == value.lower()
+# B2 iter-3 review: cross-module hash predicate lives in _internals so
+# the runner doesn't reach across module boundary into a private symbol.
+# B2 iter-4 review: import the public name directly without an alias —
+# call style at local callsites now reads ``is_hex_sha256(value)``,
+# mirroring HN's sister gate exactly.
+from components.copy_paste_balance._internals import is_hex_sha256
 
 
 @dataclass(frozen=True)
@@ -280,17 +277,17 @@ class ArmMetrics:
                 f"rare={self.rare_class_ids}"
             )
         # Manifest hashes: 64-char lowercase hex (matches schema regex).
-        if not _is_hex_sha256(self.eval_manifest_sha256):
+        if not is_hex_sha256(self.eval_manifest_sha256):
             raise ValueError(
                 f"eval_manifest_sha256 must be 64-char lowercase hex; got "
                 f"{self.eval_manifest_sha256!r}"
             )
-        if not _is_hex_sha256(self.fp_manifest_sha256):
+        if not is_hex_sha256(self.fp_manifest_sha256):
             raise ValueError(
                 f"fp_manifest_sha256 must be 64-char lowercase hex; got "
                 f"{self.fp_manifest_sha256!r}"
             )
-        if not _is_hex_sha256(self.data_yaml_sha256):
+        if not is_hex_sha256(self.data_yaml_sha256):
             raise ValueError(
                 f"data_yaml_sha256 must be 64-char lowercase hex; got "
                 f"{self.data_yaml_sha256!r}"
@@ -405,6 +402,260 @@ def compute_arm_metrics(
     Raises:
         ValueError: class-set mismatch between baseline / candidate; empty
             inputs; malformed safety_class_ids; etc.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    # Materialize iterables (caller may pass generators; we walk twice).
+    baseline_list = list(baseline_per_class)
+    candidate_list = list(candidate_per_class)
+
+    if not baseline_list:
+        raise ValueError("baseline_per_class must not be empty")
+    if not candidate_list:
+        raise ValueError("candidate_per_class must not be empty")
+    for i, p in enumerate(baseline_list):
+        if not isinstance(p, PerClassAP):
+            raise ValueError(
+                f"baseline_per_class[{i}] must be PerClassAP; got "
+                f"{type(p).__name__}={p!r}"
+            )
+    for i, p in enumerate(candidate_list):
+        if not isinstance(p, PerClassAP):
+            raise ValueError(
+                f"candidate_per_class[{i}] must be PerClassAP; got "
+                f"{type(p).__name__}={p!r}"
+            )
+
+    # arm_id is validated by ArmMetrics.__post_init__; this helper derives
+    # is_baseline_reference from it (CPB has three arm_ids and the
+    # dataclass invariant pins "no_aug ↔ baseline", so the helper signal
+    # is unambiguous without an explicit kwarg — diverges from §四 sister
+    # by design; see HN ablation_gate B2 review C4 rationale).
+    if not isinstance(arm_id, str):
+        raise ValueError(
+            f"arm_id must be str; got {type(arm_id).__name__}={arm_id!r}"
+        )
+    is_baseline_reference = arm_id == "no_aug"
+
+    # rare_class_threshold: strictly positive int (bool-excluded).
+    if not isinstance(rare_class_threshold, int) or isinstance(
+        rare_class_threshold, bool
+    ):
+        raise ValueError(
+            f"rare_class_threshold must be int; got "
+            f"{type(rare_class_threshold).__name__}={rare_class_threshold!r}"
+        )
+    if rare_class_threshold <= 0:
+        raise ValueError(
+            f"rare_class_threshold must be > 0; got {rare_class_threshold}"
+        )
+
+    # safety_class_ids: tuple of distinct non-negative ints (mirrors
+    # ArmMetrics's rare_class_ids discipline for the dataclass boundary).
+    if not isinstance(safety_class_ids, tuple):
+        raise ValueError(
+            f"safety_class_ids must be tuple; got "
+            f"{type(safety_class_ids).__name__}={safety_class_ids!r}"
+        )
+    for i, cid in enumerate(safety_class_ids):
+        if not isinstance(cid, int) or isinstance(cid, bool):
+            raise ValueError(
+                f"safety_class_ids[{i}] must be int; got "
+                f"{type(cid).__name__}={cid!r}"
+            )
+        if cid < 0:
+            raise ValueError(
+                f"safety_class_ids[{i}]={cid} must be >= 0"
+            )
+    if len(set(safety_class_ids)) != len(safety_class_ids):
+        raise ValueError(
+            f"safety_class_ids must contain no duplicates; got "
+            f"{safety_class_ids}"
+        )
+
+    # FP counts: non-negative ints (bool-excluded).
+    for name, val in (
+        ("baseline_rare_fp_count", baseline_rare_fp_count),
+        ("candidate_rare_fp_count", candidate_rare_fp_count),
+    ):
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise ValueError(
+                f"{name} must be int; got {type(val).__name__}={val!r}"
+            )
+        if val < 0:
+            raise ValueError(f"{name} must be >= 0; got {val}")
+
+    # Total mAPs: finite floats in [0, 1] (absolute AP range).
+    for name, val in (
+        ("baseline_total_map", baseline_total_map),
+        ("candidate_total_map", candidate_total_map),
+    ):
+        if not isinstance(val, float) or isinstance(val, bool):
+            raise ValueError(
+                f"{name} must be float; got {type(val).__name__}={val!r}"
+            )
+        if not math.isfinite(val):
+            raise ValueError(f"{name} must be finite; got {val!r}")
+        if not (0.0 <= val <= 1.0):
+            raise ValueError(f"{name} must be in [0, 1]; got {val}")
+
+    # Class-set parity: same class IDs in the same order. The order is
+    # part of the contract — per-class arrays from the trainer are
+    # produced in class-ID order and downstream schema validation expects
+    # consistent indexing.
+    baseline_ids = tuple(p.class_id for p in baseline_list)
+    candidate_ids = tuple(p.class_id for p in candidate_list)
+    if baseline_ids != candidate_ids:
+        # Build a diagnostic that names the divergence rather than dumping
+        # both arrays.
+        base_set = set(baseline_ids)
+        cand_set = set(candidate_ids)
+        only_in_baseline = sorted(base_set - cand_set)
+        only_in_candidate = sorted(cand_set - base_set)
+        if base_set == cand_set:
+            diff = "same class set, different order"
+        else:
+            diff = (
+                f"baseline-only={only_in_baseline}, "
+                f"candidate-only={only_in_candidate}"
+            )
+        raise ValueError(
+            f"baseline_per_class / candidate_per_class class IDs differ "
+            f"({diff}). Class-set drift between arms indicates a trainer "
+            f"or data_yaml mismatch — the rare set is derived from baseline "
+            f"and the rule needs paired-class deltas."
+        )
+
+    # Rare set from BASELINE per-class supports only (per plan §3.7 — the
+    # rare population is baseline-derived and propagated to every
+    # candidate cell; switching the rare set per arm would let an arm
+    # that depleted a rare class's support appear "deployed").
+    baseline_by_id = {p.class_id: p for p in baseline_list}
+    candidate_by_id = {p.class_id: p for p in candidate_list}
+    rare_class_ids = tuple(
+        sorted(
+            p.class_id
+            for p in baseline_list
+            if p.full_val_support < rare_class_threshold
+        )
+    )
+    safety_set = set(safety_class_ids)
+    rare_safety_class_ids = tuple(
+        sorted(set(rare_class_ids) & safety_set)
+    )
+
+    # Zero-support rare classes: support == 0 on EITHER side. Excluded
+    # from rare mean/max/safety_min computation but kept in
+    # rare_class_ids for cross-arm equality + downstream audit.
+    zero_support_rare_classes = tuple(
+        sorted(
+            cid
+            for cid in rare_class_ids
+            if baseline_by_id[cid].full_val_support == 0
+            or candidate_by_id[cid].full_val_support == 0
+        )
+    )
+    zero_support_set = set(zero_support_rare_classes)
+    eligible_rare = [
+        cid for cid in rare_class_ids if cid not in zero_support_set
+    ]
+    eligible_rare_safety = [
+        cid
+        for cid in rare_safety_class_ids
+        if cid not in zero_support_set
+    ]
+
+    # Per-class delta in percentage points. The math returns 0 for the
+    # baseline self-comparison; ArmMetrics.__post_init__ then enforces
+    # the zero-delta invariant for is_baseline_reference=True. No need
+    # to short-circuit here.
+    def _delta_pp(cid: int) -> float:
+        return (
+            candidate_by_id[cid].ap_at_0_5 - baseline_by_id[cid].ap_at_0_5
+        ) * 100.0
+
+    if eligible_rare:
+        rare_deltas = [_delta_pp(cid) for cid in eligible_rare]
+        rare_mean = sum(rare_deltas) / len(rare_deltas)
+        rare_max = max(rare_deltas)
+    else:
+        # No eligible rare classes (either rare set is empty OR every
+        # rare class has zero support somewhere). The deploy guard's
+        # 5pp threshold will trivially fail; the rule falls through to
+        # defer or drop. Recording 0.0 keeps the dataclass invariants
+        # satisfied (range / finiteness).
+        rare_mean = 0.0
+        rare_max = 0.0
+    if eligible_rare_safety:
+        rare_safety_min = min(_delta_pp(cid) for cid in eligible_rare_safety)
+    else:
+        # B2 review MAJOR-2 fix: empty eligible_rare_safety is one of two
+        # cases — both must be visible to the operator:
+        #   (a) rare_safety_class_ids is empty (no rare ∩ safety overlap)
+        #       — legitimate but unusual; means the deploy gate's
+        #       `≥ -1pp` rare-safety guard collapses to "no rare safety
+        #       to protect". Likely a YAML misconfiguration if R2 had
+        #       safety classes that became rare.
+        #   (b) rare_safety_class_ids is non-empty but every entry has
+        #       zero support on either side — pathological; the
+        #       safety guard silently passes on a population that
+        #       can't be measured.
+        # Both produce rare_safety_min=0.0 which trivially satisfies the
+        # deploy guard. Surface via UserWarning so the runner / operator
+        # sees the issue at eval time rather than discovering it from a
+        # spurious deploy decision.
+        if rare_safety_class_ids:
+            warnings.warn(
+                f"compute_arm_metrics({arm_id=}): all rare-safety classes "
+                f"({list(rare_safety_class_ids)}) have zero support on "
+                f"either baseline or candidate (zero_support="
+                f"{list(zero_support_rare_classes)}). rare_safety_min "
+                f"defaults to 0.0 and trivially passes the deploy "
+                f"`≥ -1pp` safety guard — a wrongful deploy on this arm "
+                f"would not be caught by the safety mechanism.",
+                UserWarning,
+                stacklevel=2,
+            )
+        elif rare_class_ids:
+            # rare_class_ids non-empty but safety∩rare is empty — the
+            # YAML's safety_class_ids has no overlap with the
+            # baseline-derived rare set. Usually means R2's safety list
+            # doesn't include any rare class; review safety_class_ids.
+            warnings.warn(
+                f"compute_arm_metrics({arm_id=}): rare set "
+                f"{list(rare_class_ids)} has zero overlap with the YAML "
+                f"safety_class_ids — the deploy gate's rare-safety "
+                f"guard collapses to 'no rare safety to protect'. Verify "
+                f"that the safety class list is intentional.",
+                UserWarning,
+                stacklevel=2,
+            )
+        rare_safety_min = 0.0
+
+    # FP delta as signed fraction; max(.,1) floor avoids zero-divide
+    # when baseline already has zero rare-FPs (the metric is undefined
+    # there; the §3.7 rule's drop catch-all handles the pathological case).
+    rare_related_fp_delta_frac = float(
+        candidate_rare_fp_count - baseline_rare_fp_count
+    ) / float(max(baseline_rare_fp_count, 1))
+
+    # Total mAP delta in pp.
+    total_map_delta_pp = (
+        candidate_total_map - baseline_total_map
+    ) * 100.0
+
+    return ArmMetrics(
+        arm_id=arm_id,
+        is_baseline_reference=is_baseline_reference,
+        rare_class_mean_delta_AP_pp=rare_mean,
+        rare_class_max_delta_AP_pp=rare_max,
+        rare_safety_min_delta_AP_pp=rare_safety_min,
+        rare_related_fp_delta_frac=rare_related_fp_delta_frac,
+        total_map_delta_pp=total_map_delta_pp,
+        rare_class_ids=rare_class_ids,
+        rare_safety_class_ids=rare_safety_class_ids,
+        zero_support_rare_classes=zero_support_rare_classes,
+        eval_manifest_sha256=eval_manifest_sha256,
+        fp_manifest_sha256=fp_manifest_sha256,
+        map_no_regression=map_no_regression,
+        map_regression_tolerance_pp=map_regression_tolerance_pp,
+        data_yaml_sha256=data_yaml_sha256,
+    )

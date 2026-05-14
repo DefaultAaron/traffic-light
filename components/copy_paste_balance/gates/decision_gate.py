@@ -432,7 +432,11 @@ class DecisionResult:
                 )
 
 
-def apply_decision_rule(inputs: DecisionInputs) -> DecisionResult:
+def apply_decision_rule(
+    inputs: DecisionInputs,
+    *,
+    beta: float | None,
+) -> DecisionResult:
     """Evaluate the §3.7 4-case rule on a single arm vs the no_aug baseline.
 
     Executor semantics: first-match cascade over
@@ -464,6 +468,14 @@ def apply_decision_rule(inputs: DecisionInputs) -> DecisionResult:
     Args:
         inputs: precomputed ``ArmMetrics`` for both sides + map_no_regression
             verdict from the upstream eval pipeline + tolerance.
+        beta: the β value of the sweep cell when ``inputs.candidate.arm_id ==
+            "cp_balanced"``; ``None`` when ``arm_id == "cp_only"``. This is a
+            keyword-only argument with no default — the runner MUST be
+            explicit at every call site (DecisionResult.__post_init__ enforces
+            the cross-knob arm/beta consistency). The rule body itself is
+            β-agnostic; ``beta`` flows through to the returned DecisionResult
+            so the runner can serialize per-β sweep rows without rebuilding
+            the result.
 
     Returns:
         ``DecisionResult`` ready to be serialized into one cell of the
@@ -471,12 +483,234 @@ def apply_decision_rule(inputs: DecisionInputs) -> DecisionResult:
         selects the headline row from CLI flags.
 
     Raises:
-        ValueError: malformed ``inputs`` (NaN, class-set mismatch,
-            manifest hash mismatch, etc.) is surfaced as a return value
-            (``CopyPasteDecision.EXECUTOR_ERROR``) with diagnostic notes
-            — NOT raised — so the runner can still serialize a complete
-            output block. ``ValueError`` is reserved for hard programmer
-            errors (wrong dataclass type, etc.).
-        NotImplementedError: a-stage scaffold.
+        ValueError: hard programmer errors only (wrong dataclass type,
+            unexpected ``candidate.arm_id`` value, etc.). Legitimate-but-
+            malformed numeric inputs are returned as
+            ``CopyPasteDecision.EXECUTOR_ERROR`` with diagnostic notes —
+            NOT raised — so the runner can still serialize a complete
+            output block.
     """
-    raise NotImplementedError("b-stage")
+    if not isinstance(inputs, DecisionInputs):
+        raise ValueError(
+            f"inputs must be DecisionInputs; got {type(inputs).__name__}"
+        )
+
+    arm_id_str = inputs.candidate.arm_id
+    if arm_id_str == "cp_only":
+        arm_id = ArmId.CP_ONLY
+    elif arm_id_str == "cp_balanced":
+        arm_id = ArmId.CP_BALANCED
+    else:
+        # DecisionInputs already rejects baseline candidates, but defense
+        # in depth — surface an unexpected arm_id as a hard programmer
+        # error rather than coercing a meaningless decision.
+        raise ValueError(
+            f"candidate.arm_id must be 'cp_only' or 'cp_balanced'; got "
+            f"{arm_id_str!r} (no_aug is REJECTED upstream by "
+            f"DecisionInputs.__post_init__'s is_baseline_reference check)"
+        )
+
+    cand = inputs.candidate
+
+    # Defensive NaN/inf re-check on the five candidate metric fields the
+    # rule consumes PLUS inputs.map_regression_tolerance_pp (used by the
+    # verdict ↔ delta consistency check below — a NaN tolerance makes
+    # ``total_map >= -tolerance`` evaluate False, which can silently
+    # match a stamped ``map_no_regression=False`` and slip past the
+    # consistency check). ArmMetrics.__post_init__ +
+    # DecisionInputs.__post_init__ already reject these at construction;
+    # defense-in-depth against a future refactor that bypasses either
+    # dataclass. On failure, return EXECUTOR_ERROR (not raise) so the
+    # runner can still serialize a complete output block.
+    for label, value in (
+        ("candidate.rare_class_mean_delta_AP_pp",
+         cand.rare_class_mean_delta_AP_pp),
+        ("candidate.rare_class_max_delta_AP_pp",
+         cand.rare_class_max_delta_AP_pp),
+        ("candidate.rare_safety_min_delta_AP_pp",
+         cand.rare_safety_min_delta_AP_pp),
+        ("candidate.rare_related_fp_delta_frac",
+         cand.rare_related_fp_delta_frac),
+        ("candidate.total_map_delta_pp", cand.total_map_delta_pp),
+        ("inputs.map_regression_tolerance_pp",
+         inputs.map_regression_tolerance_pp),
+    ):
+        if not math.isfinite(value):
+            return DecisionResult(
+                arm_id=arm_id,
+                beta=beta,
+                decision=CopyPasteDecision.EXECUTOR_ERROR,
+                notes=(
+                    f"executor_error: defensive NaN/inf re-check failed on "
+                    f"{label}={value!r} (ArmMetrics / DecisionInputs "
+                    f"construction should have rejected this — a future "
+                    f"refactor likely bypassed the dataclass boundary)"
+                ),
+            )
+
+    rare_avg = cand.rare_class_mean_delta_AP_pp
+    rare_max = cand.rare_class_max_delta_AP_pp
+    rare_safety_min = cand.rare_safety_min_delta_AP_pp
+    rare_fp = cand.rare_related_fp_delta_frac
+    total_map = cand.total_map_delta_pp
+    map_no_regr = inputs.map_no_regression
+    tolerance = inputs.map_regression_tolerance_pp
+
+    # Defensive verdict ↔ delta consistency re-check. Upstream is
+    # supposed to compute ``map_no_regression`` from
+    # ``(candidate_total_map - baseline_total_map)`` vs
+    # ``map_regression_tolerance_pp``, but a buggy upstream pipeline (or
+    # a hand-built ArmMetrics that paired a stale verdict with a fresh
+    # delta) could stamp ``map_no_regression=True`` while the recorded
+    # delta is below tolerance — and ship as DEPLOY without ever
+    # triggering the existing literal-drop guards. Re-derive the verdict
+    # from the recorded delta and tolerance; mismatch is malformed
+    # input → EXECUTOR_ERROR. (Boundary semantics: ``total_map_pp ==
+    # -tolerance_pp`` exactly satisfies the no-regression guard per the
+    # docstring's pinned boundary table, matching the non-strict ≥ in
+    # the deploy condition.)
+    expected_no_regression = total_map >= -tolerance
+    if map_no_regr != expected_no_regression:
+        return DecisionResult(
+            arm_id=arm_id,
+            beta=beta,
+            decision=CopyPasteDecision.EXECUTOR_ERROR,
+            notes=(
+                f"executor_error: map_no_regression verdict / "
+                f"total_map_delta inconsistency. Upstream stamped "
+                f"map_no_regression={map_no_regr}, but "
+                f"total_map_delta_pp={total_map:.6f}pp vs "
+                f"map_regression_tolerance_pp={tolerance} implies "
+                f"expected_no_regression={expected_no_regression}. The "
+                f"upstream eval pipeline must re-derive the verdict "
+                f"from the SAME (delta, tolerance) inputs the rule "
+                f"consumes — a desynchronized verdict can otherwise "
+                f"ship a regressing arm as DEPLOY."
+            ),
+        )
+
+    # Deploy guards (plan §3.7 deploy condition).
+    deploy_rare_improvement = (
+        rare_avg >= DecisionInputs.DEPLOY_RARE_AVG_DELTA_AP_PP
+        or rare_max >= DecisionInputs.DEPLOY_ANY_RARE_DELTA_AP_PP
+    )
+    deploy_rare_safety = (
+        rare_safety_min >= DecisionInputs.DEPLOY_RARE_SAFETY_MIN_DELTA_AP_PP
+    )
+    deploy_rare_fp = rare_fp <= DecisionInputs.DEPLOY_RARE_FP_RISE_MAX_FRAC
+
+    if deploy_rare_improvement and deploy_rare_safety and deploy_rare_fp and map_no_regr:
+        return DecisionResult(
+            arm_id=arm_id,
+            beta=beta,
+            decision=CopyPasteDecision.DEPLOY,
+            notes=(
+                f"deploy: rare_avg={rare_avg:.3f}pp, rare_max={rare_max:.3f}pp "
+                f"(≥{DecisionInputs.DEPLOY_RARE_AVG_DELTA_AP_PP}pp via avg-or-max); "
+                f"rare_safety_min={rare_safety_min:.3f}pp "
+                f"(≥{DecisionInputs.DEPLOY_RARE_SAFETY_MIN_DELTA_AP_PP}pp); "
+                f"rare_fp={rare_fp:.4f} "
+                f"(≤{DecisionInputs.DEPLOY_RARE_FP_RISE_MAX_FRAC}); "
+                f"total_map={total_map:.3f}pp, "
+                f"map_no_regression=True (tolerance={tolerance}pp)"
+            ),
+        )
+
+    # Literal drop triggers (plan §3.7 drop prose) — strict greater-than on
+    # magnitude per the boundary-semantics table in the module docstring.
+    drop_map_regress = total_map < -DecisionInputs.DROP_TOTAL_MAP_REGRESSION_PP
+    drop_safety_regress = (
+        rare_safety_min < -DecisionInputs.DROP_RARE_SAFETY_REGRESSION_PP
+    )
+    drop_fp_rise = rare_fp > DecisionInputs.DROP_RARE_FP_RISE_FRAC
+    any_literal_drop = drop_map_regress or drop_safety_regress or drop_fp_rise
+
+    # Defer condition (plan §3.7 defer prose): rare improvement < 2pp AND
+    # map_no_regression AND no literal drop trigger fires. The "no drop
+    # trigger fires" guard is co-located in defer's condition rather than
+    # relying on cascade order alone — a regressing-safety-class with
+    # rare_avg < 2pp would otherwise serialize as defer instead of drop.
+    defer_match = (
+        rare_avg < DecisionInputs.DEFER_RARE_AVG_LT_PP
+        and map_no_regr
+        and not any_literal_drop
+    )
+    if defer_match:
+        return DecisionResult(
+            arm_id=arm_id,
+            beta=beta,
+            decision=CopyPasteDecision.DEFER,
+            notes=(
+                f"defer: rare_avg={rare_avg:.3f}pp "
+                f"(<{DecisionInputs.DEFER_RARE_AVG_LT_PP}pp, no significant "
+                f"rare improvement); map_no_regression=True; no literal drop "
+                f"trigger fires (rare_safety_min={rare_safety_min:.3f}pp, "
+                f"rare_fp={rare_fp:.4f}, total_map={total_map:.3f}pp). "
+                f"R3 action: re-evaluate with more aggressive copy-paste."
+            ),
+        )
+
+    # Drop catch-all. Distinguish "literal drop" from "middle-case drop"
+    # in the notes so reviewers can audit the triggering condition.
+    if any_literal_drop:
+        trigger_parts: list[str] = []
+        if drop_map_regress:
+            trigger_parts.append(
+                f"total_map={total_map:.3f}pp (regress > "
+                f"{DecisionInputs.DROP_TOTAL_MAP_REGRESSION_PP}pp)"
+            )
+        if drop_safety_regress:
+            trigger_parts.append(
+                f"rare_safety_min={rare_safety_min:.3f}pp (regress > "
+                f"{DecisionInputs.DROP_RARE_SAFETY_REGRESSION_PP}pp)"
+            )
+        if drop_fp_rise:
+            trigger_parts.append(
+                f"rare_fp={rare_fp:.4f} (rise > "
+                f"{DecisionInputs.DROP_RARE_FP_RISE_FRAC})"
+            )
+        notes = "drop (literal trigger): " + "; ".join(trigger_parts)
+    else:
+        # Middle-case drop: improvement insufficient under deploy guards
+        # AND defer's "<2pp" framing also fails (so rare_avg ≥ 2pp without
+        # meeting full deploy guards) OR map_no_regression=False with no
+        # literal drop trigger firing (total_map ∈ [-0.5, -tolerance)).
+        deploy_fail_parts: list[str] = []
+        if not deploy_rare_improvement:
+            deploy_fail_parts.append(
+                f"rare improvement insufficient: rare_avg={rare_avg:.3f}pp, "
+                f"rare_max={rare_max:.3f}pp (neither ≥ "
+                f"{DecisionInputs.DEPLOY_RARE_AVG_DELTA_AP_PP}pp)"
+            )
+        if not deploy_rare_safety:
+            deploy_fail_parts.append(
+                f"rare_safety_min={rare_safety_min:.3f}pp (< "
+                f"{DecisionInputs.DEPLOY_RARE_SAFETY_MIN_DELTA_AP_PP}pp deploy floor "
+                f"but ≥ -{DecisionInputs.DROP_RARE_SAFETY_REGRESSION_PP}pp drop "
+                f"threshold)"
+            )
+        if not deploy_rare_fp:
+            deploy_fail_parts.append(
+                f"rare_fp={rare_fp:.4f} (> "
+                f"{DecisionInputs.DEPLOY_RARE_FP_RISE_MAX_FRAC} deploy ceiling but ≤ "
+                f"{DecisionInputs.DROP_RARE_FP_RISE_FRAC} drop threshold)"
+            )
+        if not map_no_regr:
+            deploy_fail_parts.append(
+                f"map_no_regression=False (total_map={total_map:.3f}pp vs "
+                f"tolerance {tolerance}pp; below tolerance but above "
+                f"-{DecisionInputs.DROP_TOTAL_MAP_REGRESSION_PP}pp drop threshold)"
+            )
+        notes = (
+            "drop (middle-case): deploy guards failed: "
+            + "; ".join(deploy_fail_parts)
+            if deploy_fail_parts
+            else "drop (middle-case): no specific deploy-guard failure isolated"
+        )
+
+    return DecisionResult(
+        arm_id=arm_id,
+        beta=beta,
+        decision=CopyPasteDecision.DROP,
+        notes=notes,
+    )

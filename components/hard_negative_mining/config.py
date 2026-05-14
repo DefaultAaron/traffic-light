@@ -365,6 +365,137 @@ def load_hard_negative_mining_yaml(path: str | Path) -> HardNegativeMiningYamlCo
     Raises:
         FileNotFoundError: ``path`` does not exist.
         ValueError: schema / range / enum violations as described above.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    import warnings
+
+    import yaml as _yaml
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist")
+    with path.open("r", encoding="utf-8") as fh:
+        raw = _yaml.safe_load(fh)
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{path}: top-level YAML must be a mapping; got "
+            f"{type(raw).__name__}"
+        )
+
+    # Legacy-key transition per B2 review I5 2026-05-10.
+    has_new = "output_candidates_path" in raw
+    has_legacy = "candidates_output_path" in raw
+    if has_new and has_legacy:
+        raise ValueError(
+            f"{path}: ambiguous — both 'output_candidates_path' and the "
+            f"legacy 'candidates_output_path' are present. Drop the legacy "
+            f"key; the loader supports the new spelling only post-R3 cutover."
+        )
+    if has_legacy and not has_new:
+        warnings.warn(
+            f"{path}: 'candidates_output_path' is deprecated; rename to "
+            f"'output_candidates_path' before the R3 cutover.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        raw["output_candidates_path"] = raw.pop("candidates_output_path")
+
+    def _path_or_none(val: object, field: str) -> Path | None:
+        if val is None:
+            return None
+        if isinstance(val, str):
+            if val == "":
+                return None
+            return Path(val)
+        raise ValueError(
+            f"{path}: {field} must be string or null; got "
+            f"{type(val).__name__}={val!r}"
+        )
+
+    def _str_tuple(val: object, field: str, *, allow_none: bool = False) -> tuple[str, ...]:
+        # C3 review MAJOR-1 fix: ``mining_sources: null`` or an omitted key
+        # is a load-bearing config choice — it must be explicit (empty
+        # list ``[]`` for "no mining sources" vs omitted key entirely).
+        # Allow ``None`` only for fields where the dataclass explicitly
+        # supports it (no current HN field does — see allow_none=False
+        # default).
+        if val is None:
+            if allow_none:
+                return ()
+            raise ValueError(
+                f"{path}: {field} must be an explicit YAML list (use "
+                f"``{field}: []`` for empty); got null/omitted. Silent "
+                f"acceptance of an omitted key would let a misconfigured "
+                f"YAML produce a structurally-valid downstream artifact "
+                f"with zero mining sources."
+            )
+        if not isinstance(val, list):
+            raise ValueError(
+                f"{path}: {field} must be a YAML list; got "
+                f"{type(val).__name__}"
+            )
+        out: list[str] = []
+        for i, item in enumerate(val):
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"{path}: {field}[{i}] must be str; got "
+                    f"{type(item).__name__}={item!r}"
+                )
+            out.append(item)
+        return tuple(out)
+
+    # num_classes: explicit, not null.
+    num_classes_raw = raw.get("num_classes", None)
+    if num_classes_raw is None:
+        raise ValueError(
+            f"{path}: num_classes must be set explicitly; got null. The "
+            f"loader does not infer it from class_names — the trainer must "
+            f"stamp a concrete value."
+        )
+
+    # C3 review MINOR-2 fix: data_yaml_sha256 must be string at the YAML
+    # layer — silently stringifying ``123`` → ``"123"`` masks a real bug
+    # (an int in the source). Class-label provenance hash is load-bearing
+    # for cross-artifact integrity; reject malformed types at the source.
+    raw_data_sha = raw.get("data_yaml_sha256")
+    if not isinstance(raw_data_sha, str):
+        raise ValueError(
+            f"{path}: data_yaml_sha256 must be a YAML string (64-char "
+            f"lowercase hex); got "
+            f"{type(raw_data_sha).__name__}={raw_data_sha!r}"
+        )
+    raw_schema_version = raw.get("schema_version")
+    if not isinstance(raw_schema_version, str):
+        raise ValueError(
+            f"{path}: schema_version must be a YAML string; got "
+            f"{type(raw_schema_version).__name__}={raw_schema_version!r}"
+        )
+
+    return HardNegativeMiningYamlConfig(
+        schema_version=raw_schema_version,
+        num_classes=num_classes_raw,
+        class_names=_str_tuple(raw.get("class_names"), "class_names"),
+        data_yaml_sha256=raw_data_sha,
+        baseline_weights_path=_path_or_none(
+            raw.get("baseline_weights_path"), "baseline_weights_path"
+        ),
+        mining_sources=_str_tuple(raw.get("mining_sources"), "mining_sources"),
+        output_candidates_path=_path_or_none(
+            raw.get("output_candidates_path"), "output_candidates_path"
+        ),
+        min_sample_fraction=float(raw.get("min_sample_fraction", 0.0))
+        if not isinstance(raw.get("min_sample_fraction"), bool)
+        else raw["min_sample_fraction"],  # propagate bool so __post_init__ catches it
+        max_true_positive_missed_rate=float(
+            raw.get("max_true_positive_missed_rate", 0.0)
+        )
+        if not isinstance(raw.get("max_true_positive_missed_rate"), bool)
+        else raw["max_true_positive_missed_rate"],
+        frozen_manifest_path=_path_or_none(
+            raw.get("frozen_manifest_path"), "frozen_manifest_path"
+        ),
+        map_regression_tolerance_pp=float(
+            raw.get("map_regression_tolerance_pp", 0.0)
+        )
+        if not isinstance(raw.get("map_regression_tolerance_pp"), bool)
+        else raw["map_regression_tolerance_pp"],
+    )

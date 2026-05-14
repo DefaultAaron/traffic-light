@@ -285,6 +285,90 @@ def load_frozen_eval_manifest(path: str | Path) -> FrozenEvalManifest:
         FileNotFoundError: ``path`` does not exist.
         ValueError: schema / range / threshold-deviation / sha-mismatch
             violations.
-        NotImplementedError: a-stage scaffold.
     """
-    raise NotImplementedError("b-stage")
+    import hashlib as _hashlib
+    import json as _json
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist")
+    with path.open("r", encoding="utf-8") as fh:
+        raw = _json.load(fh)
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{path}: top-level JSON must be an object; got "
+            f"{type(raw).__name__}"
+        )
+    for required_key in (
+        "manifest_sha256",
+        "confidence_threshold",
+        "nms_iou_threshold",
+        "entries",
+    ):
+        if required_key not in raw:
+            raise ValueError(
+                f"{path}: required key {required_key!r} is missing"
+            )
+
+    # B2 review I6: re-derive the canonical SHA256 and compare against the
+    # precomputed value. Canonical form: sort_keys=True, no whitespace,
+    # over only {confidence_threshold, nms_iou_threshold, entries}.
+    canonical_payload = {
+        "confidence_threshold": raw["confidence_threshold"],
+        "nms_iou_threshold": raw["nms_iou_threshold"],
+        "entries": raw["entries"],
+    }
+    canonical_bytes = _json.dumps(
+        canonical_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    expected_sha = _hashlib.sha256(canonical_bytes).hexdigest()
+    declared_sha = raw["manifest_sha256"]
+    if expected_sha != declared_sha:
+        raise ValueError(
+            f"{path}: manifest_sha256 mismatch. Declared "
+            f"{declared_sha!r}, re-derived {expected_sha!r} from "
+            f"canonical serialization (sorted-keys, no-whitespace) of "
+            f"the {{confidence_threshold, nms_iou_threshold, entries}} "
+            f"subset. A tampered manifest cannot ship — the §4.7 frozen "
+            f"manifest is the FP-denominator anti-gaming artifact and the "
+            f"trainer pipeline uses the same protocol to stamp the hash "
+            f"into per-arm eval JSONs."
+        )
+
+    raw_entries = raw["entries"]
+    if not isinstance(raw_entries, list):
+        raise ValueError(
+            f"{path}: entries must be a JSON list; got "
+            f"{type(raw_entries).__name__}"
+        )
+    entries: list[FrozenEvalManifestEntry] = []
+    for i, entry_raw in enumerate(raw_entries):
+        if not isinstance(entry_raw, dict):
+            raise ValueError(
+                f"{path}: entries[{i}] must be a JSON object; got "
+                f"{type(entry_raw).__name__}"
+            )
+        try:
+            entries.append(
+                FrozenEvalManifestEntry(
+                    image_sha256=entry_raw.get("image_sha256", ""),
+                    image_relpath=entry_raw.get("image_relpath", ""),
+                    label_source=entry_raw.get("label_source", ""),
+                    has_real_light=entry_raw.get("has_real_light"),
+                )
+            )
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"{path}: entries[{i}] invalid — {e}"
+            ) from e
+
+    return FrozenEvalManifest(
+        manifest_sha256=declared_sha,
+        confidence_threshold=raw["confidence_threshold"]
+        if not isinstance(raw["confidence_threshold"], bool)
+        else raw["confidence_threshold"],
+        nms_iou_threshold=raw["nms_iou_threshold"]
+        if not isinstance(raw["nms_iou_threshold"], bool)
+        else raw["nms_iou_threshold"],
+        entries=tuple(entries),
+    )
